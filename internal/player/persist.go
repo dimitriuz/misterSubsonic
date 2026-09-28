@@ -82,12 +82,12 @@ func LoadScrobbleQueue(path string) *ScrobbleQueue {
 	if b, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(b, &q.items)
 	}
-	// Initialize nextSeq to the max Seq + 1
-	for _, s := range q.items {
-		if s.Seq >= q.nextSeq {
-			q.nextSeq = s.Seq + 1
-		}
+	// Renumber loaded items with fresh unique sequential values to prevent data loss
+	// from seq collisions (legacy files without seq, hand-edits, duplicates all have Seq==0)
+	for i := range q.items {
+		q.items[i].Seq = uint64(i + 1)
 	}
+	q.nextSeq = uint64(len(q.items) + 1)
 	return q
 }
 

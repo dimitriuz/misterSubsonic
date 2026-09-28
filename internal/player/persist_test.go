@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -33,16 +34,28 @@ func TestPersistence(t *testing.T) {
 
 // testBlockingAPI implements API and blocks Scrobble until released.
 type testBlockingAPI struct {
-	releaseCh chan struct{}
-	scrobbled []subsonic.ID
-	mu        sync.Mutex
+	releaseCh   chan struct{}
+	callArrived chan subsonic.ID // signals when a Scrobble call arrives
+	scrobbled   []subsonic.ID
+	failOn      subsonic.ID // if set, Scrobble returns error for this ID
+	mu          sync.Mutex
 }
 
 func (a *testBlockingAPI) Scrobble(ctx context.Context, id subsonic.ID, at time.Time, submission bool) error {
+	// Signal arrival before blocking
+	if a.callArrived != nil {
+		select {
+		case a.callArrived <- id:
+		default:
+		}
+	}
 	<-a.releaseCh
 	a.mu.Lock()
 	a.scrobbled = append(a.scrobbled, id)
 	a.mu.Unlock()
+	if id == a.failOn {
+		return context.DeadlineExceeded
+	}
 	return nil
 }
 
@@ -101,21 +114,46 @@ func TestFlushDoesNotBlockAdd(t *testing.T) {
 }
 
 func TestConcurrentFlushSendsOnce(t *testing.T) {
-	api := &testBlockingAPI{releaseCh: make(chan struct{})}
+	api := &testBlockingAPI{
+		releaseCh:   make(chan struct{}),
+		callArrived: make(chan subsonic.ID, 10),
+	}
 	q := LoadScrobbleQueue("")
 	q.Add(Scrobble{ID: "x"})
 	q.Add(Scrobble{ID: "y"})
 	q.Add(Scrobble{ID: "z"})
 
-	done := make(chan error, 2)
-	go func() { done <- q.Flush(context.Background(), api) }()
-	go func() { done <- q.Flush(context.Background(), api) }()
+	// Start Flush #1 in a goroutine
+	done1 := make(chan error)
+	go func() {
+		done1 <- q.Flush(context.Background(), api)
+	}()
 
-	close(api.releaseCh) // release any Scrobble calls
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	// Wait until Flush #1's first Scrobble call arrives
+	select {
+	case <-api.callArrived:
+	case <-time.After(1 * time.Second):
+		t.Fatal("Flush #1 never called Scrobble")
 	}
-	if err := <-done; err != nil {
+
+	// Now call Flush #2 synchronously and require it returns quickly (short-circuit)
+	done2 := make(chan error)
+	go func() {
+		done2 <- q.Flush(context.Background(), api)
+	}()
+
+	select {
+	case err := <-done2:
+		if err != nil {
+			t.Fatalf("Flush #2 returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Flush #2 did not short-circuit (still waiting after 200ms)")
+	}
+
+	// Release the blocking API to let Flush #1 complete
+	close(api.releaseCh)
+	if err := <-done1; err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,5 +172,54 @@ func TestConcurrentFlushSendsOnce(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("ID %q sent %d times, want 1", id, count)
 		}
+	}
+}
+
+func TestLegacyQueueFileWithoutSeqKeepsUnsent(t *testing.T) {
+	dir := t.TempDir()
+	filePath := dir + "/legacy.json"
+
+	// Write a legacy file without seq field (all items will have Seq==0 after JSON unmarshal)
+	legacyJSON := `[{"id":"a","at":"2026-01-01T00:00:00Z"},{"id":"b","at":"2026-01-01T00:00:00Z"},{"id":"c","at":"2026-01-01T00:00:00Z"}]`
+	if err := os.WriteFile(filePath, []byte(legacyJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load the legacy file (LoadScrobbleQueue should renumber items with fresh Seq values)
+	q := LoadScrobbleQueue(filePath)
+	if q.Len() != 3 {
+		t.Fatalf("loaded queue len = %d, want 3", q.Len())
+	}
+
+	// Create API that fails on "b"
+	api := &testBlockingAPI{
+		releaseCh: make(chan struct{}),
+		failOn:    "b",
+	}
+	close(api.releaseCh) // no blocking for this test
+
+	// Flush should attempt a, b (fail), then stop
+	err := q.Flush(context.Background(), api)
+	if err == nil {
+		t.Fatal("expected Flush to return error from failOn b")
+	}
+
+	// Verify API received exactly [a, b-attempt]
+	if len(api.scrobbled) != 2 {
+		t.Fatalf("API got %d calls, want 2", len(api.scrobbled))
+	}
+	if api.scrobbled[0] != "a" || api.scrobbled[1] != "b" {
+		t.Fatalf("API calls = %v, want [a b]", api.scrobbled)
+	}
+
+	// Queue should now have 2 items (b and c, with fresh Seq > lastSentSeq)
+	if q.Len() != 2 {
+		t.Fatalf("queue len after failed flush = %d, want 2", q.Len())
+	}
+
+	// Reload from disk and verify the unsent items persisted
+	q2 := LoadScrobbleQueue(filePath)
+	if q2.Len() != 2 {
+		t.Fatalf("reloaded queue len = %d, want 2", q2.Len())
 	}
 }
