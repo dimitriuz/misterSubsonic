@@ -157,6 +157,14 @@ func (r *Reader) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		case r.err != nil:
 			return 0, r.err
+		case r.pos < r.lo:
+			// Back-seek during in-flight fetch moved pos below lo; restart.
+			if r.seekable {
+				r.restartLocked(r.pos)
+			} else {
+				r.restartLocked(0)
+			}
+			continue
 		}
 		r.cond.Wait()
 	}
@@ -259,6 +267,17 @@ func (r *Reader) appendLocked(data []byte) {
 		data = data[k:]
 		r.hi += int64(k)
 	}
+	// Clamp lo to ensure the invariant hi - lo <= len(ring).
+	r.lo = max(r.lo, r.hi-c)
+}
+
+// stripURL removes the URL from *url.Error to avoid leaking credentials.
+func stripURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = fmt.Errorf("stream: %s: %w", ue.Op, ue.Err)
+	}
+	return err
 }
 
 func (r *Reader) request(ctx context.Context, off int64) (*http.Response, context.CancelFunc, error) {
@@ -266,21 +285,24 @@ func (r *Reader) request(ctx context.Context, off int64) (*http.Response, contex
 	req, err := http.NewRequestWithContext(rctx, http.MethodGet, r.url, nil)
 	if err != nil {
 		cancel()
-		return nil, nil, err
+		return nil, nil, stripURL(err)
 	}
 	for k, v := range r.o.Header {
 		req.Header[k] = v
 	}
 	req.Header.Set("Range", "bytes="+strconv.FormatInt(off, 10)+"-")
+	t := time.AfterFunc(r.o.StallTimeout, cancel)
 	resp, err := r.o.Client.Do(req)
+	if !t.Stop() {
+		// Timer fired; either the response is partial/missing or we hit stall timeout.
+		if err == nil {
+			resp.Body.Close()
+		}
+		return nil, nil, errStalled
+	}
 	if err != nil {
 		cancel()
-		// *url.Error embeds the URL, and stream URLs carry credentials.
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			err = fmt.Errorf("stream: %s: %w", ue.Op, ue.Err)
-		}
-		return nil, nil, err
+		return nil, nil, stripURL(err)
 	}
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent:

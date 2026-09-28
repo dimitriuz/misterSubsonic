@@ -405,4 +405,109 @@ func TestLongPauseDoesNotBreakStream(t *testing.T) {
 		t.Fatalf("read %d bytes after pause, want %d", len(got), size-1000)
 	}
 	checkBytes(t, got, 1000)
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("pause caused %d requests, want 1 (pause must not count as a stall)", n)
+	}
+}
+
+// TestBackSeekDuringFetchKeepsDataCorrect verifies that a back-seek during an
+// in-flight fetch doesn't overflow the ring and corrupt data.
+func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
+	const size = 2 << 20
+	release := make(chan struct{})
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n != 1 {
+			return false
+		}
+		w.Header().Set("Content-Range", "bytes 0-"+strconv.Itoa(size-1)+"/"+strconv.Itoa(size))
+		w.Header().Set("Content-Length", strconv.Itoa(size))
+		w.WriteHeader(http.StatusPartialContent)
+		// Write part of the body, then wait for release.
+		io.CopyN(w, &virtualFile{size: size}, 768<<10)
+		w.(http.Flusher).Flush()
+		<-release
+		io.Copy(w, &virtualFile{size: size, pos: 768 << 10})
+		return true
+	})
+	o := Options{
+		WindowBytes:  64 << 10,
+		BehindBytes:  16 << 10,
+		NearBytes:    testOptions().NearBytes,
+		StallTimeout: testOptions().StallTimeout,
+		Backoff:      testOptions().Backoff,
+		RetryBudget:  testOptions().RetryBudget,
+	}
+	r := open(t, s.URL, o)
+	// Read 32 KB to advance pos past BehindBytes, then wait for ring to fill.
+	buf := make([]byte, 32<<10)
+	_, err := io.ReadFull(r, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, 0)
+
+	// Now wait for fetcher to fill the window. At this point pos=32KB, and the
+	// fetcher should be blocked since there's still room but we'll soon fill it.
+	deadline := time.Now().Add(2 * time.Second)
+	for r.Buffered() < 30<<10 {
+		if time.Now().After(deadline) {
+			t.Fatalf("ring did not fill in time, buffered=%d", r.Buffered())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Back-seek to 16 KB (within the window).
+	_, err = r.Seek(16<<10, io.SeekStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Release the server to finish writing.
+	close(release)
+
+	// Read the rest and verify bytes are correct.
+	rest := make([]byte, size-16<<10)
+	_, err = io.ReadFull(r, rest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, rest, 16<<10)
+}
+
+// TestReconnectWhenHeadersNeverArrive verifies that a server hanging before
+// response headers triggers the stall timeout.
+func TestReconnectWhenHeadersNeverArrive(t *testing.T) {
+	const size = 1 << 20
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			// First request: serve part of the body then abort.
+			w.Header().Set("Content-Range", "bytes 0-"+strconv.Itoa(size-1)+"/"+strconv.Itoa(size))
+			w.Header().Set("Content-Length", strconv.Itoa(size))
+			w.WriteHeader(http.StatusPartialContent)
+			io.CopyN(w, &virtualFile{size: size}, 300<<10)
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		}
+		if n == 2 {
+			// Second request: hang before headers.
+			<-r.Context().Done()
+			return true
+		}
+		// Third+ request: serve normally.
+		return false
+	})
+	r := open(t, s.URL, testOptions())
+	start := time.Now()
+	got, err := io.ReadAll(r)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != size {
+		t.Fatalf("read %d bytes, want %d", len(got), size)
+	}
+	checkBytes(t, got, 0)
+	if elapsed > 5*time.Second {
+		t.Fatalf("reconnect took %v, should be ~3s", elapsed)
+	}
 }
