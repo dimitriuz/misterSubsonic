@@ -59,8 +59,9 @@ func LoadResume(path string) (*Resume, error) {
 
 // Scrobble is a submission waiting to be retried.
 type Scrobble struct {
-	ID subsonic.ID `json:"id"`
-	At time.Time   `json:"at"`
+	ID  subsonic.ID `json:"id"`
+	At  time.Time   `json:"at"`
+	Seq uint64      `json:"seq"`
 }
 
 // MaxQueuedScrobbles caps the retry queue; the oldest entries are dropped.
@@ -68,9 +69,11 @@ const MaxQueuedScrobbles = 500
 
 // ScrobbleQueue persists failed scrobble submissions.
 type ScrobbleQueue struct {
-	path  string
-	mu    sync.Mutex
-	items []Scrobble
+	path     string
+	mu       sync.Mutex
+	items    []Scrobble
+	flushing bool
+	nextSeq  uint64
 }
 
 // LoadScrobbleQueue reads path; a missing or corrupt file gives an empty queue.
@@ -78,6 +81,12 @@ func LoadScrobbleQueue(path string) *ScrobbleQueue {
 	q := &ScrobbleQueue{path: path}
 	if b, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(b, &q.items)
+	}
+	// Initialize nextSeq to the max Seq + 1
+	for _, s := range q.items {
+		if s.Seq >= q.nextSeq {
+			q.nextSeq = s.Seq + 1
+		}
 	}
 	return q
 }
@@ -87,6 +96,8 @@ func (q *ScrobbleQueue) Len() int { q.mu.Lock(); defer q.mu.Unlock(); return len
 func (q *ScrobbleQueue) Add(s Scrobble) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	s.Seq = q.nextSeq
+	q.nextSeq++
 	q.items = append(q.items, s)
 	if len(q.items) > MaxQueuedScrobbles {
 		q.items = q.items[len(q.items)-MaxQueuedScrobbles:]
@@ -97,17 +108,42 @@ func (q *ScrobbleQueue) Add(s Scrobble) {
 // Flush submits queued scrobbles in order, stopping at the first failure.
 func (q *ScrobbleQueue) Flush(ctx context.Context, api API) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
+	if q.flushing {
+		q.mu.Unlock()
+		return nil
+	}
+	q.flushing = true
+	snapshot := append([]Scrobble(nil), q.items...)
+	q.mu.Unlock()
+
+	// Send the snapshot without holding the lock
 	sent := 0
 	var err error
-	for _, s := range q.items {
+	var lastSentSeq uint64
+	for _, s := range snapshot {
 		if err = api.Scrobble(ctx, s.ID, s.At, true); err != nil {
 			break
 		}
 		sent++
+		lastSentSeq = s.Seq
 	}
+
+	// Re-lock to update state
+	q.mu.Lock()
+	defer func() {
+		q.flushing = false
+		q.mu.Unlock()
+	}()
+
 	if sent > 0 {
-		q.items = q.items[sent:]
+		// Remove items whose Seq <= lastSentSeq
+		newItems := []Scrobble{}
+		for _, s := range q.items {
+			if s.Seq > lastSentSeq {
+				newItems = append(newItems, s)
+			}
+		}
+		q.items = newItems
 		q.saveLocked()
 	}
 	return err
