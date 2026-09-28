@@ -412,9 +412,9 @@ func TestLongPauseDoesNotBreakStream(t *testing.T) {
 
 // TestBackSeekDuringFetchKeepsDataCorrect verifies that a back-seek during an
 // in-flight fetch doesn't overflow the ring and corrupt data.
-// The recipe: server writes exactly 64 KiB (window size), client reads 32 KiB,
-// seeks back to 1 KiB while fetcher is blocked, then continues. Without the clamp,
-// appendLocked would set lo too low when the fetcher resumes, causing overflow.
+// Without the clamp, appendLocked sets lo=0 and hi=80K (violating the invariant);
+// the ring[0..16K) is overwritten with bytes for offsets 64K-80K, corrupting data.
+// With the clamp, lo is forced to 16K, making pos=1K < lo; Read restarts the fetch.
 func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	const size = 2 << 20
 	release := make(chan struct{})
@@ -451,8 +451,8 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Read 32 KiB (pos becomes 32K). The fetcher now computes room = 16K and is
-	// blocked in body.Read while the server is blocked on the release channel.
+	// Read 32 KiB (pos becomes 32K). The fetcher computes room = 16K and blocks
+	// in body.Read waiting for the server.
 	buf := make([]byte, 32<<10)
 	_, err := io.ReadFull(r, buf)
 	if err != nil {
@@ -463,17 +463,32 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	// Give the fetcher a moment to compute room and block in body.Read.
 	time.Sleep(50 * time.Millisecond)
 
-	// Seek back to 1 KiB (inside the window, no restart yet).
+	// Seek back to 1 KiB (inside the window, so no restart here).
 	_, err = r.Seek(1<<10, io.SeekStart)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Release the server. The fetcher will resume and append the remaining 16 KiB.
-	// Without the clamp, lo would be set incorrectly, causing ring overflow.
+	// Release the server. The fetcher will read the remaining 16 KiB and call
+	// appendLocked(), which sets lo based on the new pos=1K.
 	close(release)
 
-	// Read 4 KiB at position 1 KiB and verify the bytes are correct.
+	// Wait deterministically for the fetcher to append. Buffered() will change:
+	// - With clamp: lo becomes 16K, so Buffered() = hi - pos = 80K - 1K = 79K... wait, that's wrong
+	// - Actually, with clamp and pos < lo, Read() restarts and fetches from 1K,
+	//   so lo=1K, hi grows past 1K. Buffered() changes from 63K.
+	// - Without clamp: lo stays 0, hi=80K, Buffered() becomes 79K, still changes from 63K.
+	initialBuffered := int64(63 << 10) // 64K - 1K (after seek to 1K)
+	deadline = time.Now().Add(2 * time.Second)
+	for r.Buffered() == initialBuffered {
+		if time.Now().After(deadline) {
+			t.Fatalf("fetcher did not append in time")
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	// Now try to read. If the clamp is missing, the ring is corrupted and we'll
+	// get pattern(65K) instead of pattern(1K) at offset 1K.
 	got := make([]byte, 4<<10)
 	_, err = io.ReadFull(r, got)
 	if err != nil {
@@ -481,7 +496,7 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	}
 	checkBytes(t, got, 1<<10)
 
-	// Read forward another 64 KiB to prove continuity (exercises the pos < lo restart).
+	// Read more to exercise the complete recovery.
 	forward := make([]byte, 64<<10)
 	_, err = io.ReadFull(r, forward)
 	if err != nil {
@@ -489,9 +504,11 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	}
 	checkBytes(t, forward, 1<<10+4<<10)
 
-	// With the fix, a second request should be made (restart at 1 KiB).
+	// With the clamp, pos < lo triggers a restart, so we see 2 requests.
+	// Without the clamp, lo stays too low and we might see 1 request (or read
+	// corrupted data instead of restarting).
 	if n := s.requests.Load(); n != 2 {
-		t.Logf("requests = %d (fix may have triggered restart as expected)", n)
+		t.Fatalf("requests = %d, want 2 (pos<lo must restart the fetch)", n)
 	}
 }
 
