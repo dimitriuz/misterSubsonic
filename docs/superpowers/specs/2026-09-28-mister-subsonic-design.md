@@ -177,7 +177,7 @@ The loop records the **frame index where each track starts in the ring's output*
 | Anything else (ALAC/M4A, AAC, Opus, Vorbis, WMA, DSD, …) | Server transcode: `stream?id=..&format=<transcode_format>&maxBitRate=<transcode_bitrate>` |
 
 - The choice is made from the song's `suffix` and `contentType` in the metadata before the stream is opened.
-- `transcode_format` defaults to `mp3` at 320 kbps. The user can set `flac` if their server has a FLAC transcoder configured, which gives lossless ALAC.
+- `transcode_format` defaults to `mp3` at 320 kbps. It must be one the device can decode: `mp3`, `flac` or `wav`. The user can set `flac` if their server has a FLAC transcoder configured, which gives lossless ALAC.
 
 **ReplayGain** is a setting with three values: `off`, `track` or `album`.
 - The gain comes from the OpenSubsonic `replayGain` object when it is present. Otherwise no gain is applied; the app does not parse tags itself in v1.
@@ -379,7 +379,7 @@ cover_art_mb = 200
 - The app never changes the video mode itself.
 
 **Build**
-- Cross-compile with `GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 CC="zig cc -target arm-linux-gnueabihf.2.31 -mcpu=cortex_a9"`, using `-trimpath -ldflags "-s -w"`.
+- Cross-compile with `GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 CC="zig cc -target arm-linux-gnueabihf.2.31 -mcpu=cortex_a9"` (zig 0.16.0), using `-trimpath -ldflags "-s -w"`. `scripts/check-glibc.sh` fails the build if the binary needs glibc newer than 2.31; the prototype needed 2.29.
 - The binary is dynamically linked only against the MiSTer's glibc. miniaudio loads libasound with `dlopen` at runtime.
 - The C sources are vendored at pinned versions and SHA-checked: miniaudio, and speexdsp `resample.c` and its headers.
 - **Desktop build:** the same code for linux/amd64 and darwin, with the miniaudio default backend (PipeWire, Pulse or CoreAudio). A build tag selects the `gfx` backend.
@@ -407,6 +407,7 @@ cover_art_mb = 200
 | `input` | A `.map` file parser against fixture maps, the key-repeat state machine with a fake clock, and axis-to-direction mapping. |
 | `config` | Round trip, defaults, invalid-file handling, and the multi-server setup. |
 | On-device | A manual checklist in `docs/testing-on-mister.md`: HDMI 1080p, CRT 240p, a hotplugged pad, a 1 GB album FLAC seek, a gapless album, wifi drop mid-track, and exit/restore of the Scripts menu. |
+| Sound safety | Automated tests never open a real sound device; they use fakes or miniaudio's null backend. Listening checks are opt-in, quiet (about −30 dBFS), and run only after the user confirms each time. |
 
 ## 11. Early spikes
 
