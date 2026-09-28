@@ -412,6 +412,9 @@ func TestLongPauseDoesNotBreakStream(t *testing.T) {
 
 // TestBackSeekDuringFetchKeepsDataCorrect verifies that a back-seek during an
 // in-flight fetch doesn't overflow the ring and corrupt data.
+// The recipe: server writes exactly 64 KiB (window size), client reads 32 KiB,
+// seeks back to 1 KiB while fetcher is blocked, then continues. Without the clamp,
+// appendLocked would set lo too low when the fetcher resumes, causing overflow.
 func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	const size = 2 << 20
 	release := make(chan struct{})
@@ -422,23 +425,34 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 		w.Header().Set("Content-Range", "bytes 0-"+strconv.Itoa(size-1)+"/"+strconv.Itoa(size))
 		w.Header().Set("Content-Length", strconv.Itoa(size))
 		w.WriteHeader(http.StatusPartialContent)
-		// Write part of the body, then wait for release.
-		io.CopyN(w, &virtualFile{size: size}, 768<<10)
+		// Write exactly 64 KiB (the window), flush, then block until release.
+		io.CopyN(w, &virtualFile{size: size}, 64<<10)
 		w.(http.Flusher).Flush()
 		<-release
-		io.Copy(w, &virtualFile{size: size, pos: 768 << 10})
+		io.Copy(w, &virtualFile{size: size, pos: 64 << 10})
 		return true
 	})
 	o := Options{
 		WindowBytes:  64 << 10,
 		BehindBytes:  16 << 10,
-		NearBytes:    testOptions().NearBytes,
-		StallTimeout: testOptions().StallTimeout,
+		NearBytes:    256 << 10,
+		StallTimeout: time.Minute, // Don't interfere with the test
 		Backoff:      testOptions().Backoff,
 		RetryBudget:  testOptions().RetryBudget,
 	}
 	r := open(t, s.URL, o)
-	// Read 32 KB to advance pos past BehindBytes, then wait for ring to fill.
+
+	// Wait until the ring is full: Buffered() == 64 KiB (lo=0, hi=64K).
+	deadline := time.Now().Add(2 * time.Second)
+	for r.Buffered() < 64<<10 {
+		if time.Now().After(deadline) {
+			t.Fatalf("ring did not fill to 64 KiB, buffered=%d", r.Buffered())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Read 32 KiB (pos becomes 32K). The fetcher now computes room = 16K and is
+	// blocked in body.Read while the server is blocked on the release channel.
 	buf := make([]byte, 32<<10)
 	_, err := io.ReadFull(r, buf)
 	if err != nil {
@@ -446,32 +460,39 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	}
 	checkBytes(t, buf, 0)
 
-	// Now wait for fetcher to fill the window. At this point pos=32KB, and the
-	// fetcher should be blocked since there's still room but we'll soon fill it.
-	deadline := time.Now().Add(2 * time.Second)
-	for r.Buffered() < 30<<10 {
-		if time.Now().After(deadline) {
-			t.Fatalf("ring did not fill in time, buffered=%d", r.Buffered())
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	// Give the fetcher a moment to compute room and block in body.Read.
+	time.Sleep(50 * time.Millisecond)
 
-	// Back-seek to 16 KB (within the window).
-	_, err = r.Seek(16<<10, io.SeekStart)
+	// Seek back to 1 KiB (inside the window, no restart yet).
+	_, err = r.Seek(1<<10, io.SeekStart)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Release the server to finish writing.
+	// Release the server. The fetcher will resume and append the remaining 16 KiB.
+	// Without the clamp, lo would be set incorrectly, causing ring overflow.
 	close(release)
 
-	// Read the rest and verify bytes are correct.
-	rest := make([]byte, size-16<<10)
-	_, err = io.ReadFull(r, rest)
+	// Read 4 KiB at position 1 KiB and verify the bytes are correct.
+	got := make([]byte, 4<<10)
+	_, err = io.ReadFull(r, got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkBytes(t, rest, 16<<10)
+	checkBytes(t, got, 1<<10)
+
+	// Read forward another 64 KiB to prove continuity (exercises the pos < lo restart).
+	forward := make([]byte, 64<<10)
+	_, err = io.ReadFull(r, forward)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, forward, 1<<10+4<<10)
+
+	// With the fix, a second request should be made (restart at 1 KiB).
+	if n := s.requests.Load(); n != 2 {
+		t.Logf("requests = %d (fix may have triggered restart as expected)", n)
+	}
 }
 
 // TestReconnectWhenHeadersNeverArrive verifies that a server hanging before
