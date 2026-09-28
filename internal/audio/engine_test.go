@@ -251,14 +251,16 @@ func TestEngineStopWhileWaitingForNextOpenDoesNotAutoplayLater(t *testing.T) {
 	e := newTestEngine(out)
 	defer e.Close()
 
-	a := ramp(200, 0)
-	e.Play(Track{ID: 1, Source: newFakeSource(a, OutputRate)})
-	expectEvent(t, e, EventStarted, 1)
-
-	// Queue B with openBlock set (never released) so finishCur waits
+	// Queue B with openBlock BEFORE waiting for any event so finishCur will wait for it
 	b := newFakeSource(ramp(300, 200), OutputRate)
 	b.openBlock = make(chan struct{})
+
+	a := ramp(200, 0)
+	e.Play(Track{ID: 1, Source: newFakeSource(a, OutputRate)})
 	e.QueueNext(Track{ID: 2, Source: b})
+
+	// First event should be Started(1)
+	expectEvent(t, e, EventStarted, 1)
 
 	// Wait until A is fully written (finishCur is now waiting for B to open)
 	waitFor(t, "a fully written", func() bool { return len(out.written())/2 == 200 })
@@ -266,7 +268,7 @@ func TestEngineStopWhileWaitingForNextOpenDoesNotAutoplayLater(t *testing.T) {
 	// Stop while finishCur is waiting
 	e.Stop()
 
-	// Queue C (normal, no block)
+	// Queue C (normal, no block) after Stop
 	e.QueueNext(Track{ID: 3, Source: newFakeSource(ramp(100, 200), OutputRate)})
 
 	// C should NOT start (no autoplay after Stop)
@@ -281,10 +283,17 @@ func TestEnginePlayInterruptedDuringOpenReportsNoError(t *testing.T) {
 	// Play A whose open blocks
 	a := newFakeSource(ramp(1000, 0), OutputRate)
 	a.openBlock = make(chan struct{})
+	a.openStarted = make(chan struct{})
 	e.Play(Track{ID: 1, Source: a})
 
+	// Wait for A's open to start (doPlay is now inside openVoice with busy == a)
+	select {
+	case <-a.openStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for A's open to start")
+	}
+
 	// Play B immediately (interrupts A's open)
-	time.Sleep(10 * time.Millisecond) // Give A's open a chance to start blocking
 	b := newFakeSource(ramp(100, 0), OutputRate)
 	e.Play(Track{ID: 2, Source: b})
 
@@ -372,5 +381,40 @@ func TestEngineInterruptKeepsNewTrackSource(t *testing.T) {
 	expectEvent(t, e, EventStarted, 1)
 	playOut(t, out, 100)
 	expectEvent(t, e, EventEnded, 1)
+}
+
+func TestEngineEventsFlowWhileDecodeBlocked(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	// Play A = ramp(300)
+	a := ramp(300, 0)
+	e.Play(Track{ID: 1, Source: newFakeSource(a, OutputRate)})
+
+	// QueueNext B = ramp(300) whose reads block
+	b := newFakeSource(ramp(300, 300), OutputRate)
+	b.block = make(chan struct{})
+	e.QueueNext(Track{ID: 2, Source: b})
+
+	// expectEvent(Started,1) - first event
+	expectEvent(t, e, EventStarted, 1)
+
+	// wait until 300 frames written
+	waitFor(t, "300 frames written", func() bool { return len(out.written())/2 >= 300 })
+
+	// consume 300
+	out.consume(300)
+
+	// expectEvent(Ended,1); expectEvent(Started,2) — while B is still blocked
+	expectEvent(t, e, EventEnded, 1)
+	expectEvent(t, e, EventStarted, 2)
+
+	// close(B.block)
+	close(b.block)
+
+	// playOut to 600; expectEvent(Ended,2)
+	playOut(t, out, 600)
+	expectEvent(t, e, EventEnded, 2)
 }
 

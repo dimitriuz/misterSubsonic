@@ -61,14 +61,15 @@ func (f *fakeOutput) written() []float32 {
 // fakeSource carries PCM for fakeDecoder. If block is set, reads wait on it
 // until the source is closed. If openBlock is set, fakeOpen waits on it.
 type fakeSource struct {
-	pcm         []float32
-	rate        int
-	openErr     error
-	block       chan struct{}
-	openBlock   chan struct{} // blocks fakeOpen if set
-	openStarted chan struct{} // closed when fakeOpen begins
-	once        sync.Once
-	closed      chan struct{}
+	pcm              []float32
+	rate             int
+	openErr          error
+	block            chan struct{}
+	openBlock        chan struct{} // blocks fakeOpen if set
+	openStarted      chan struct{} // closed when fakeOpen begins
+	openStartedOnce  sync.Once     // protects closing openStarted
+	once             sync.Once
+	closed           chan struct{}
 }
 
 func newFakeSource(pcm []float32, rate int) *fakeSource {
@@ -95,7 +96,7 @@ type fakeDecoder struct {
 func fakeOpen(src io.ReadSeeker, _ Format) (Decoder, error) {
 	s := src.(*fakeSource)
 	if s.openStarted != nil {
-		close(s.openStarted)
+		s.openStartedOnce.Do(func() { close(s.openStarted) })
 	}
 	if s.openErr != nil {
 		return nil, s.openErr
