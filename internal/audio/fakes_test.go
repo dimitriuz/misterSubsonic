@@ -15,6 +15,7 @@ type fakeOutput struct {
 	data     []float32 // everything ever written
 	consumed uint64
 	flushes  int
+	onFlush  func()    // optional callback called after Flush completes (outside mu)
 }
 
 func newFakeOutput(ringFrames int) *fakeOutput { return &fakeOutput{ring: ringFrames} }
@@ -35,9 +36,12 @@ func (f *fakeOutput) Close() error      { return nil }
 
 func (f *fakeOutput) Flush() {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.consumed = uint64(len(f.data) / 2)
 	f.flushes++
+	f.mu.Unlock()
+	if f.onFlush != nil {
+		f.onFlush()
+	}
 }
 
 // consume plays out up to n frames.
@@ -55,14 +59,16 @@ func (f *fakeOutput) written() []float32 {
 }
 
 // fakeSource carries PCM for fakeDecoder. If block is set, reads wait on it
-// until the source is closed.
+// until the source is closed. If openBlock is set, fakeOpen waits on it.
 type fakeSource struct {
-	pcm     []float32
-	rate    int
-	openErr error
-	block   chan struct{}
-	once    sync.Once
-	closed  chan struct{}
+	pcm         []float32
+	rate        int
+	openErr     error
+	block       chan struct{}
+	openBlock   chan struct{} // blocks fakeOpen if set
+	openStarted chan struct{} // closed when fakeOpen begins
+	once        sync.Once
+	closed      chan struct{}
 }
 
 func newFakeSource(pcm []float32, rate int) *fakeSource {
@@ -88,8 +94,18 @@ type fakeDecoder struct {
 
 func fakeOpen(src io.ReadSeeker, _ Format) (Decoder, error) {
 	s := src.(*fakeSource)
+	if s.openStarted != nil {
+		close(s.openStarted)
+	}
 	if s.openErr != nil {
 		return nil, s.openErr
+	}
+	if s.openBlock != nil {
+		select {
+		case <-s.openBlock:
+		case <-s.closed:
+			return nil, errClosed
+		}
 	}
 	return &fakeDecoder{src: s}, nil
 }

@@ -87,6 +87,7 @@ type Engine struct {
 	segs   []segment // guarded by mu
 	evq    []Event   // guarded by mu
 	busy   io.Closer // guarded by mu: source of the voice being decoded
+	killed io.Closer // guarded by mu: source closed by interrupt, reason for failed open
 	closed bool      // guarded by mu
 
 	// Owned by the run goroutine.
@@ -95,6 +96,7 @@ type Engine struct {
 	next     *voice
 	opening  *Track
 	gen      int
+	stops    int // incremented at top of doStop to detect Stop during finishCur's wait
 	rs       *Resampler
 	chainOut uint64
 	chainIn  uint64
@@ -231,6 +233,7 @@ func (e *Engine) interrupt(keep io.ReadSeeker) {
 		return
 	}
 	e.busy = nil
+	e.killed = c
 	e.mu.Unlock()
 	c.Close()
 }
@@ -402,10 +405,14 @@ func (e *Engine) finishCur() {
 	closeVoice(e.cur)
 	e.cur = nil
 	e.setBusy(nil)
+	stops := e.stops
 	for e.next == nil && e.opening != nil && e.cur == nil {
 		if !e.wait(e.o.Poll) {
 			return
 		}
+	}
+	if e.stops != stops {
+		return // Stop occurred while we waited
 	}
 	if e.cur != nil {
 		return // a Play arrived while we waited
@@ -474,13 +481,21 @@ func (e *Engine) doPlay(t Track) {
 	v, err := e.openVoice(t)
 	e.setBusy(nil)
 	if err != nil {
-		e.queueEvent(Event{Kind: EventError, TrackID: t.ID, Err: err})
+		// Check if this error is because the source was interrupted.
+		kc, _ := t.Source.(io.Closer)
+		e.mu.Lock()
+		interrupted := kc != nil && e.killed == kc
+		e.mu.Unlock()
+		if !interrupted {
+			e.queueEvent(Event{Kind: EventError, TrackID: t.ID, Err: err})
+		}
 		return
 	}
 	e.startVoice(v, false)
 }
 
 func (e *Engine) doStop() {
+	e.stops++
 	closeVoice(e.cur)
 	e.cur = nil
 	e.ended = false
@@ -490,9 +505,9 @@ func (e *Engine) doStop() {
 		e.rs.Close()
 		e.rs = nil
 	}
+	e.resetSegments(segment{start: e.written, id: 0})
 	e.o.Output.Flush()
 	e.pending = e.pending[:0]
-	e.resetSegments(segment{start: e.written, id: 0})
 }
 
 func (e *Engine) doQueueNext(t Track) {
@@ -551,6 +566,7 @@ func (e *Engine) doSeek(id uint64, pos time.Duration) error {
 	if err := v.dec.SeekFrame(uint64(rel.Seconds() * float64(rate))); err != nil {
 		return err
 	}
+	e.resetSegments(segment{start: e.written, id: id, base: pos})
 	e.o.Output.Flush()
 	e.pending = e.pending[:0]
 	if e.rs != nil {
@@ -562,7 +578,6 @@ func (e *Engine) doSeek(id uint64, pos time.Duration) error {
 		}
 		e.rs, e.chainOut, e.chainIn = rs, e.written, 0
 	}
-	e.resetSegments(segment{start: e.written, id: id, base: pos})
 	return nil
 }
 

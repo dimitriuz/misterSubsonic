@@ -245,3 +245,132 @@ func TestEngineQueueNextAfterStopDoesNotPlay(t *testing.T) {
 	e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(100, 0), OutputRate)})
 	noEvent(t, e, 50*time.Millisecond)
 }
+
+func TestEngineStopWhileWaitingForNextOpenDoesNotAutoplayLater(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	a := ramp(200, 0)
+	e.Play(Track{ID: 1, Source: newFakeSource(a, OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+
+	// Queue B with openBlock set (never released) so finishCur waits
+	b := newFakeSource(ramp(300, 200), OutputRate)
+	b.openBlock = make(chan struct{})
+	e.QueueNext(Track{ID: 2, Source: b})
+
+	// Wait until A is fully written (finishCur is now waiting for B to open)
+	waitFor(t, "a fully written", func() bool { return len(out.written())/2 == 200 })
+
+	// Stop while finishCur is waiting
+	e.Stop()
+
+	// Queue C (normal, no block)
+	e.QueueNext(Track{ID: 3, Source: newFakeSource(ramp(100, 200), OutputRate)})
+
+	// C should NOT start (no autoplay after Stop)
+	noEvent(t, e, 50*time.Millisecond)
+}
+
+func TestEnginePlayInterruptedDuringOpenReportsNoError(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	// Play A whose open blocks
+	a := newFakeSource(ramp(1000, 0), OutputRate)
+	a.openBlock = make(chan struct{})
+	e.Play(Track{ID: 1, Source: a})
+
+	// Play B immediately (interrupts A's open)
+	time.Sleep(10 * time.Millisecond) // Give A's open a chance to start blocking
+	b := newFakeSource(ramp(100, 0), OutputRate)
+	e.Play(Track{ID: 2, Source: b})
+
+	// Should see Started(2), but no EventError for A (even though A's open was interrupted)
+	eventsSeen := 0
+	for eventsSeen < 1 {
+		ev := nextEvent(t, e)
+		if ev.Kind == EventError && ev.TrackID == 1 {
+			t.Fatalf("unexpected EventError for track 1: %v", ev.Err)
+		}
+		if ev.Kind == EventStarted && ev.TrackID == 2 {
+			eventsSeen++
+		}
+	}
+
+	noEvent(t, e, 30*time.Millisecond)
+}
+
+func TestEngineStopDoesNotReportFlushedBoundaries(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	// Set up onFlush to call checkBoundaries at the worst moment
+	out.onFlush = func() { e.checkBoundaries() }
+
+	a := ramp(500, 0)
+	e.Play(Track{ID: 1, Source: newFakeSource(a, OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+
+	b := ramp(500, 500)
+	e.QueueNext(Track{ID: 2, Source: newFakeSource(b, OutputRate)})
+
+	// Wait until both written
+	waitFor(t, "both tracks written", func() bool { return len(out.written())/2 == 1000 })
+
+	// Consume all of A (500 frames), then expect Ended(1) and Started(2)
+	out.consume(500)
+	expectEvent(t, e, EventEnded, 1)
+	expectEvent(t, e, EventStarted, 2)
+
+	// Consume 100 more frames of B
+	out.consume(100)
+
+	// Stop() will flush; before the fix, this would report Ended(2) for audio never heard
+	e.Stop()
+
+	// Those events must NOT appear
+	noEvent(t, e, 50*time.Millisecond)
+}
+
+func TestEngineInterruptKeepsNewTrackSource(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	// Play B whose open blocks and notifies when it starts
+	b := newFakeSource(ramp(100, 0), OutputRate)
+	b.openBlock = make(chan struct{})
+	b.openStarted = make(chan struct{})
+
+	go func() {
+		e.Play(Track{ID: 1, Source: b})
+	}()
+
+	// Wait for the open to start (doPlay is now busy with B's source)
+	select {
+	case <-b.openStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for open to start")
+	}
+
+	// Call interrupt(b) directly to simulate the race
+	e.interrupt(b)
+
+	// b.Source should NOT be closed (Play never closes the NEW track's source)
+	if b.isClosed() {
+		t.Fatal("new track's source was incorrectly closed by interrupt")
+	}
+
+	// Unblock the open
+	close(b.openBlock)
+
+	// B should start and play normally
+	expectEvent(t, e, EventStarted, 1)
+	playOut(t, out, 100)
+	expectEvent(t, e, EventEnded, 1)
+}
+
