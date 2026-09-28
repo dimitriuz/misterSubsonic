@@ -412,9 +412,11 @@ func TestLongPauseDoesNotBreakStream(t *testing.T) {
 
 // TestBackSeekDuringFetchKeepsDataCorrect verifies that a back-seek during an
 // in-flight fetch doesn't overflow the ring and corrupt data.
-// Without the clamp, appendLocked sets lo=0 and hi=80K (violating the invariant);
-// the ring[0..16K) is overwritten with bytes for offsets 64K-80K, corrupting data.
-// With the clamp, lo is forced to 16K, making pos=1K < lo; Read restarts the fetch.
+// The fetcher is already allowed to write 16 KiB before the seek happens.
+// Without the capacity clamp, appendLocked would leave lo at 0 while hi grows
+// to 80K, so hi-lo exceeds the 64K ring and the slot for offset 1K gets
+// overwritten by offset 65K, corrupting data. With the clamp, lo is forced up
+// to 16K, which is above pos=1K, so Read restarts the fetch at the right offset.
 func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 	const size = 2 << 20
 	release := make(chan struct{})
@@ -469,15 +471,15 @@ func TestBackSeekDuringFetchKeepsDataCorrect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Release the server. The fetcher will read the remaining 16 KiB and call
-	// appendLocked(), which sets lo based on the new pos=1K.
+	// Release the server. The fetcher writes the 16 KiB it was allowed and
+	// calls appendLocked, whose capacity clamp raises lo to hi-len(ring)
+	// regardless of pos.
 	close(release)
 
-	// Wait deterministically for the fetcher to append. Buffered() will change:
-	// - With clamp: lo becomes 16K, so Buffered() = hi - pos = 80K - 1K = 79K... wait, that's wrong
-	// - Actually, with clamp and pos < lo, Read() restarts and fetches from 1K,
-	//   so lo=1K, hi grows past 1K. Buffered() changes from 63K.
-	// - Without clamp: lo stays 0, hi=80K, Buffered() becomes 79K, still changes from 63K.
+	// Wait deterministically for the fetcher's append (or the restart it
+	// triggers) to land, so the reads below happen after it instead of
+	// racing it. Buffered() starts at hi-pos = 64K-1K = 63K and moves once
+	// that happens.
 	initialBuffered := int64(63 << 10) // 64K - 1K (after seek to 1K)
 	deadline = time.Now().Add(2 * time.Second)
 	for r.Buffered() == initialBuffered {
