@@ -75,7 +75,7 @@ func Classify(err error) ErrorKind {
 		return KindPlaintextRefused
 	}
 	var (
-		unknownCA *x509.UnknownAuthorityError
+		unknownCA x509.UnknownAuthorityError
 		hostErr   x509.HostnameError
 		invalid   x509.CertificateInvalidError
 		verifyErr *tls.CertificateVerificationError

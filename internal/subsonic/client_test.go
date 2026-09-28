@@ -2,8 +2,10 @@ package subsonic
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -294,5 +296,18 @@ func TestErrorsDoNotLeakCredentials(t *testing.T) {
 	}
 	if Classify(err) != KindUnreachable {
 		t.Fatalf("redaction broke classification: %v", Classify(err))
+	}
+}
+
+func TestClassifyRawTLSErrors(t *testing.T) {
+	// Test that Classify correctly handles TLS errors as values, not pointers
+	if Classify(fmt.Errorf("wrap: %w", x509.UnknownAuthorityError{})) != KindTLS {
+		t.Fatal("UnknownAuthorityError not classified as TLS")
+	}
+	if Classify(x509.HostnameError{Host: "x"}) != KindTLS {
+		t.Fatal("HostnameError not classified as TLS")
+	}
+	if Classify(x509.CertificateInvalidError{}) != KindTLS {
+		t.Fatal("CertificateInvalidError not classified as TLS")
 	}
 }
