@@ -359,3 +359,104 @@ func TestUnknownDurationStillAdvances(t *testing.T) {
 	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
 	h.waitFor("second song", func() bool { return h.eng.playCount() == 2 && h.p.State().Index == 1 })
 }
+
+// A queue edit between Ended(A) and Started(B) must not leave the player stuck.
+// This test would wedge before the fix: Enqueue zeroes nextID, so Started(B) is ignored.
+func TestQueueEditBetweenEndedAndStartedDoesNotWedge(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(3, 100), 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 85*time.Second)
+	h.waitFor("QueueNext", func() bool { return h.eng.queueCount() == 1 })
+	b := h.eng.queued[0]
+	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
+	h.p.do(func() {})
+	h.p.Enqueue([]subsonic.Song{{ID: "y", Suffix: "flac", Duration: 100}})
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
+	h.p.do(func() {})
+	st := h.p.State()
+	if st.Index != 1 || len(st.Queue) != 4 {
+		t.Fatalf("after handover: index=%d queue len=%d, want 1 and 4", st.Index, len(st.Queue))
+	}
+	h.tickAt(b.ID, 5*time.Second)
+	if h.p.State().Position != 5*time.Second {
+		t.Fatalf("position=%v, want 5s", h.p.State().Position)
+	}
+	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: b.ID}
+	h.waitFor("third song plays", func() bool { return h.eng.playCount() == 2 && h.p.State().Index == 2 && h.p.State().Status == Loading })
+}
+
+// A transcoded seek must not reset listen time, resend now-playing, or unpause.
+func TestTranscodedSeekKeepsListenTimeAndPause(t *testing.T) {
+	h := newHarness(t, nil)
+	q := songs(1, 300)
+	q[0].Suffix = "m4a"
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	pos := time.Duration(0)
+	for i := 0; i < 4*140; i++ {
+		pos += 250 * time.Millisecond
+		h.tickAt(a.ID, pos)
+	}
+	h.p.TogglePause()
+	if h.p.State().Status != Paused {
+		t.Fatal("not paused")
+	}
+	// Drain any events from initial play and pause toggle
+	for len(h.p.Events()) > 0 {
+		<-h.p.Events()
+	}
+	nowPlayingsBefore := len(h.api.nowPlayings())
+	h.p.Seek(200 * time.Second)
+	h.waitFor("reopen", func() bool { return h.eng.playCount() == 2 })
+	if h.p.State().Status != Paused {
+		t.Fatalf("after seek status=%v, want paused", h.p.State().Status)
+	}
+	if !h.eng.paused {
+		t.Fatal("engine not paused after reopen")
+	}
+	if len(h.api.nowPlayings()) != nowPlayingsBefore {
+		t.Fatalf("now-playings=%d, want %d (no resend on seek)", len(h.api.nowPlayings()), nowPlayingsBefore)
+	}
+	events := 0
+	for len(h.p.Events()) > 0 {
+		<-h.p.Events()
+		events++
+	}
+	if events > 0 {
+		t.Fatalf("seek emitted %d events, want 0 (no TrackChanged)", events)
+	}
+	calls := h.opener.callList()
+	if last := calls[len(calls)-1]; last.offset != 200*time.Second {
+		t.Fatalf("opened at %v, want 200s", last.offset)
+	}
+	b := h.eng.lastPlayed()
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
+	h.p.do(func() {})
+	h.p.TogglePause()
+	pos = 200 * time.Second
+	for i := 0; i < 44; i++ { // 44 * 250ms = 11s; total listened = 140 + 11 = 151s > 150s threshold
+		pos += 250 * time.Millisecond
+		h.tickAt(b.ID, pos)
+	}
+	h.waitFor("scrobble after 11s more", func() bool { return slices.Equal(h.api.submissions(), []subsonic.ID{"sa"}) })
+}
+
+// Commands after Run returns must not block.
+func TestCommandsAfterRunExitDoNotBlock(t *testing.T) {
+	h := newHarness(t, nil)
+	h.cancel()
+	<-h.done
+	done := make(chan struct{})
+	go func() {
+		h.p.Next()
+		h.p.TogglePause()
+		h.p.PlayNow(songs(1, 10), 0)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("commands blocked after Run exit")
+	}
+}

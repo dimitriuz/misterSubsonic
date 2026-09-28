@@ -133,6 +133,7 @@ type Player struct {
 	events    chan Event
 	scrobbles *ScrobbleQueue
 	ctx       context.Context
+	runDone   chan struct{} // closed when Run returns (I3)
 
 	mu   sync.Mutex
 	snap State
@@ -160,6 +161,7 @@ type Player struct {
 	startedAt  time.Time
 	failures   int
 	lastSave   time.Time
+	reopening  bool // true while reopening after a transcoded seek (I2)
 }
 
 func New(o Options) *Player {
@@ -181,6 +183,7 @@ func New(o Options) *Player {
 		opens:     make(chan openResult, 8),
 		events:    make(chan Event, 64),
 		scrobbles: LoadScrobbleQueue(o.ScrobblePath),
+		runDone:   make(chan struct{}),
 		cursor:    -1,
 		volumeDB:  o.VolumeDB,
 	}
@@ -196,6 +199,7 @@ func (p *Player) State() State { p.mu.Lock(); defer p.mu.Unlock(); return p.snap
 
 // Run drives the player until ctx is done. It saves the queue on the way out.
 func (p *Player) Run(ctx context.Context) {
+	defer close(p.runDone) // I3: signal that Run has exited
 	p.ctx = ctx
 	tick := p.o.Tick
 	if tick == nil {
@@ -228,8 +232,15 @@ func (p *Player) Run(ctx context.Context) {
 // published before do returns, so State() reflects the command.
 func (p *Player) do(f func()) {
 	done := make(chan struct{})
-	p.cmds <- func() { f(); p.publish(); close(done) }
-	<-done
+	select {
+	case p.cmds <- func() { f(); p.publish(); close(done) }:
+	case <-p.runDone: // I3: don't block if Run has exited
+		return
+	}
+	select {
+	case <-done:
+	case <-p.runDone: // I3: don't block if Run has exited
+	}
 }
 
 // ---- commands ----
@@ -417,11 +428,11 @@ func (p *Player) Seek(pos time.Duration) {
 		}
 		p.lastPos, p.position = pos, pos
 		if p.curSrc.Transcoded {
-			p.startAt(p.cursor, pos)
+			p.reopenAt(pos) // I2: use reopenAt to preserve listen state and pause
 			return
 		}
 		if err := p.o.Engine.Seek(p.curID, pos); err != nil {
-			p.startAt(p.cursor, pos)
+			p.reopenAt(pos) // I2: use reopenAt as fallback for raw seek
 		}
 	})
 }
@@ -611,6 +622,26 @@ func (p *Player) startAt(cursor int, offset time.Duration) {
 	p.openAsync(id, song, offset, false)
 }
 
+// reopenAt reopens the current track at offset, preserving listen state and pause (I2).
+func (p *Player) reopenAt(offset time.Duration) {
+	song, ok := p.currentSong()
+	if !ok || p.curID == 0 {
+		return
+	}
+	p.invalidateNext()
+	p.seq++
+	id := p.seq
+	p.curID = id
+	p.curSrc = Opened{}
+	p.position, p.lastPos = offset, offset
+	// Don't reset listen state or pause state; just reopening at a new offset
+	if p.status != Paused {
+		p.setStatus(Loading)
+	}
+	p.reopening = true
+	p.openAsync(id, song, offset, false)
+}
+
 func (p *Player) openAsync(id uint64, song subsonic.Song, offset time.Duration, next bool) {
 	ctx := p.ctx
 	if ctx == nil {
@@ -694,17 +725,22 @@ func (p *Player) onEngine(ev audio.Event) {
 	switch ev.Kind {
 	case audio.EventStarted:
 		if ev.TrackID == p.nextID {
-			p.cursor = p.nextCursor
-			p.curID, p.curSrc = p.nextID, p.nextSrc
-			p.nextID, p.nextSrc = 0, Opened{}
-			p.prefetched = 0
-			p.position, p.lastPos = 0, 0
-			p.resetListen()
-			song, _ := p.currentSong()
-			p.emit(Event{Kind: TrackChanged, Song: song})
+			p.handover() // I1: use extracted helper
 		}
 		if ev.TrackID != p.curID {
 			return
+		}
+		if p.reopening { // I2: skip normal started handling for reopening seek
+			p.reopening = false
+			if pr, ok := p.curSrc.Source.(Promoter); ok {
+				pr.Promote()
+			}
+			p.failures = 0
+			p.lastMove = p.o.Now()
+			if p.status != Paused {
+				p.setStatus(Playing)
+			}
+			return // skip nowPlaying for reopening
 		}
 		if pr, ok := p.curSrc.Source.(Promoter); ok {
 			pr.Promote()
@@ -720,7 +756,8 @@ func (p *Player) onEngine(ev audio.Event) {
 			return
 		}
 		if p.nextID != 0 && p.nextSrc.Source != nil {
-			return // the engine has the successor; its Started will follow
+			p.handover() // I1: handover now instead of waiting for Started(B)
+			return
 		}
 		if c := p.followingCursor(true); c >= 0 {
 			p.startAt(c, 0)
@@ -743,6 +780,19 @@ func (p *Player) onEngine(ev audio.Event) {
 			p.trackFailed(song, ev.Err)
 		}
 	}
+}
+
+// handover transitions from current to the already-queued successor (I1).
+// Called when Ended(cur) arrives with successor ready, or when Started(next) arrives after handover.
+func (p *Player) handover() {
+	p.cursor = p.nextCursor
+	p.curID, p.curSrc = p.nextID, p.nextSrc
+	p.nextID, p.nextSrc = 0, Opened{}
+	p.prefetched = 0
+	p.position, p.lastPos = 0, 0
+	p.resetListen()
+	song, _ := p.currentSong()
+	p.emit(Event{Kind: TrackChanged, Song: song})
 }
 
 func (p *Player) onTick() {
