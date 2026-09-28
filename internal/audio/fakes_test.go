@@ -15,7 +15,7 @@ type fakeOutput struct {
 	data     []float32 // everything ever written
 	consumed uint64
 	flushes  int
-	onFlush  func()    // optional callback called after Flush completes (outside mu)
+	onFlush  func() // optional callback called after Flush completes (outside mu)
 }
 
 func newFakeOutput(ringFrames int) *fakeOutput { return &fakeOutput{ring: ringFrames} }
@@ -61,15 +61,15 @@ func (f *fakeOutput) written() []float32 {
 // fakeSource carries PCM for fakeDecoder. If block is set, reads wait on it
 // until the source is closed. If openBlock is set, fakeOpen waits on it.
 type fakeSource struct {
-	pcm              []float32
-	rate             int
-	openErr          error
-	block            chan struct{}
-	openBlock        chan struct{} // blocks fakeOpen if set
-	openStarted      chan struct{} // closed when fakeOpen begins
-	openStartedOnce  sync.Once     // protects closing openStarted
-	once             sync.Once
-	closed           chan struct{}
+	pcm             []float32
+	rate            int
+	openErr         error
+	block           chan struct{}
+	openBlock       chan struct{} // blocks fakeOpen if set
+	openStarted     chan struct{} // closed when fakeOpen begins
+	openStartedOnce sync.Once     // protects closing openStarted
+	once            sync.Once
+	closed          chan struct{}
 }
 
 func newFakeSource(pcm []float32, rate int) *fakeSource {

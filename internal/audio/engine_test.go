@@ -417,4 +417,3 @@ func TestEngineEventsFlowWhileDecodeBlocked(t *testing.T) {
 	playOut(t, out, 600)
 	expectEvent(t, e, EventEnded, 2)
 }
-
