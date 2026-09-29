@@ -64,7 +64,8 @@ var DefaultKeys = map[uint16]Button{
 
 // usLayout is what each key types on a US keyboard: {plain, with Shift}.
 var usLayout = func() map[uint16][2]rune {
-	m := map[uint16][2]rune{keySpace: {' ', ' '}, keyBackspace: {'\b', '\b'}}
+	m := map[uint16][2]rune{keySpace: {' ', ' '}, keyBackspace: {'\b', '\b'},
+		keyEnter: {'\n', '\n'}, keyKPEnter: {'\n', '\n'}}
 	rows := []struct {
 		first          uint16
 		plain, shifted string
@@ -151,7 +152,7 @@ func (t *translator) handle(typ, code uint16, value int32) []Event {
 		case 0:
 			return []Event{{Button: b, Kind: Release, Rune: r}}
 		}
-		if r != 0 {
+		if r != 0 && r != '\n' { // a held Enter must not confirm again and again
 			return []Event{{Kind: Press, Rune: r}}
 		}
 		return nil

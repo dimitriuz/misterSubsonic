@@ -230,7 +230,7 @@ func (s *SearchScreen) Handle(a *App, e input.Event) bool {
 				s.edit(a, s.query[:len(s.query)-1])
 			}
 		case keyLayout:
-			s.kb.ToggleLayout()
+			s.kb.Switch(k.to)
 		case keyClear:
 			s.edit(a, nil)
 		}
@@ -318,7 +318,7 @@ func (s *SearchScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		kbArea = gfx.R(field.X, field.Bottom()+p.Margin/4, field.W, 0)
 		results = gfx.R(area.X, field.Bottom(), area.W, area.Bottom()-field.Bottom())
 	}
-	s.drawField(a, c, field)
+	a.drawTextField(c, field, s.query, "Type or pick letters", false)
 	keyH := kbArea.W / kbUnits
 	if !wide {
 		keyH = p.RowH
@@ -352,37 +352,6 @@ func (s *SearchScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	if !s.inResults { // the focus is on the keyboard: dim the results
 		c.Fill(view, colBg.WithAlpha(0x60))
 	}
-}
-
-// drawField draws the query with a caret, or a hint when it is empty.
-func (s *SearchScreen) drawField(a *App, c *gfx.Canvas, r gfx.Rect) {
-	p := a.P
-	f := a.F.Body
-	c.Fill(r, colPanel)
-	x := r.X + p.Margin/2
-	y := r.Y + (r.H+f.Ascent()-f.Descent())/2
-	inner := r.Inset(p.Margin / 4)
-	if len(s.query) == 0 {
-		f.Draw(c, x, y, f.Truncate("Type or pick letters", r.W-p.Margin), colDim, inner)
-		return
-	}
-	text := string(s.query)
-	// Keep the end of a long query (where the typing is) visible.
-	for f.Measure(text) > r.W-p.Margin-f.Ascent()/2 && len(text) > 0 {
-		_, size := firstRune(text)
-		text = text[size:]
-	}
-	end := f.Draw(c, x, y, text, colText, inner)
-	c.Fill(gfx.R(end+1, y-f.Ascent(), max(f.Ascent()/8, 2), f.Ascent()+f.Descent()), colAccent)
-}
-
-func firstRune(s string) (rune, int) {
-	for i, r := range s {
-		if i > 0 {
-			return r, i
-		}
-	}
-	return 0, len(s)
 }
 
 // drawStatus explains the result state: searching, an error, nothing

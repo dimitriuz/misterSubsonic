@@ -33,8 +33,8 @@ func TestKeyboardNavigation(t *testing.T) {
 		t.Fatalf("under j: %q", got.label)
 	}
 	move(input.BtnLeft)
-	k.ToggleLayout()
-	if got := k.Focused(); got.label != "ABC" || !k.cyrillic {
+	k.Switch(k.Focused().to)
+	if got := k.Focused(); got.label != "ABC" || k.cur != 1 {
 		t.Fatalf("after toggle: %q", got.label)
 	}
 	move(input.BtnUp) // "эюя-'.&": the key nearest the middle of the switch key

@@ -302,7 +302,7 @@ func TestKeyboardLayoutsAreBuiltOnce(t *testing.T) {
 	if &a[0][0] != &b[0][0] {
 		t.Fatal("rows() rebuilt the layout")
 	}
-	k.ToggleLayout()
+	k.Switch(1)
 	c, d := k.rows(), k.rows()
 	if &c[0][0] != &d[0][0] || &a[0][0] == &c[0][0] {
 		t.Fatal("the Cyrillic layout is not cached separately")

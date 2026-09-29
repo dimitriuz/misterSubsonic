@@ -19,7 +19,7 @@ const held = new Set();
 function send(e, down) {
   if (down && (e.ctrlKey || e.altKey || e.metaKey)) return; // leave browser shortcuts alone
   const b = keys[e.code] || "";
-  const t = !down ? "" : e.key.length === 1 ? e.key : e.code === "Backspace" ? "\b" : "";
+  const t = !down ? "" : e.key.length === 1 ? e.key : e.code === "Backspace" ? "\b" : e.key === "Enter" ? "\n" : "";
   if (!b && !t) return;
   if (!down && !held.has(b)) return;
   e.preventDefault();

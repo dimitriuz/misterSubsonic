@@ -80,7 +80,7 @@ func TestTranslatorKeysAndMapOverride(t *testing.T) {
 	if got := tr.handle(evKey, btnEast, 1); got[0] != (Event{Button: BtnA, Kind: Press}) {
 		t.Fatalf("default east = %v", got)
 	}
-	if got := tr.handle(evKey, keyEnter, 0); got[0] != (Event{Button: BtnA, Kind: Release}) {
+	if got := tr.handle(evKey, keyEnter, 0); got[0] != (Event{Button: BtnA, Kind: Release, Rune: '\n'}) {
 		t.Fatalf("enter release = %v", got)
 	}
 	if got := tr.handle(evKey, keyDown, 2); got != nil {
@@ -182,5 +182,20 @@ func TestTranslatorTypesText(t *testing.T) {
 	}
 	if got := tr.handle(evKey, keyEnter, 2); got != nil {
 		t.Fatalf("enter autorepeat = %v", got)
+	}
+}
+
+// Enter is A and also types '\n' (the wizard's "next field"); holding it
+// must not confirm again and again.
+func TestEnterTypesNewlineOnce(t *testing.T) {
+	tr := newTranslator(nil, nil)
+	if got := tr.handle(evKey, keyEnter, 1); len(got) != 1 || got[0] != (Event{Button: BtnA, Kind: Press, Rune: '\n'}) {
+		t.Fatalf("enter = %v", got)
+	}
+	if got := tr.handle(evKey, keyKPEnter, 1); got[0].Rune != '\n' {
+		t.Fatalf("keypad enter = %v", got)
+	}
+	if got := tr.handle(evKey, keyEnter, 2); got != nil {
+		t.Fatalf("held enter repeats: %v", got)
 	}
 }
