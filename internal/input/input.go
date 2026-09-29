@@ -98,17 +98,21 @@ func (r *Repeater) NextDeadline() time.Time {
 	return r.next
 }
 
-// Due returns the repeats that are due at now.
+// Due returns the repeat that is due at now, if any. It emits at most one
+// repeat per call: after a stall or clock jump the schedule restarts from now
+// instead of bursting the missed repeats.
 func (r *Repeater) Due(now time.Time) []Event {
-	var out []Event
-	for r.held != BtnNone && !now.Before(r.next) {
-		out = append(out, Event{Button: r.held, Kind: Repeat})
-		r.count++
-		step := RepeatRate
-		if r.count >= FastAfter {
-			step = RepeatFast
-		}
-		r.next = r.next.Add(step)
+	if r.held == BtnNone || now.Before(r.next) {
+		return nil
 	}
-	return out
+	r.count++
+	step := RepeatRate
+	if r.count >= FastAfter {
+		step = RepeatFast
+	}
+	r.next = r.next.Add(step)
+	if !r.next.After(now) {
+		r.next = now.Add(step)
+	}
+	return []Event{{Button: r.held, Kind: Repeat}}
 }

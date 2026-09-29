@@ -66,6 +66,10 @@ var misterSlots = [...]Button{BtnRight, BtnLeft, BtnDown, BtnUp, BtnA, BtnB, Btn
 // ParseMisterMap reads an input_VID_PID_v3.map file into a key-code map.
 // Slots without a key code (0, or axis entries above 0x2ff) are skipped;
 // directions on axes/hats are handled generically.
+//
+// Only the low 16 bits of each slot are used as the key code, as MiSTer Hi-Fi
+// does; the high bits are ignored. Maps are per device, so a stray code that
+// is never produced by that device is harmless.
 func ParseMisterMap(b []byte) (map[uint16]Button, error) {
 	if len(b) < 4*len(misterSlots) {
 		return nil, fmt.Errorf("input: map file too short (%d bytes)", len(b))

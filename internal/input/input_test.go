@@ -115,3 +115,31 @@ func TestTranslatorHatAndStick(t *testing.T) {
 		t.Fatalf("uncalibrated axis = %v", got)
 	}
 }
+
+func TestRepeaterNoBurstAfterStall(t *testing.T) {
+	var r Repeater
+	t0 := time.Unix(1000, 0)
+	r.Feed(Event{BtnDown, Press}, t0)
+	now := t0.Add(5 * time.Second)
+	if got := r.Due(now); len(got) != 1 {
+		t.Fatalf("Due after a stall = %d events, want 1", len(got))
+	}
+	if got := r.Due(now); len(got) != 0 {
+		t.Fatalf("second Due at the same time = %d events, want 0", len(got))
+	}
+	if got := r.Due(now.Add(RepeatRate)); len(got) != 1 {
+		t.Fatalf("Due one step later = %d events, want 1", len(got))
+	}
+}
+
+func TestParseMisterMapMasksHighBits(t *testing.T) {
+	b := make([]byte, 128)
+	binary.LittleEndian.PutUint32(b[4*4:], 0x10001) // slot A: high bits set, key code 1
+	m, err := ParseMisterMap(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[1] != BtnA || len(m) != 1 {
+		t.Fatalf("map = %v, want only code 1 -> BtnA", m)
+	}
+}
