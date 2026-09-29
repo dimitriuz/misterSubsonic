@@ -86,3 +86,28 @@ Items the Plan 2a reviews triaged as "fix later". Plan 2a itself is complete and
 - Search: a stale page is dropped, errors show over existing results, a failed page retries, editing clears an old error.
 
 Still open from the lists above: the Plan 3 items, the input nits, the art and cache nits, and the HomeScreen (CRT) focus shift when the Resume row arrives.
+
+## Plan 2c must handle (from the Plan 2b reviews)
+
+- **CRT Home keeps its Resume row after playback starts.** A on it replaces the live queue with the old saved one. The HDMI feed hides its card once a queue exists; do the same in `HomeScreen`.
+- **Server switching:**
+  - Load closures read `a.Library()`/`a.Player()` on worker goroutines. Capture them on the UI goroutine, as `withSongs` does, before the client can change.
+  - Reset `App.artists`, `App.stars` and `starGen` on a switch.
+  - `startSession` ignores `ActiveServer`'s ok.
+- **Starred freshness:**
+  - Returning to Starred by B (a pop) doesn't reload it after a star change.
+  - A `toggleStar` whose screen was popped before the server answered is lost locally (the server has it).
+- **Marquee:** a focused tab row still scrolls the child list's long title. Only one marquee slot exists.
+- **Input and UX nits:**
+  - `toggleStar` double press before the reply.
+  - Grid R loses the column on a short last row.
+  - The queue menu is titled with the song while Clear acts on the queue.
+  - `albumsSongs` is silent on a partial failure.
+  - A held key at a failing search list's end re-requests once per round trip.
+  - The CRT playlist page shows one track under Play/Shuffle.
+- **Tests and docs:**
+  - The every-button sweep never runs the root at depth 1, with resume and the clock advanced.
+  - Test gaps listed in the Plan 2b reviews: openSeek reset, Shift leaves Button unchanged, tab child load after pop, playlist and search edge cases.
+  - The e2e awk check and timing are loose.
+  - The README controls are terser than the plan's table.
+- **Plan 3:** `drawField` trims by rune.
