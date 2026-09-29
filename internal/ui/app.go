@@ -17,6 +17,15 @@ import (
 type Library interface {
 	GetAlbumList2(ctx context.Context, q subsonic.AlbumListQuery) ([]subsonic.Album, error)
 	GetAlbum(ctx context.Context, id subsonic.ID) (*subsonic.AlbumWithSongs, error)
+	GetArtists(ctx context.Context) ([]subsonic.ArtistIndex, error)
+	GetArtist(ctx context.Context, id subsonic.ID) (*subsonic.ArtistWithAlbums, error)
+	GetGenres(ctx context.Context) ([]subsonic.Genre, error)
+	GetPlaylists(ctx context.Context) ([]subsonic.Playlist, error)
+	GetPlaylist(ctx context.Context, id subsonic.ID) (*subsonic.PlaylistWithSongs, error)
+	GetStarred2(ctx context.Context) (*subsonic.Starred, error)
+	Search3(ctx context.Context, query string, q subsonic.SearchQuery) (*subsonic.SearchResult, error)
+	Star(ctx context.Context, t subsonic.StarTarget) error
+	Unstar(ctx context.Context, t subsonic.StarTarget) error
 }
 
 // Player is the playback API the screens use (subset of *player.Player).
@@ -24,6 +33,10 @@ type Player interface {
 	State() player.State
 	Events() <-chan player.Event
 	PlayNow(songs []subsonic.Song, start int)
+	PlayNext(songs []subsonic.Song)
+	Enqueue(songs []subsonic.Song)
+	Clear()
+	SetVolumeDB(db float64)
 	TogglePause()
 	Next()
 	Prev()
@@ -50,6 +63,19 @@ type Screen interface {
 	// apply global keys (B = back, Y = Now Playing, Start = play/pause).
 	Handle(a *App, e input.Event) bool
 	Draw(a *App, c *gfx.Canvas, area gfx.Rect)
+}
+
+// TextInput is a screen that takes typed characters (physical keyboards).
+// Text returns false to let the key act as its button instead (Backspace
+// in an empty field goes back).
+type TextInput interface {
+	Text(a *App, r rune) bool
+}
+
+// owner is a screen that shows other screens inside itself (the HDMI root
+// shows the selected section); their loads run under the owner's entry.
+type owner interface {
+	Owns(s Screen) bool
 }
 
 type Options struct {
@@ -82,11 +108,27 @@ type toast struct {
 	until time.Time
 }
 
+type timer struct {
+	at    time.Time
+	owner Screen
+	f     func()
+}
+
+// marquee tracks the one focused text that scrolls because it doesn't fit.
+type marquee struct {
+	text  string
+	since time.Time
+	seen  bool // drawn in the current frame
+}
+
 const (
 	toastTime    = 3 * time.Second
 	maxToasts    = 3
 	exitHold     = 2 * time.Second
 	progressTick = 500 * time.Millisecond
+	marqueeDelay = 1200 * time.Millisecond // before a focused long title starts to scroll
+	marqueeFrame = 50 * time.Millisecond
+	marqueeGap   = "     "
 )
 
 // App owns the screen stack and the event loop. All methods except Post
@@ -99,21 +141,29 @@ type App struct {
 	scaler  *gfx.Scaler
 	stack   []screenEntry
 	toasts  []toast
-	rep     input.Repeater
-	in      chan input.Event
-	post    chan func()
-	loads   int
-	dirty   bool
-	quit    bool
-	bDown   time.Time // when B went down on the root screen (zero if not held)
-	confirm bool      // exit confirmation shown
+	timers  []timer
+	mq      marquee
+	animate bool // something on screen moves (marquee): redraw soon
+	// swallowed holds buttons whose press was typed into a text field, so
+	// their releases are dropped too.
+	swallowed map[input.Button]bool
+	insecure  bool
+	rep       input.Repeater
+	in        chan input.Event
+	post      chan func()
+	loads     int
+	dirty     bool
+	quit      bool
+	bDown     time.Time // when B went down on the root screen (zero if not held)
+	confirm   bool      // exit confirmation shown
 }
 
 func New(o Options) (*App, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true}
+	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
+		swallowed: map[input.Button]bool{}}
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err
@@ -151,6 +201,10 @@ func (a *App) Attach(lib Library, pl Player, art ArtSource) {
 	a.o.Library, a.o.Player, a.o.Art = lib, pl, art
 	a.dirty = true
 }
+
+// SetInsecure shows the "insecure" badge (the server's certificate isn't
+// checked: insecure_skip_verify). Call on the UI goroutine.
+func (a *App) SetInsecure(on bool) { a.insecure, a.dirty = on, true }
 
 // Post runs f on the UI goroutine. Safe from any goroutine.
 func (a *App) Post(f func()) {
@@ -229,9 +283,13 @@ func (a *App) Top() Screen {
 	return a.stack[len(a.stack)-1].s
 }
 
+// entry finds the stack entry of s, or of the screen that shows s inside itself.
 func (a *App) entry(s Screen) *screenEntry {
 	for i := range a.stack {
 		if a.stack[i].s == s {
+			return &a.stack[i]
+		}
+		if o, ok := a.stack[i].s.(owner); ok && o.Owns(s) {
 			return &a.stack[i]
 		}
 	}
@@ -241,11 +299,17 @@ func (a *App) entry(s Screen) *screenEntry {
 // Load runs fn off the UI goroutine and delivers its result to done on the
 // UI goroutine, unless screen s has been popped by then.
 func (a *App) Load(s Screen, fn func(ctx context.Context) (any, error), done func(any, error)) {
+	a.LoadCancel(s, fn, done)
+}
+
+// LoadCancel is Load that can be called off: after cancel, fn's context is
+// done and done is never called (search cancels the previous query).
+func (a *App) LoadCancel(s Screen, fn func(ctx context.Context) (any, error), done func(any, error)) (cancel func()) {
 	e := a.entry(s)
 	if e == nil {
-		return
+		return func() {}
 	}
-	ctx := e.ctx
+	ctx, cancel := context.WithCancel(e.ctx)
 	a.loads++
 	go func() {
 		v, err := fn(ctx)
@@ -255,8 +319,15 @@ func (a *App) Load(s Screen, fn func(ctx context.Context) (any, error), done fun
 				done(v, err)
 				a.dirty = true
 			}
+			cancel()
 		})
 	}()
+	return cancel
+}
+
+// After runs f on the UI goroutine after d, unless owner has been popped.
+func (a *App) After(owner Screen, d time.Duration, f func()) {
+	a.timers = append(a.timers, timer{a.o.Now().Add(d), owner, f})
 }
 
 // Toast shows a short message over the current screen.
@@ -320,6 +391,12 @@ func (a *App) untilWake() time.Duration {
 	for _, t := range a.toasts {
 		consider(t.until)
 	}
+	for _, t := range a.timers {
+		consider(t.at)
+	}
+	if a.animate {
+		consider(now.Add(marqueeFrame))
+	}
 	if !a.bDown.IsZero() {
 		consider(a.bDown.Add(exitHold))
 	}
@@ -346,6 +423,25 @@ func (a *App) onWake() {
 		}
 	}
 	a.toasts = kept
+	var due []timer
+	pending := a.timers[:0]
+	for _, t := range a.timers {
+		if now.Before(t.at) {
+			pending = append(pending, t)
+		} else {
+			due = append(due, t)
+		}
+	}
+	a.timers = pending
+	for _, t := range due {
+		if a.entry(t.owner) != nil {
+			t.f()
+			a.dirty = true
+		}
+	}
+	if a.animate {
+		a.dirty = true
+	}
 	if !a.bDown.IsZero() && len(a.stack) == 1 && !now.Before(a.bDown.Add(exitHold)) {
 		a.bDown = time.Time{}
 		a.confirm = true
@@ -369,6 +465,23 @@ func (a *App) onPlayer(ev player.Event) {
 
 func (a *App) onInput(e input.Event) {
 	now := a.o.Now()
+	if e.Rune != 0 && !a.confirm {
+		if e.Kind == input.Press {
+			if t, ok := a.Top().(TextInput); ok && t.Text(a, e.Rune) {
+				a.dirty = true
+				if e.Button != input.BtnNone {
+					a.swallowed[e.Button] = true
+				}
+				return
+			}
+		} else if a.swallowed[e.Button] {
+			delete(a.swallowed, e.Button)
+			return
+		}
+	}
+	if e.Button == input.BtnNone {
+		return
+	}
 	a.rep.Feed(e, now)
 	if e.Button == input.BtnB {
 		if e.Kind == input.Press && len(a.stack) == 1 && !a.confirm {
@@ -418,6 +531,16 @@ func (a *App) dispatch(e input.Event) {
 		if !a.popTo(func(s Screen) bool { _, ok := s.(*NowPlayingScreen); return ok }) {
 			a.Push(NewNowPlayingScreen())
 		}
+	case input.BtnQueue:
+		if !a.hasQueue() {
+			break
+		}
+		if _, ok := a.Top().(*QueueScreen); ok {
+			break
+		}
+		if !a.popTo(func(s Screen) bool { _, ok := s.(*QueueScreen); return ok }) {
+			a.Push(NewQueueScreen())
+		}
 	}
 }
 
@@ -425,24 +548,39 @@ func (a *App) hasQueue() bool {
 	return a.o.Player != nil && len(a.o.Player.State().Queue) > 0
 }
 
+// hasCurrent reports whether a song is selected (the mini bar shows it).
+func (a *App) hasCurrent() bool {
+	if a.o.Player == nil {
+		return false
+	}
+	_, ok := a.o.Player.State().Current()
+	return ok
+}
+
 func (a *App) render() error {
 	a.dirty = false
+	a.animate, a.mq.seen = false, false
 	c := a.canvas
 	c.Clear(colBg)
 	top := a.Top()
 	p := a.P
-	body := gfx.R(0, 0, p.W, p.H)
+	// Content stays inside the title-safe area (SafeY lines top and bottom;
+	// panels still run to the edges).
+	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY)
 	if top != nil {
 		_, fullscreen := top.(*NowPlayingScreen)
 		if !fullscreen {
 			a.drawHeader(c, top.Title())
-			body = gfx.R(0, p.HeaderH, p.W, p.H-p.HeaderH)
-			if a.hasQueue() {
+			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, p.H-2*p.SafeY-p.HeaderH)
+			if a.hasCurrent() {
 				body.H -= p.MiniBarH
-				a.drawMiniBar(c, gfx.R(0, p.H-p.MiniBarH, p.W, p.MiniBarH))
+				a.drawMiniBar(c, gfx.R(0, body.Bottom(), p.W, p.MiniBarH))
 			}
 		}
 		top.Draw(a, c, body)
+	}
+	if !a.mq.seen {
+		a.mq = marquee{}
 	}
 	a.drawToasts(c)
 	if a.confirm {
@@ -453,16 +591,46 @@ func (a *App) render() error {
 
 func (a *App) drawHeader(c *gfx.Canvas, title string) {
 	p := a.P
-	c.Fill(gfx.R(0, 0, p.W, p.HeaderH), colPanel)
+	c.Fill(gfx.R(0, 0, p.W, p.SafeY+p.HeaderH), colPanel)
 	f := a.F.Title
-	y := (p.HeaderH + f.Ascent() - f.Descent()) / 2
-	f.Draw(c, p.Margin, y, f.Truncate(title, p.W-2*p.Margin), colText, c.Bounds())
+	y := p.SafeY + (p.HeaderH+f.Ascent()-f.Descent())/2
+	w := p.W - 2*p.Margin
+	if a.insecure {
+		fs := a.F.Small
+		badge := "insecure"
+		bw := fs.Measure(badge)
+		fs.Draw(c, p.W-p.Margin-bw, y, badge, colError, c.Bounds())
+		w -= bw + p.Margin/2
+	}
+	f.Draw(c, p.Margin, y, f.Truncate(title, w), colText, c.Bounds())
+}
+
+// drawFit draws s at (x, baseline y) within w pixels: cut with "…" when it
+// doesn't fit, or, when focused, scrolling after a short pause (marquee).
+func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx.Color, clip gfx.Rect, focused bool) {
+	if !focused || f.Measure(s) <= w {
+		f.Draw(c, x, y, f.Truncate(s, w), col, clip)
+		return
+	}
+	now := a.o.Now()
+	if a.mq.text != s {
+		a.mq = marquee{text: s, since: now}
+	}
+	a.mq.seen, a.animate = true, true
+	off := 0
+	if run := now.Sub(a.mq.since) - marqueeDelay; run > 0 {
+		off = int(int64(run) * int64(a.P.MarqueeSpeed) / int64(time.Second))
+		off %= f.Measure(s + marqueeGap)
+	}
+	vis, dx := f.Marquee(s, off)
+	area := gfx.R(x, y-f.Ascent(), w, f.Height()).Intersect(clip)
+	f.Draw(c, x+dx, y, vis, col, area)
 }
 
 func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 	st := a.o.Player.State()
 	song, _ := st.Current()
-	c.Fill(r, colPanel)
+	c.Fill(gfx.R(r.X, r.Y, r.W, a.P.H-r.Y), colPanel) // to the bottom edge, past the safe area
 	p := a.P
 	x := p.Margin
 	art := r.H - 2*max(p.Margin/3, 2)
@@ -487,7 +655,7 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 func (a *App) drawToasts(c *gfx.Canvas) {
 	f := a.F.Body
 	p := a.P
-	y := p.H - p.MiniBarH - p.Margin
+	y := p.H - p.SafeY - p.MiniBarH - p.Margin
 	for i := len(a.toasts) - 1; i >= 0; i-- {
 		text := f.Truncate(a.toasts[i].text, p.W-4*p.Margin)
 		w := f.Measure(text) + p.Margin

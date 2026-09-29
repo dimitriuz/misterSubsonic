@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"hash/fnv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,11 +17,19 @@ import (
 )
 
 type fakeLibrary struct {
-	mu     sync.Mutex
-	albums []subsonic.Album
-	tracks map[subsonic.ID][]subsonic.Song
-	err    error
-	calls  []subsonic.AlbumListQuery
+	mu        sync.Mutex
+	albums    []subsonic.Album
+	tracks    map[subsonic.ID][]subsonic.Song
+	artists   []subsonic.ArtistIndex
+	genres    []subsonic.Genre
+	playlists []subsonic.Playlist
+	plSongs   map[subsonic.ID][]subsonic.Song
+	starred   subsonic.Starred
+	err       error
+	calls     []subsonic.AlbumListQuery
+	searches  []string
+	stars     []string      // "star al-1", "unstar s2"
+	block     chan struct{} // if set, Search3 waits for it (or ctx)
 }
 
 func (l *fakeLibrary) GetAlbumList2(_ context.Context, q subsonic.AlbumListQuery) ([]subsonic.Album, error) {
@@ -49,6 +58,138 @@ func (l *fakeLibrary) GetAlbum(_ context.Context, id subsonic.ID) (*subsonic.Alb
 		}
 	}
 	return nil, &subsonic.APIError{Code: subsonic.CodeNotFound, Message: "no album"}
+}
+
+func (l *fakeLibrary) GetArtists(context.Context) ([]subsonic.ArtistIndex, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.artists, l.err
+}
+
+func (l *fakeLibrary) GetArtist(_ context.Context, id subsonic.ID) (*subsonic.ArtistWithAlbums, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return nil, l.err
+	}
+	for _, ix := range l.artists {
+		for _, ar := range ix.Artists {
+			if ar.ID == id {
+				out := &subsonic.ArtistWithAlbums{Artist: ar}
+				for _, al := range l.albums {
+					if al.ArtistID == id {
+						out.Albums = append(out.Albums, al)
+					}
+				}
+				return out, nil
+			}
+		}
+	}
+	return nil, &subsonic.APIError{Code: subsonic.CodeNotFound, Message: "no artist"}
+}
+
+func (l *fakeLibrary) GetGenres(context.Context) ([]subsonic.Genre, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.genres, l.err
+}
+
+func (l *fakeLibrary) GetPlaylists(context.Context) ([]subsonic.Playlist, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.playlists, l.err
+}
+
+func (l *fakeLibrary) GetPlaylist(_ context.Context, id subsonic.ID) (*subsonic.PlaylistWithSongs, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return nil, l.err
+	}
+	for _, pl := range l.playlists {
+		if pl.ID == id {
+			return &subsonic.PlaylistWithSongs{Playlist: pl, Songs: l.plSongs[id]}, nil
+		}
+	}
+	return nil, &subsonic.APIError{Code: subsonic.CodeNotFound, Message: "no playlist"}
+}
+
+func (l *fakeLibrary) GetStarred2(context.Context) (*subsonic.Starred, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return nil, l.err
+	}
+	s := l.starred
+	return &s, nil
+}
+
+// Search3 matches names containing the query (case-insensitive).
+func (l *fakeLibrary) Search3(ctx context.Context, query string, q subsonic.SearchQuery) (*subsonic.SearchResult, error) {
+	l.mu.Lock()
+	l.searches = append(l.searches, query)
+	block := l.block
+	l.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return nil, l.err
+	}
+	has := func(s string) bool { return strings.Contains(strings.ToLower(s), strings.ToLower(query)) }
+	r := &subsonic.SearchResult{}
+	for _, ix := range l.artists {
+		for _, ar := range ix.Artists {
+			if has(ar.Name) {
+				r.Artists = append(r.Artists, ar)
+			}
+		}
+	}
+	for _, al := range l.albums {
+		if has(al.Name) || has(al.Artist) {
+			r.Albums = append(r.Albums, al)
+		}
+	}
+	for _, al := range l.albums {
+		for _, so := range l.tracks[al.ID] {
+			if has(so.Title) {
+				r.Songs = append(r.Songs, so)
+			}
+		}
+	}
+	page := func(n, off, count int) (int, int) { return min(off, n), min(off+count, n) }
+	a0, a1 := page(len(r.Artists), q.ArtistOffset, q.ArtistCount)
+	b0, b1 := page(len(r.Albums), q.AlbumOffset, q.AlbumCount)
+	c0, c1 := page(len(r.Songs), q.SongOffset, q.SongCount)
+	r.Artists, r.Albums, r.Songs = r.Artists[a0:a1], r.Albums[b0:b1], r.Songs[c0:c1]
+	return r, nil
+}
+
+func (l *fakeLibrary) starCall(verb string, t subsonic.StarTarget) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return l.err
+	}
+	for _, ids := range [][]subsonic.ID{t.SongIDs, t.AlbumIDs, t.ArtistIDs} {
+		for _, id := range ids {
+			l.stars = append(l.stars, verb+" "+string(id))
+		}
+	}
+	return nil
+}
+
+func (l *fakeLibrary) Star(_ context.Context, t subsonic.StarTarget) error {
+	return l.starCall("star", t)
+}
+func (l *fakeLibrary) Unstar(_ context.Context, t subsonic.StarTarget) error {
+	return l.starCall("unstar", t)
 }
 
 type fakePlayer struct {
@@ -83,6 +224,19 @@ func (p *fakePlayer) ResumeFrom(r *player.Resume) {
 func (p *fakePlayer) Resumable(context.Context) (*player.Resume, error) {
 	return p.resume, nil
 }
+func (p *fakePlayer) PlayNext(songs []subsonic.Song) {
+	p.call("playnext")
+	p.played = songs
+}
+func (p *fakePlayer) Enqueue(songs []subsonic.Song) {
+	p.call("enqueue")
+	p.played = songs
+}
+func (p *fakePlayer) Clear() {
+	p.call("clear")
+	p.st.Queue, p.st.Index, p.st.Status = nil, -1, player.Stopped
+}
+func (p *fakePlayer) SetVolumeDB(db float64) { p.st.VolumeDB = max(-60, min(0, db)) }
 func (p *fakePlayer) PlayNow(songs []subsonic.Song, start int) {
 	p.call("playnow")
 	p.played, p.start = songs, start

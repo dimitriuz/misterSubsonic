@@ -23,13 +23,17 @@ type Profile struct {
 	ArtNow   int // Now Playing cover size
 	ArtAlbum int // album header cover size
 	MiniBarH int
+	// SafeY keeps content off the top and bottom lines a CRT's overscan
+	// hides (title-safe, spec §8.2); panels still run to the edge.
+	SafeY        int
+	MarqueeSpeed int // px per second
 }
 
 var (
 	ProfileHDMI = Profile{Name: "hdmi", W: 1280, H: 720, Margin: 36, HeaderH: 64, RowH: 56, Row2H: 76, Thumb: 60,
-		Title: 34, Body: 24, Small: 18, ArtNow: 400, ArtAlbum: 200, MiniBarH: 72}
-	ProfileCRT240 = Profile{Name: "crt", W: 320, H: 240, Margin: 12, HeaderH: 22, RowH: 18, Row2H: 32, Thumb: 26,
-		Title: 15, Body: 12, Small: 10, ArtNow: 110, ArtAlbum: 56, MiniBarH: 24}
+		Title: 34, Body: 24, Small: 18, ArtNow: 400, ArtAlbum: 200, MiniBarH: 72, MarqueeSpeed: 60}
+	ProfileCRT240 = Profile{Name: "crt", W: 320, H: 240, Margin: 16, HeaderH: 22, RowH: 18, Row2H: 32, Thumb: 26,
+		Title: 15, Body: 12, Small: 10, ArtNow: 110, ArtAlbum: 56, MiniBarH: 24, SafeY: 12, MarqueeSpeed: 24}
 )
 
 // PickProfile chooses the layout for a framebuffer (spec §8.1): "auto" picks
