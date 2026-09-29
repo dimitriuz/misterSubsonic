@@ -62,3 +62,12 @@ Items the Plan 1 reviews triaged as "fix later". Plans 2 and 3 should pick these
   - Document that the effective open timeout is 10 s (the header timer).
 - **Config:** ship `config.example.toml`, since `Save` already references it.
 - **Mock server:** `serveTranscode` ignores `timeOffset`.
+
+## Known intermittent failure (unresolved)
+
+- On 2026-09-29, one full `go test -race ./...` run reported `FAIL mistersubsonic/internal/audio 0.863s`. The failure came early, which suggests an assertion or a race report rather than a timeout. The output was not captured.
+- It did not reproduce in 20 further full-suite runs or 95 audio-package runs under CPU stress (`-cpu 1,2` alongside player/stream load).
+- Suspects:
+  - the device tests, which share the global miniaudio device (`TestNullDeviceConsumesAndFlushes`, `TestFlushAfterDeviceStopped`)
+  - the timing of the new `openWait`/seek tests
+- Next time it appears, keep the full `-v` log. CI runs with `-race` on every push, so it will show up there if it recurs.
