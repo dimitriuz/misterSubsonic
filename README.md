@@ -6,9 +6,25 @@ Design: `docs/superpowers/specs/2026-09-28-mister-subsonic-design.md`.
 Status: **playback core plus the library interface**: a home feed with resume, artists (A–Z),
 albums (A–Z, by year, by genre), playlists, starred items and search with an on-screen keyboard,
 album pages, Now Playing and the queue, on HDMI (sidebar and cover grids) or CRT (lists)
-layouts, driven by a controller or keyboard. Streaming, FLAC/MP3/WAV decoding, gapless playback,
-seek, scrobbling and resume work. Still to come: the setup wizard, settings, the screensaver and
-the MiSTer launcher. On-device (MiSTer) checks are still pending; see `docs/spikes.md`.
+layouts, driven by a controller or keyboard; a setup wizard, Settings (servers, playback,
+display) and a screensaver. Streaming, FLAC/MP3/WAV decoding, gapless playback, seek,
+scrobbling and resume work. Still to come: the MiSTer launcher and releases. On-device (MiSTer)
+checks are still pending; see `docs/spikes.md`.
+
+## Setup
+
+On first start the app runs a setup wizard: server address (`http://` / `https://` and `:4533`
+are one key away), username, password and, for servers that hand them out, an API key. It
+tests the login and saves `config.toml` next to the app. With token login (most servers) only a
+token and salt are saved, never the password; servers that need the plain password (LDAP) get it
+stored only after you allow it, and a self-signed certificate is skipped only after you allow
+that (the safer way is `ca_file`, below). A config file the app can't read is kept as
+`config.toml.invalid-<date>` when the wizard replaces it.
+
+Settings (the last section) switches between servers, adds and removes them, and changes the
+volume, ReplayGain, scrobbling, transcoding, the layout and the screensaver (dark screen with a
+drifting cover after some idle minutes on Now Playing; off with 0). Each server keeps its resume
+state, scrobble queue and cover cache in `servers/<name>/` next to the config.
 
 ## Controls
 
@@ -48,7 +64,7 @@ bin/mss-cli -config config.toml ping
 bin/mss-cli -config config.toml play-album <album-id>
 ```
 
-`config.toml` needs at least one server:
+`config.toml` can also be written by hand; it needs at least one server:
 
 ```toml
 [[server]]

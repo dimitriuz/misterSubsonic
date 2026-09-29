@@ -54,4 +54,25 @@ if [ "$frames" -lt 5 ] || ! grep -q 'stream so-0' "$tmp/mock.log" || ! searched_
   cat "$tmp/mock.log" >&2
   exit 1
 fi
-echo "e2e-ui ok: $frames frames rendered; the feed and Search both played (null device)"
+
+# Second run, no config yet: the setup wizard (typed as keyboard text)
+# tests the mock server, saves the config (a token, not the password) and
+# connects; then the feed's first cover plays.
+setup="$tmp/setup"
+mkdir "$setup"
+before=$(wc -l < "$tmp/mock.log")
+"$tmp/mistersubsonic" -config "$setup/config.toml" -display headless -null \
+  -keys "pause:1500ms,'127.0.0.1:$port,enter,'test,enter,'test,enter,enter,a:2s,a:3s,a:1s" \
+  -exit-after 14s > "$tmp/setup.log" 2>&1 || {
+  echo "e2e-ui failed: the setup run exited with an error" >&2
+  cat "$tmp/setup.log" >&2
+  exit 1
+}
+if ! grep -q '^ *token = ' "$setup/config.toml" 2>/dev/null || ! grep -q '^ *salt = ' "$setup/config.toml" ||
+  grep -q 'password' "$setup/config.toml" || ! tail -n +"$((before + 1))" "$tmp/mock.log" | grep -q 'stream so-'; then
+  echo "e2e-ui failed: the wizard didn't save a token config or nothing played after it; config:" >&2
+  cat "$setup/config.toml" >&2 2>/dev/null
+  tail -n +"$((before + 1))" "$tmp/mock.log" >&2
+  exit 1
+fi
+echo "e2e-ui ok: $frames frames rendered; the feed and Search played; the setup wizard saved a token config and played (null device)"
