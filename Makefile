@@ -7,13 +7,17 @@ ARM_ENV := GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 \
            CC="$(ZIG) cc -target arm-linux-gnueabihf.2.31 -mcpu=cortex_a9"
 
 
-.PHONY: build test vet e2e viewer mister mister-test deploy-dev vendor-check clean
+.PHONY: build test launcher-test vet e2e viewer mister mister-test deploy-dev vendor-check clean
 
 build:
 	$(GO) build -o $(BIN)/ ./cmd/... ./tools/...
 
-test:
+test: launcher-test
 	$(GO) test -race ./...
+
+# The Scripts-menu launcher, against stand-ins for BGM, SAM and the app.
+launcher-test:
+	./scripts/test-launcher.sh
 
 vet:
 	$(GO) vet ./...

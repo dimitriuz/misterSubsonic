@@ -1,0 +1,85 @@
+#!/bin/bash
+# MiSTer Subsonic: plays music from a Subsonic or Navidrome server.
+#
+# This launcher runs the app full screen and comes back here when you exit
+# it (Settings → Exit, or hold B on the home screen). While the app runs,
+# background music (BGM) is stopped and Super Attract Mode (SAM) is
+# disabled; both come back afterwards. The app keeps its settings and log
+# in /media/fat/mistersubsonic.
+#
+# The MSS_* variables are for testing.
+
+DIR=${MSS_DIR:-/media/fat/mistersubsonic}
+APP=$DIR/mistersubsonic
+LOCK=${MSS_LOCK:-/tmp/mistersubsonic.lock}
+LOCK_WAIT=${MSS_LOCK_WAIT:-5}
+BGM_SOCK=${MSS_BGM_SOCK:-/tmp/bgm.sock}
+SAM=${MSS_SAM:-/media/fat/Scripts/MiSTer_SAM_on.sh}
+
+if [ ! -x "$APP" ]; then
+	echo "MiSTer Subsonic isn't installed: $APP is missing."
+	exit 1
+fi
+
+# An app left running (after a crash, or started by hand) would fight this
+# one for the screen and the controllers: stop it first.
+stop_leftovers() {
+	local pids
+	pids=$(pidof mistersubsonic) || return 0
+	echo "Stopping a MiSTer Subsonic left running..."
+	kill $pids 2>/dev/null
+	for _ in 1 2 3 4 5; do
+		pidof mistersubsonic >/dev/null || return 0
+		sleep 1
+	done
+	pids=$(pidof mistersubsonic) && kill -9 $pids 2>/dev/null
+	sleep 1
+}
+stop_leftovers
+
+# One launcher at a time. The app inherits the lock and holds it while it runs.
+exec 9>"$LOCK"
+if ! flock -w "$LOCK_WAIT" 9; then
+	echo "MiSTer Subsonic is already being started."
+	exit 1
+fi
+
+# BGM takes commands on its socket. It can't pause: stop it, play it again after.
+bgm() { printf '%s' "$1" | socat -t 2 - "UNIX-CONNECT:$BGM_SOCK" 2>/dev/null; }
+bgm_stopped=
+if [ -S "$BGM_SOCK" ]; then
+	status=$(bgm status)
+	if [ -n "$status" ] && [ "$(printf '%s' "$status" | cut -f2)" != disabled ]; then
+		bgm stop
+		bgm_stopped=1
+	fi
+fi
+
+# SAM would start a game over the app once it thinks the MiSTer is idle.
+sam_disabled=
+if [ -x "$SAM" ] && { pidof MiSTer_SAM_MCP >/dev/null || ps | grep -q '[M]iSTer_SAM_MCP'; }; then
+	"$SAM" disable >/dev/null 2>&1
+	sam_disabled=1
+fi
+
+restore() {
+	"$APP" -restore-console >/dev/null 2>&1 # text mode again, even after a crash
+	printf '\033[?25h\033[2J\033[H'          # the cursor back, the screen cleared
+	[ -n "$bgm_stopped" ] && bgm play
+	[ -n "$sam_disabled" ] && "$SAM" enable >/dev/null 2>&1
+	return 0
+}
+trap restore EXIT
+trap 'exit 130' INT TERM
+
+printf '\033[?25l' # hide the cursor
+"$APP" "$@"
+code=$?
+trap - EXIT
+restore
+if [ "$code" -eq 0 ]; then
+	echo "MiSTer Subsonic closed."
+else
+	echo "MiSTer Subsonic stopped with an error ($code). The log is in $DIR/log.txt."
+fi
+exit "$code"
