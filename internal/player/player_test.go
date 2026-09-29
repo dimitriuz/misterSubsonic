@@ -725,3 +725,29 @@ func TestPlayerStopsReadingAClosedEngineStream(t *testing.T) {
 		t.Fatalf("Events() read %d times: the player spun on the closed stream", n)
 	}
 }
+
+// An MP3 of known size and length seeks by reopening the stream near the
+// target instead of asking the decoder, which would decode from the start.
+func TestSeekingAnMP3ReopensNearTheTarget(t *testing.T) {
+	h := newHarness(t, nil)
+	q := songs(2, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	q[1].Suffix = "mp3" // no size: the decoder seeks
+	h.p.PlayNow(q, 0)
+	h.playAndStart(1)
+	h.p.Seek(100 * time.Second)
+	h.waitFor("reopen", func() bool { return h.eng.playCount() == 2 })
+	calls := h.opener.callList()
+	if last := calls[len(calls)-1]; last.id != "sa" || last.offset != 100*time.Second {
+		t.Fatalf("reopen call = %+v", last)
+	}
+	if tr := h.eng.lastPlayed(); tr.Offset != 100*time.Second || len(h.eng.seekList()) != 0 {
+		t.Fatalf("reopened at %v with engine seeks %v; want the stream started there and no seek", tr.Offset, h.eng.seekList())
+	}
+	h.p.Next()
+	b := h.playAndStart(3)
+	h.p.Seek(42 * time.Second)
+	if seeks := h.eng.seekList(); len(seeks) != 1 || seeks[0] != (seekCall{b.ID, 42 * time.Second}) {
+		t.Fatalf("an MP3 without a size: seeks = %v, want the engine's", seeks)
+	}
+}

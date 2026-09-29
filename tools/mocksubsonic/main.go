@@ -7,7 +7,8 @@
 // a format other than "raw" is answered like a Navidrome transcode: HTTP
 // 200, chunked, no Content-Length, no Accept-Ranges, Range ignored. The
 // file's bytes are sent as they are, so a transcoded file must already be
-// in the requested format.
+// in the requested format. timeOffset is honoured for MP3 (the stream
+// starts that share of the file in; frames resync) and ignored otherwise.
 //
 //	go run ./tools/mocksubsonic -dir internal/audio/testdata -addr 127.0.0.1:4533
 package main
@@ -16,6 +17,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -74,6 +76,9 @@ func main() {
 			}
 			defer f.Close()
 			if format := q.Get("format"); format != "raw" {
+				if t, _ := strconv.Atoi(q.Get("timeOffset")); t > 0 && format == "mp3" && songs[i].Duration > 0 {
+					f.Seek(songs[i].Size*int64(min(t, songs[i].Duration))/int64(songs[i].Duration), io.SeekStart)
+				}
 				serveTranscode(w, f, format)
 				return
 			}

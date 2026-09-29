@@ -214,8 +214,8 @@ func (o *fakeOpener) open(_ context.Context, s subsonic.Song, offset time.Durati
 	}
 	_, f, transcoded := PlanStream(s, StreamSettings{TranscodeFormat: "mp3", TranscodeBitrate: 320})
 	op := Opened{Source: &fakeSource{song: s.ID}, Format: f, Transcoded: transcoded}
-	if transcoded {
-		op.Offset = offset
+	if transcoded || (f == audio.FormatMP3 && s.Size > 0 && s.Duration > 0) {
+		op.Offset = offset // as NewOpener starts these at offset
 	}
 	return op, nil
 }

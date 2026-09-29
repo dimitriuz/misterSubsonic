@@ -80,8 +80,64 @@ func NewOpener(c *subsonic.Client, st StreamSettings) Opener {
 		if err != nil {
 			return Opened{}, err
 		}
-		return Opened{Source: r, Format: f, Transcoded: transcoded, Offset: start}, nil
+		var src io.ReadSeeker = r
+		if !transcoded && offset > 0 && f == audio.FormatMP3 {
+			// An MP3 without a seek table seeks by decoding from the start,
+			// which takes seconds on the MiSTer: start near the target instead.
+			if base, ok := mp3Offset(r, s, offset); ok {
+				if _, err := r.Seek(base, io.SeekStart); err == nil {
+					src, start = &fromOffset{r: r, base: base}, offset
+				}
+			} else {
+				r.Seek(0, io.SeekStart)
+			}
+		}
+		return Opened{Source: src, Format: f, Transcoded: transcoded, Offset: start}, nil
 	}
+}
+
+// mp3Offset estimates where offset falls in the MP3 r of s.Size bytes lasting
+// s.Duration: after the ID3v2 tag, in proportion to time. That is exact for
+// a constant bitrate and close for a variable one. It reads the first bytes
+// of r to find the tag.
+func mp3Offset(r io.Reader, s subsonic.Song, offset time.Duration) (int64, bool) {
+	d := time.Duration(s.Duration) * time.Second
+	if s.Size <= 0 || d <= 0 {
+		return 0, false
+	}
+	var h [10]byte
+	tag := int64(0)
+	if _, err := io.ReadFull(r, h[:]); err == nil && string(h[:3]) == "ID3" {
+		size := int64(h[6]&0x7F)<<21 | int64(h[7]&0x7F)<<14 | int64(h[8]&0x7F)<<7 | int64(h[9]&0x7F)
+		tag = 10 + size
+		if h[5]&0x10 != 0 {
+			tag += 10 // a footer
+		}
+	}
+	if tag >= s.Size {
+		return 0, false
+	}
+	off := tag + int64(float64(s.Size-tag)*float64(offset)/float64(d))
+	return min(off, s.Size-1), true
+}
+
+// fromOffset shows a stream from byte base on as if it began there, so the
+// decoder starts at the estimated seek point (MP3 frames resync on their own).
+type fromOffset struct {
+	r    *stream.Reader
+	base int64
+}
+
+func (f *fromOffset) Read(p []byte) (int, error) { return f.r.Read(p) }
+func (f *fromOffset) Close() error               { return f.r.Close() }
+func (f *fromOffset) Promote()                   { f.r.Promote() }
+
+func (f *fromOffset) Seek(off int64, whence int) (int64, error) {
+	if whence == io.SeekStart {
+		off += f.base
+	}
+	abs, err := f.r.Seek(off, whence)
+	return abs - f.base, err
 }
 
 // ReplayGainFactor converts the song's ReplayGain to a linear factor for

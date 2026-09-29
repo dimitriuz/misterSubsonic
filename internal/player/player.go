@@ -479,7 +479,7 @@ func (p *Player) Seek(pos time.Duration) {
 			p.openSeek, p.hasOpenSeek = pos, true
 			return
 		}
-		if p.curSrc.Transcoded {
+		if seeksByReopening(p.curSrc, song) {
 			p.reopenAt(pos) // I2: use reopenAt to preserve listen state and pause
 			return
 		}
@@ -751,8 +751,8 @@ func (p *Player) openAsync(id uint64, song subsonic.Song, offset time.Duration, 
 		defer cancel()
 		op, err := p.o.Open(octx, song, offset, next)
 		r := openResult{id: id, song: song, opened: op, err: err, next: next}
-		if err == nil && !op.Transcoded {
-			r.seek = offset
+		if err == nil && !op.Transcoded && op.Offset == 0 {
+			r.seek = offset // the opener didn't start the stream at offset: the engine seeks
 		}
 		select {
 		case p.opens <- r:
@@ -760,6 +760,13 @@ func (p *Player) openAsync(id uint64, song subsonic.Song, offset time.Duration, 
 			closeOpened(op)
 		}
 	}()
+}
+
+// seeksByReopening: transcoded streams (timeOffset) and MP3s of known size
+// and length (a byte estimate, see mp3Offset) are sought by opening the
+// stream again at the target; everything else by the engine.
+func seeksByReopening(o Opened, s subsonic.Song) bool {
+	return o.Transcoded || (o.Format == audio.FormatMP3 && s.Size > 0 && s.Duration > 0)
 }
 
 func closeOpened(o Opened) {
