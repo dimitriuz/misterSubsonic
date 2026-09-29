@@ -66,6 +66,8 @@ type fakeSource struct {
 	rate            int
 	openErr         error
 	block           chan struct{}
+	readStarted     chan struct{} // closed once a Read starts waiting on block
+	readStartedOnce sync.Once     // protects closing readStarted
 	openBlock       chan struct{} // blocks fakeOpen if set
 	openStarted     chan struct{} // closed when fakeOpen begins
 	openStartedOnce sync.Once     // protects closing openStarted
@@ -137,6 +139,9 @@ func (d *fakeDecoder) SeekFrame(f uint64) error {
 }
 func (d *fakeDecoder) Read(dst []float32) (int, error) {
 	if d.src.block != nil {
+		if d.src.readStarted != nil {
+			d.src.readStartedOnce.Do(func() { close(d.src.readStarted) })
+		}
 		select {
 		case <-d.src.block:
 		case <-d.src.closed:

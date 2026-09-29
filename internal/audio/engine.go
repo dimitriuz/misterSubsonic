@@ -668,6 +668,11 @@ func (e *Engine) openVoice(t Track) (*voice, error) {
 func (e *Engine) doPlay(t Track) {
 	e.doStop()
 	e.setBusy(t.Source)
+	if e.quitting() { // Close closes quit before it reads busy: if this misses quit, interrupt sees this source
+		e.setBusy(nil)
+		closeSource(t.Source)
+		return
+	}
 	v, err := e.openVoice(t)
 	e.setBusy(nil)
 	if err != nil {

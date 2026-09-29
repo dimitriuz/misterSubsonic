@@ -985,9 +985,9 @@ func TestEngineCloseDoesNotWaitBehindBlockedSender(t *testing.T) {
 	e := newTestEngine(out)
 	a := newFakeSource(ramp(1000, 0), OutputRate)
 	a.block = make(chan struct{}) // the run goroutine sits in a read
+	a.readStarted = make(chan struct{})
 	e.Play(Track{ID: 1, Source: a})
-	waitFor(t, "a being read", func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.busy != nil })
-	time.Sleep(20 * time.Millisecond) // let the run goroutine reach its blocked read
+	<-a.readStarted
 	var srcs []*fakeSource
 	for i := range cap(e.cmds) { // fills the queue
 		s := newFakeSource(ramp(10, 0), OutputRate)
@@ -1026,8 +1026,9 @@ func TestEngineCloseRunsNoQueuedCommand(t *testing.T) {
 	e := newTestEngine(out)
 	a := newFakeSource(ramp(1000, 0), OutputRate)
 	a.block = make(chan struct{})
+	a.readStarted = make(chan struct{})
 	e.Play(Track{ID: 1, Source: a})
-	waitFor(t, "a being read", func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.busy != nil })
+	<-a.readStarted // the run goroutine is stuck in the read, not merely busy
 	b := newFakeSource(ramp(10, 0), OutputRate)
 	b.openHold = make(chan struct{}) // never released: an open that started would hang Close
 	b.openStarted = make(chan struct{})
@@ -1049,5 +1050,38 @@ func TestEngineCloseRunsNoQueuedCommand(t *testing.T) {
 	}
 	if !b.isClosed() {
 		t.Error("the queued Play's source was left open")
+	}
+}
+
+// Close that lands while doPlay is still in doStop (busy is nil, so interrupt
+// finds nothing) must not let the Play open its decoder on an unclosed source.
+func TestEngineCloseDuringDoStopMissesNoSource(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	b := newFakeSource(ramp(10, 0), OutputRate)
+	b.openHold = make(chan struct{}) // never released: an open that started would hang Close
+	b.openStarted = make(chan struct{})
+	defer close(b.openHold)
+	closed := make(chan struct{})
+	var once sync.Once
+	out.onFlush = func() {
+		once.Do(func() {
+			go func() { e.Close(); close(closed) }()
+			<-e.quit // Close has passed its quit close; interrupt sees busy == nil
+		})
+	}
+	e.Play(Track{ID: 1, Source: b})
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return: the Play opened its source after Close")
+	}
+	select {
+	case <-b.openStarted:
+		t.Error("the Play opened its decoder after Close")
+	default:
+	}
+	if !b.isClosed() {
+		t.Error("the Play's source was left open")
 	}
 }
