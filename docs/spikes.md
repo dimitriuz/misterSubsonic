@@ -36,3 +36,10 @@ file /tmp/t.mp3 /tmp/t2.mp3
 ## Plan 2a on the MiSTer
 
 pending — MiSTer unavailable. Still to do (plan 2a Task 10): run the `Repaint` benchmark on the device (`albums-hdmi-1080p` ≤ 30 ms confirms §8.1), then have the user try the app on the TV (screen fill on HDMI/CRT, controller mapping, B-hold exit, covers).
+
+## Plan 2b on the MiSTer
+
+pending — MiSTer unavailable. Still to do:
+- Run `ui.test -test.bench Repaint` on the device. The new cases are feed-hdmi-1080p and search-hdmi-1080p.
+- Tune the CRT title-safe margins on a real CRT.
+- Have the user try the sidebar, grids and search with the controller and a USB keyboard.

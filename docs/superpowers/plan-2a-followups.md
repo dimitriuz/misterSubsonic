@@ -63,3 +63,26 @@ Items the Plan 2a reviews triaged as "fix later". Plan 2a itself is complete and
   - Size drifts if files are deleted externally.
   - A partial `.tmp` is left behind when WriteFile fails.
 - **`gfx.Resize`:** the uint32 accumulators overflow for boxes over 66k pixels. This can't happen at current sizes.
+
+## Resolved by Plan 2b
+
+- Queue edge cases:
+  - Removing the playing song while paused keeps it paused.
+  - Removing the last one stops with nothing selected, or wraps under repeat-all.
+  - Empty PlayNext/Enqueue are ignored.
+- Seeking while a track opens lands where asked, including the resume-offset race.
+- Unpausing no longer flashes Buffering.
+- A failed prefetch shows one toast, not two.
+- `q` opens the queue.
+- Now Playing shows volume (Up/Down), star state (X) and the insecure badge. The CRT cover is beside the text.
+- Queue X opens Remove / Clear queue.
+- Select on album lists, feed rows and artists shuffles a sample of up to 10 albums.
+- CRT title-safe area: 12 lines top and bottom, 16 px sides. Tune it on a real CRT (below).
+- Dev viewer:
+  - IP-literal Host headers work, so `:8090` binds are usable.
+  - It warns when open to the network.
+  - The tests cover the text keys.
+- Album lists: a failed next page shows a toast and a new press retries it; Artists R at the last letter stays put.
+- Search: a stale page is dropped, errors show over existing results, a failed page retries, editing clears an old error.
+
+Still open from the lists above: the Plan 3 items, the input nits, the art and cache nits, and the HomeScreen (CRT) focus shift when the Resume row arrives.
