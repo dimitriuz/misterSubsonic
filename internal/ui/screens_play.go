@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"mistersubsonic/internal/gfx"
@@ -20,6 +22,7 @@ const (
 	// The pending target stays on screen this long after its last Seek, until
 	// the player's position catches up.
 	seekShow = time.Second
+	volStep  = 1.0 // dB per Up/Down
 )
 
 // NowPlayingScreen is the full-screen player (spec §8.2).
@@ -113,12 +116,25 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		return true
 	}
 	s.settle(a, st)
+	switch e.Button {
+	case input.BtnUp, input.BtnDown: // volume, held to repeat
+		step := volStep
+		if e.Button == input.BtnDown {
+			step = -step
+		}
+		pl.SetVolumeDB(st.VolumeDB + step)
+		return true
+	}
 	if e.Kind != input.Press {
 		return false
 	}
 	switch e.Button {
 	case input.BtnA:
 		pl.TogglePause()
+	case input.BtnX:
+		if song, ok := st.Current(); ok {
+			a.toggleStar(s, songStar(song))
+		}
 	case input.BtnL:
 		pl.Prev()
 	case input.BtnR:
@@ -153,25 +169,32 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	ft, fb, fs := a.F.Title, a.F.Body, a.F.Small
 	barH := max(p.Margin/6, 3)
 	// Height of the text block, used to centre everything vertically.
-	textH := ft.Height() + 2*fb.Height() + fs.Height() + p.Margin + barH + p.Margin/4 + fs.Height() + p.Margin/2 + fb.Height() + fs.Height()
+	textH := ft.Height() + 2*fb.Height() + fs.Height() + p.Margin + barH + p.Margin/4 + fs.Height() + p.Margin/2 + fb.Height() + 2*fs.Height()
+	// Art left, text right, centred as a block. The gap is narrower on a
+	// CRT, where the text needs the width.
+	gap := 2 * p.Margin
 	art := min(p.ArtNow, area.H-2*p.Margin)
-	var text gfx.Rect
-	if p.W >= p.H*3/2 { // wide: art left, text right, both centred
-		a.drawArt(c, song.CoverArt, gfx.R(area.X+p.Margin*2, area.Y+(area.H-art)/2, art, art))
-		x := area.X + p.Margin*3 + art
-		text = gfx.R(x, area.Y+(area.H-max(art, textH))/2, area.Right()-p.Margin*2-x, max(art, textH))
-	} else { // narrow (CRT): art on top, text below, centred as a block
-		art = min(art, area.H-textH-2*p.Margin)
-		top := area.Y + (area.H-art-p.Margin/2-textH)/2
-		a.drawArt(c, song.CoverArt, gfx.R(area.X+(area.W-art)/2, top, art, art))
-		text = gfx.R(area.X+p.Margin, top+art+p.Margin/2, area.W-2*p.Margin, textH)
+	if p.W < p.H*3/2 {
+		gap = p.Margin
+		art = min(art, area.W*2/5)
 	}
+	a.drawArt(c, song.CoverArt, gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art))
+	x := area.X + gap + art + p.Margin
+	text := gfx.R(x, area.Y+(area.H-max(art, textH))/2, area.Right()-gap-x, max(art, textH))
 	y := text.Y
 	line := func(f *gfx.Font, s string, col gfx.Color) {
 		f.Draw(c, text.X, y+f.Ascent(), f.Truncate(s, text.W), col, c.Bounds())
 		y += f.Height()
 	}
-	line(ft, song.Title, colText)
+	title := song.Title
+	if a.isStarred(songStar(song)) {
+		st := ft.Ascent() * 3 / 4
+		drawIcon(c, iconStar, gfx.R(text.Right()-st, y+(ft.Ascent()-st)/2+ft.Descent()/2, st, st), colAccent)
+		ft.Draw(c, text.X, y+ft.Ascent(), ft.Truncate(title, text.W-st-p.Margin/2), colText, c.Bounds())
+		y += ft.Height()
+	} else {
+		line(ft, title, colText)
+	}
 	line(fb, song.Artist, colDim)
 	line(fb, song.Album, colDim)
 	y += p.Margin / 2
@@ -199,12 +222,25 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 			mode += "  ·  " + m.label
 		}
 	}
+	mode += "  ·  " + volumeLabel(st.VolumeDB)
 	iconText(c, fb, statusIcon(st.Status), text.X, y+fb.Ascent(), fb.Truncate(mode, text.W-fb.Ascent()), colText, c.Bounds())
 	y += fb.Height()
 	if st.NextIndex >= 0 && st.NextIndex < len(st.Queue) {
 		next := st.Queue[st.NextIndex]
 		line(fs, "Next: "+next.Title+" — "+next.Artist, colDim)
 	}
+	if a.insecure {
+		line(fs, "insecure: certificate not checked", colError)
+	}
+}
+
+// volumeLabel is e.g. "Vol −12 dB" (a real minus sign).
+func volumeLabel(db float64) string {
+	v := int(math.Round(db))
+	if v < 0 {
+		return fmt.Sprintf("Vol −%d dB", -v)
+	}
+	return "Vol 0 dB"
 }
 
 // QueueScreen lists the play queue.
@@ -246,9 +282,21 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 		a.Pop()
 		return true
 	case input.BtnX:
-		title := st.Queue[s.list.Focus].Title
-		a.Player().Remove(s.list.Focus)
-		a.Toast("Removed %s", title)
+		i := s.list.Focus
+		title := st.Queue[i].Title
+		a.Push(NewMenuScreen(s, title, []menuEntry{
+			{"Remove", func(a *App) {
+				a.Player().Remove(i)
+				a.Toast("Removed %s", title)
+			}},
+			{"Clear queue", func(a *App) {
+				a.Player().Clear()
+				for len(a.stack) > 1 && isPlayScreen(a.Top()) {
+					a.Pop() // nothing left to show here or in Now Playing
+				}
+				a.Toast("Queue cleared")
+			}},
+		}))
 		return true
 	}
 	return false
@@ -271,6 +319,14 @@ func (s *QueueScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		}
 		a.drawTextRow(c, r, so.CoverArt, true, so.Title, so.Artist+" · "+clock(secs(so.Duration)), col)
 	})
+}
+
+func isPlayScreen(s Screen) bool {
+	switch s.(type) {
+	case *QueueScreen, *NowPlayingScreen:
+		return true
+	}
+	return false
 }
 
 // MessageScreen shows a problem (no config, server unreachable) with an
