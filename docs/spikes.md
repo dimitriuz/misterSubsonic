@@ -32,3 +32,7 @@ file /tmp/t.mp3 /tmp/t2.mp3
 ## Spike 2 — pending — MiSTer unavailable (user can't boot it yet)
 
 ## Spike 3 — pending — MiSTer unavailable (user can't boot it yet)
+
+## Plan 2a on the MiSTer
+
+pending — MiSTer unavailable. Still to do (plan 2a Task 10): run the `Repaint` benchmark on the device (`albums-hdmi-1080p` ≤ 30 ms confirms §8.1), then have the user try the app on the TV (screen fill on HDMI/CRT, controller mapping, B-hold exit, covers).
