@@ -50,9 +50,8 @@ func TestGaplessPrefetchAndHandover(t *testing.T) {
 	if h.eng.playCount() != 1 {
 		t.Fatal("gapless handover must not call engine.Play")
 	}
-	if !b.Source.(*fakeSource).isPromoted() {
-		t.Fatal("prefetched source not promoted once it started")
-	}
+	// Index moves at Ended(A); Promote happens when Started(B) is handled.
+	h.waitFor("prefetched source promoted once it started", b.Source.(*fakeSource).isPromoted)
 	h.waitFor("now playing for b", func() bool { return len(h.api.nowPlayings()) == 2 })
 }
 
@@ -600,6 +599,10 @@ func TestStateIsCurrentWhenEventArrives(t *testing.T) {
 		h := newHarness(t, nil)
 		h.p.PlayNow(songs(1, 100), 0)
 		a := h.playAndStart(1)
+		// playAndStart sees Playing as soon as it is published, which is
+		// just before its StatusChanged is sent. A do round trip waits for
+		// that handler to finish, so the drain really gets every startup event.
+		h.p.do(func() {})
 		drainEvents(h) // discard the startup QueueChanged/TrackChanged/StatusChanged(Loading->Playing)
 		h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
 		for {
