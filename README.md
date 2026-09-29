@@ -8,8 +8,32 @@ albums (A–Z, by year, by genre), playlists, starred items and search with an o
 album pages, Now Playing and the queue, on HDMI (sidebar and cover grids) or CRT (lists)
 layouts, driven by a controller or keyboard; a setup wizard, Settings (servers, playback,
 display) and a screensaver. Streaming, FLAC/MP3/WAV decoding, gapless playback, seek,
-scrobbling and resume work. Still to come: the MiSTer launcher and releases. On-device (MiSTer)
-checks are still pending; see `docs/spikes.md`.
+scrobbling and resume work, and it installs on a MiSTer with a Scripts-menu launcher. Still to
+come: tuning on the device. On-device (MiSTer) checks are still pending; see `docs/spikes.md` and
+`docs/testing-on-mister.md`.
+
+## Install
+
+With MiSTer Downloader or update_all, add this to `/media/fat/downloader.ini` and run an update:
+
+```ini
+[mistersubsonic]
+db_url = https://raw.githubusercontent.com/dimitriuz/misterSubsonic/db/db.json
+```
+
+Or unzip a release's `MiSTer_Subsonic-<version>.zip` onto the SD card: it holds
+`Scripts/MiSTer_Subsonic.sh` and the `mistersubsonic/` folder.
+
+Start it from the Scripts menu: **MiSTer_Subsonic**. While it runs, background music (BGM) is
+stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (Settings → Exit,
+or hold B on the home screen). Updates never touch your settings.
+
+Everything the app keeps is in `/media/fat/mistersubsonic/`:
+- `config.toml` holds your settings. `config.example.toml` explains every option.
+- `servers/<name>/` holds each server's resume state, scrobble queue and cover cache.
+- `log.txt` and `log.txt.1` hold at most 1 MB each. `crash.txt` records crashes.
+- `fonts/` is optional: `.ttf` or `.otf` fonts put there are used for characters the built-in
+  font lacks, such as CJK.
 
 ## Setup
 
@@ -27,6 +51,31 @@ volume, ReplayGain, scrobbling, transcoding, the layout and the screensaver (dar
 drifting cover after some idle minutes on Now Playing; off with 0). Each server keeps its resume
 state, scrobble queue and cover cache in `servers/<name>/` next to the config, so `cover_art_mb`
 applies per server (each server's cache gets that much).
+
+## Video settings (MiSTer.ini)
+
+The app draws on the MiSTer's Linux framebuffer. That framebuffer is sized from `MiSTer.ini`; the
+app never changes the video mode itself. Keep `fb_size=0` (automatic) and `fb_terminal=1` (both
+the defaults).
+
+- **HDMI:**
+  - `video_mode=0` (1280x720@60) or `7` (1280x720@50) gives a 1280x720 framebuffer, which the
+    interface fills pixel for pixel.
+  - `video_mode=8` (1920x1080@60) works too, scaled up by 1.5.
+- **CRT (15 kHz):** add a `[Menu]` section, for example the 240p mode SAM uses for its CRT
+  video:
+
+  ```ini
+  [Menu]
+  video_mode=640,16,64,80,240,1,3,14,12380
+  vga_scaler=1
+  composite_sync=1
+  ```
+
+  This gives a 640x240 framebuffer, which the CRT layout fills. It also changes how the MiSTer
+  menu itself is shown. A 288-line mode (for 50 Hz TVs) works the same way.
+- **Interlaced CRT modes:** a 480i/576i mode looks like HDMI 480p/576p to the app, so set
+  `profile = "crt"` under `[display]` in `config.toml`.
 
 ## Controls
 
@@ -54,9 +103,17 @@ Regenerating audio fixtures needs sox, flac and ffmpeg.
 make test        # unit tests (race detector); no network, server or sound device needed
 make e2e         # silent end-to-end runs (CLI and app) against a mock server
 make viewer      # run the app in your browser (CONFIG=path/to/config.toml; starts at -30 dB)
+make launcher-test   # the Scripts-menu launcher, against stand-ins for BGM, SAM and the app
 make mister      # ARMv7 binaries in bin/arm/ (checks glibc <= 2.31)
+make release VERSION=v1.0.0   # the SD card files and zip in bin/release/
+make deploy MISTER=mister.local       # install the release on a MiSTer over ssh
 make deploy-dev MISTER=mister.local   # copy dev tools to /media/fat/mistersubsonic/dev
 ```
+
+A `v*` tag builds a GitHub release (`.github/workflows/release.yml`). The release has:
+- the zip;
+- its files as assets;
+- the Downloader database, published on the `db` branch (`tools/mkdb`).
 
 Try it against a server (sound goes to your default device, starting at
 -30 dB unless you pass `-volume`; `-null` plays silently):
@@ -67,7 +124,8 @@ bin/mss-cli -config config.toml ping
 bin/mss-cli -config config.toml play-album <album-id>
 ```
 
-`config.toml` can also be written by hand; it needs at least one server:
+`config.toml` can also be written by hand (`sdcard/mistersubsonic/config.example.toml` explains
+every option); it needs at least one server:
 
 ```toml
 [[server]]
@@ -77,9 +135,8 @@ username = "alice"
 password = "…"   # or token + salt, or api_key
 ```
 
-The layout follows the framebuffer: `display.profile` is `auto` (default), `hdmi` or `crt`.
-A 480i/576i CRT can't be told apart from a 480p/576p HDMI framebuffer, so `auto` picks HDMI;
-on interlaced CRT modes set `profile = "crt"` under `[display]`.
+The layout follows the framebuffer: `display.profile` is `auto` (default), `hdmi` or `crt`
+(see Video settings above).
 
 ## License
 

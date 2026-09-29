@@ -158,3 +158,25 @@ Also still open: ReplayGain changes take effect from the track after the prefetc
   - `playKeys`;
   - the wizard keyboard-fit test uses the safe area rather than Draw's area, and doesn't cover the API-key step or a mini bar;
   - the config flush race test is probabilistic.
+
+## Resolved by Plan 3a
+
+- The framebuffer follows the console's pan offset (x/yoffset). The `/dev/mem` fallback maps from a page boundary. `smem_len` is checked against the panned screen, and the layout has tests.
+- Clean shutdown restores `KD_TEXT` (plan 1): on exit, on SIGINT/SIGTERM and after a recovered panic. The launcher also runs `mistersubsonic -restore-console` after every exit, and a clean-up that takes more than 10 s is cut short.
+- `config.example.toml` ships, and the saved config's header points to it.
+- The mute toggle (spec §6).
+
+## Plan 3b must handle
+
+Everything under "Plan 3 must handle" above, plus the Plan 3 items in `plan-1-followups.md`:
+- memory: stream rings, cover decode size
+- raw MP3 seek
+- the device guards
+- the clean-shutdown internals of the engine
+- stream hardening
+- the mock server's `timeOffset`
+
+And also:
+- **Input:** check that default keys fire only for codes a user's map omits, and that devices whose grab returns EBUSY are handled, alongside Main_MiSTer on the device.
+- **ReplayGain:** re-queue the prefetched track on a change.
+- **Performance:** whatever the device benchmarks and spikes 2 and 3 call for.
