@@ -4,7 +4,6 @@ package gfx
 
 import (
 	"image"
-	"image/color"
 )
 
 // Color is 0xAARRGGBB. Alpha 0xFF is opaque.
@@ -133,17 +132,4 @@ func (c *Canvas) ToRGBA() *image.RGBA {
 		img.Pix[4*i+3] = 0xFF
 	}
 	return img
-}
-
-// FromImage converts any image.Image to an Image.
-func FromImage(m image.Image) *Image {
-	b := m.Bounds()
-	out := NewImage(b.Dx(), b.Dy())
-	for y := 0; y < out.H; y++ {
-		for x := 0; x < out.W; x++ {
-			c := color.NRGBAModel.Convert(m.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA)
-			out.Pix[y*out.W+x] = uint32(c.A)<<24 | uint32(c.R)<<16 | uint32(c.G)<<8 | uint32(c.B)
-		}
-	}
-	return out
 }
