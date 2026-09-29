@@ -52,7 +52,7 @@ func TestRemoveServerMovesTheDefault(t *testing.T) {
 	}
 }
 
-func TestSaveHeaderPointsAtTheREADME(t *testing.T) {
+func TestSaveHeaderPointsAtTheExample(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.toml")
 	c := Default()
 	c.AddServer(Server{Name: "home", URL: "http://h:4533", Username: "a", Password: "p"})
@@ -60,7 +60,7 @@ func TestSaveHeaderPointsAtTheREADME(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(p)
-	if !strings.HasPrefix(string(b), "# MiSTer Subsonic configuration") || strings.Contains(string(b), "config.example.toml") {
+	if !strings.HasPrefix(string(b), "# MiSTer Subsonic configuration") || !strings.Contains(string(b), "config.example.toml") {
 		t.Fatalf("header: %q", strings.SplitN(string(b), "\n", 2)[0])
 	}
 }

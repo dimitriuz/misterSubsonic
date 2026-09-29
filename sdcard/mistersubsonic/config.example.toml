@@ -1,0 +1,38 @@
+# MiSTer Subsonic: example configuration.
+#
+# You don't need this file: on first start the setup wizard writes
+# config.toml, and Settings saves your changes there. To write one by hand,
+# copy this file to config.toml in the same folder and edit it. Lines
+# starting with # are comments.
+
+# The server to connect to at start: one of the names below.
+default_server = "home"
+
+# One [[server]] block per server. Settings → Servers switches between them.
+[[server]]
+name = "home"
+url = "http://192.168.1.10:4533"   # or https://music.example.com
+username = "alice"
+password = "change-me"             # the wizard saves a token and salt instead
+# token = "…"                      # md5(password + salt); written by the wizard
+# salt = "…"
+# api_key = "…"                    # an OpenSubsonic API key, for servers that give them out
+# ca_file = "/media/fat/mistersubsonic/myca.pem"   # trust a self-signed certificate
+# insecure_skip_verify = false     # true skips the certificate check (not recommended)
+# allow_plaintext_password = false # true sends the password itself (servers using LDAP)
+
+[playback]
+transcode_format = "mp3"   # for formats the MiSTer can't decode: mp3, flac or wav
+transcode_bitrate = 320    # kbps
+replaygain = "off"         # off, track or album
+volume_db = 0              # -60 to 0; saved when you change the volume
+scrobble = true            # report plays to the server (and on to Last.fm/ListenBrainz)
+buffer_mb = 32             # memory for the playing stream, 4 to 512
+alsa_device = "default"
+
+[display]
+profile = "auto"           # auto, hdmi or crt (set crt for a 480i/576i CRT)
+screensaver_minutes = 5    # minutes idle on Now Playing; 0 turns it off
+
+[cache]
+cover_art_mb = 200         # cover art kept on the SD card, per server
