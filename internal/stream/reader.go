@@ -29,7 +29,7 @@ type Options struct {
 	BehindBytes   int64           // kept behind the read position; default WindowBytes/4
 	NearBytes     int64           // forward seeks within this distance of the window just wait; default 256 KiB
 	PrefetchBytes int64           // if > 0, fetch at most this far ahead of the read position until Promote (ring 1.25×, grown to WindowBytes then)
-	StallTimeout  time.Duration   // no bytes for this long -> reconnect; default 10 s
+	StallTimeout  time.Duration   // no bytes (or no response headers) for this long -> reconnect; Open fails after it; default 10 s
 	Backoff       []time.Duration // retry delays; default 0.5, 1, 2, 4, 8 s (last repeats)
 	RetryBudget   time.Duration   // give up after this long without progress; default 30 s
 }
@@ -44,9 +44,36 @@ var (
 type HTTPError struct {
 	StatusCode int
 	Status     string
+	RetryAfter time.Duration // the server's Retry-After, if it sent one
 }
 
 func (e *HTTPError) Error() string { return "stream: HTTP " + e.Status }
+
+// retryLater: statuses where the server asks to come back (busy, rate
+// limited, a gateway in the way), even on the first request.
+func retryLater(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// parseRetryAfter reads a Retry-After header: seconds or an HTTP date.
+func parseRetryAfter(h string, now time.Time) time.Duration {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return 0
+	}
+	if s, err := strconv.Atoi(h); err == nil && s >= 0 {
+		return time.Duration(s) * time.Second
+	}
+	if t, err := http.ParseTime(h); err == nil && t.After(now) {
+		return t.Sub(now)
+	}
+	return 0
+}
 
 type Reader struct {
 	url string
@@ -102,7 +129,7 @@ func Open(ctx context.Context, url string, o Options) (*Reader, error) {
 
 	fctx, cancel := context.WithCancel(context.Background())
 	stop := context.AfterFunc(ctx, cancel)
-	resp, reqCancel, err := r.request(fctx, 0)
+	resp, reqCancel, err := r.openRequest(fctx)
 	stop()
 	if err != nil {
 		cancel()
@@ -310,6 +337,31 @@ func stripURL(err error) error {
 	return err
 }
 
+// openRequest is the first request. A server that asks to come back later
+// (429 and the like) is retried within RetryBudget and ctx; anything else
+// fails Open at once.
+func (r *Reader) openRequest(ctx context.Context) (*http.Response, context.CancelFunc, error) {
+	start := time.Now()
+	for attempt := 0; ; attempt++ {
+		resp, reqCancel, err := r.request(ctx, 0)
+		var he *HTTPError
+		if err == nil || !errors.As(err, &he) || !retryLater(he.StatusCode) {
+			return resp, reqCancel, err
+		}
+		d := max(r.o.Backoff[min(attempt, len(r.o.Backoff)-1)], he.RetryAfter)
+		if time.Since(start)+d > r.o.RetryBudget {
+			return nil, nil, err
+		}
+		t := time.NewTimer(d)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return nil, nil, err
+		}
+	}
+}
+
 func (r *Reader) request(ctx context.Context, off int64) (*http.Response, context.CancelFunc, error) {
 	rctx, cancel := context.WithCancel(ctx)
 	req, err := http.NewRequestWithContext(rctx, http.MethodGet, r.url, nil)
@@ -339,7 +391,8 @@ func (r *Reader) request(ctx context.Context, off int64) (*http.Response, contex
 	default:
 		resp.Body.Close()
 		cancel()
-		return nil, nil, &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
+		return nil, nil, &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	}
 	if r.o.CheckResponse != nil {
 		if err := r.o.CheckResponse(resp); err != nil {
@@ -381,10 +434,19 @@ func (r *Reader) fetch(ctx context.Context, gen int, off int64, resp *http.Respo
 				}
 				var he *HTTPError
 				if errors.As(err, &he) && he.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-					r.finish(gen, nil)
+					r.mu.Lock()
+					size := r.size
+					r.mu.Unlock()
+					if size >= 0 && off < size {
+						// Not the end: the file is shorter than it was (changed on
+						// the server). Say so rather than end the track early.
+						r.finish(gen, fmt.Errorf("stream: the server refused byte %d of %d (did the file change?): %w", off, size, err))
+					} else {
+						r.finish(gen, nil)
+					}
 					return
 				}
-				if errors.As(err, &he) && he.StatusCode < 500 {
+				if errors.As(err, &he) && he.StatusCode < 500 && !retryLater(he.StatusCode) {
 					r.finish(gen, err)
 					return
 				}
@@ -497,6 +559,14 @@ func (r *Reader) sleepBackoff(ctx context.Context, gen int, attempt *int, lastPr
 	}
 	d := r.o.Backoff[min(*attempt, len(r.o.Backoff)-1)]
 	*attempt++
+	var he *HTTPError
+	if errors.As(cause, &he) && he.RetryAfter > d {
+		if time.Since(lastProgress)+he.RetryAfter > r.o.RetryBudget {
+			r.finish(gen, fmt.Errorf("stream: giving up: %w", cause))
+			return false
+		}
+		d = he.RetryAfter
+	}
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {

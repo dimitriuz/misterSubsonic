@@ -629,3 +629,112 @@ func TestPlainReaderHasTheFullWindow(t *testing.T) {
 		t.Fatalf("ring %d bytes", len(r.ring))
 	}
 }
+
+// dropAfter serves the first n bytes of the file as a 206, then drops the connection.
+func dropAfter(w http.ResponseWriter, size, n int64) {
+	w.Header().Set("Content-Range", "bytes 0-"+strconv.FormatInt(size-1, 10)+"/"+strconv.FormatInt(size, 10))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.WriteHeader(http.StatusPartialContent)
+	io.CopyN(w, &virtualFile{size: size}, n)
+	w.(http.Flusher).Flush()
+	panic(http.ErrAbortHandler)
+}
+
+// A 416 on reconnect before the end means the file changed: an error, not
+// a quiet early end of the track.
+func TestRangeRefusedMidFileIsAnError(t *testing.T) {
+	const size = 1 << 20
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			dropAfter(w, size, 100<<10)
+		}
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return true
+	})
+	r := open(t, s.URL, testOptions())
+	got, err := io.ReadAll(r)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("ReadAll = %d bytes, %v; want the 416 as an error", len(got), err)
+	}
+	checkBytes(t, got, 0)
+}
+
+// Mid-stream, a 429 is retried after the server's Retry-After.
+func TestTooManyRequestsIsRetriedAfterRetryAfter(t *testing.T) {
+	const size = 1 << 20
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		switch n {
+		case 1:
+			dropAfter(w, size, 100<<10)
+		case 2:
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return true
+		}
+		return false
+	})
+	o := testOptions()
+	o.RetryBudget = 3 * time.Second
+	r := open(t, s.URL, o)
+	start := time.Now()
+	got, err := io.ReadAll(r)
+	if err != nil || len(got) != size {
+		t.Fatalf("ReadAll = %d bytes, %v", len(got), err)
+	}
+	checkBytes(t, got, 0)
+	if d := time.Since(start); d < 900*time.Millisecond {
+		t.Fatalf("retried after %v, before the server's Retry-After of 1 s", d)
+	}
+}
+
+// A Retry-After longer than the retry budget gives up at once instead of
+// sleeping through it.
+func TestRetryAfterBeyondTheBudgetGivesUp(t *testing.T) {
+	const size = 1 << 20
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			dropAfter(w, size, 100<<10)
+		}
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		return true
+	})
+	r := open(t, s.URL, testOptions())
+	start := time.Now()
+	if _, err := io.ReadAll(r); err == nil {
+		t.Fatal("ReadAll succeeded")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("gave up after %v", d)
+	}
+}
+
+// The first request is retried too when the server asks to come back later;
+// other errors still fail Open at once.
+func TestOpenRetriesWhenTheServerIsBusy(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n <= 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	r := open(t, s.URL, testOptions())
+	checkBytes(t, readAt(t, r, 0, 1000), 0)
+	if n := s.requests.Load(); n != 3 {
+		t.Fatalf("%d requests, want 3", n)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for h, want := range map[string]time.Duration{
+		"": 0, "5": 5 * time.Second, " 2 ": 2 * time.Second, "-1": 0, "soon": 0,
+		"Tue, 29 Sep 2026 12:00:30 GMT": 30 * time.Second, "Tue, 29 Sep 2026 11:00:00 GMT": 0,
+	} {
+		if got := parseRetryAfter(h, now); got != want {
+			t.Errorf("parseRetryAfter(%q) = %v, want %v", h, got, want)
+		}
+	}
+}
