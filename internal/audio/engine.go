@@ -174,36 +174,38 @@ func (e *Engine) Stop() {
 	e.interrupt(nil)
 }
 
-// Seek moves the track being decoded to pos (song time). It only posts the
-// command: the decoder seek may restart an HTTP request, and the caller
-// must not wait for that. A failure arrives as EventSeekFailed; success
-// shows in Position.
+// seekReq is a requested seek that has not started yet.
 type seekReq struct {
 	id  uint64
 	pos time.Duration
 }
 
-// Seek asks for a seek and returns at once. Seeks coalesce: if one is already
-// waiting to run, it is replaced by this one (latest wins), so a burst of
-// seeks behind a slow HTTP restart never fills the command queue.
+// Seek moves the track being decoded to pos (song time) and returns at once:
+// the decoder seek may restart an HTTP request, and the caller must not wait
+// for that. A failure arrives as EventSeekFailed; success shows in Position.
+// Seeks coalesce per track: if a seek for the same track is still waiting to
+// run, this one replaces its position (latest wins), so a burst of seeks
+// behind a slow HTTP restart never fills the command queue. A seek for a
+// different track always queues its own command, behind any Play before it.
 func (e *Engine) Seek(id uint64, pos time.Duration) {
 	e.mu.Lock()
-	queued := e.seekReq != nil
-	e.seekReq = &seekReq{id, pos}
-	e.mu.Unlock()
-	if queued {
+	if r := e.seekReq; r != nil && r.id == id {
+		r.pos = pos // latest wins while this track's seek is still queued
+		e.mu.Unlock()
 		return
 	}
+	r := &seekReq{id: id, pos: pos}
+	e.seekReq = r
+	e.mu.Unlock()
 	e.send(func() {
 		e.mu.Lock()
-		r := e.seekReq
-		e.seekReq = nil
-		e.mu.Unlock()
-		if r == nil {
-			return
+		if e.seekReq == r {
+			e.seekReq = nil
 		}
-		if err := e.doSeek(r.id, r.pos); err != nil {
-			e.queueEvent(Event{Kind: EventSeekFailed, TrackID: r.id, Err: err})
+		target := *r // read pos under the lock
+		e.mu.Unlock()
+		if err := e.doSeek(target.id, target.pos); err != nil {
+			e.queueEvent(Event{Kind: EventSeekFailed, TrackID: target.id, Err: err})
 		}
 	})
 }

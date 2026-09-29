@@ -612,3 +612,43 @@ func TestEngineSeeksCoalesceLatestWins(t *testing.T) {
 		t.Fatalf("%d decoder seeks for a burst of 200; want at most 2 (running + latest)", n)
 	}
 }
+
+func TestEngineSeekForNewTrackIsNotRetargeted(t *testing.T) {
+	out := newFakeOutput(1000)
+	release := make(chan struct{})
+	var seeks atomic.Int32
+	var last atomic.Uint64
+	open := func(src io.ReadSeeker, f Format) (Decoder, error) {
+		d, err := fakeOpen(src, f)
+		if err != nil {
+			return nil, err
+		}
+		return &blockingSeekDecoder{fakeDecoder: *d.(*fakeDecoder), release: release, seeks: &seeks, last: &last}, nil
+	}
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: open, ChunkFrames: 256, Poll: time.Millisecond})
+	defer e.Close()
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(480000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+
+	e.Seek(1, time.Second) // runs and blocks in SeekFrame
+	waitFor(t, "first seek running", func() bool { return seeks.Load() >= 1 })
+	e.Seek(1, 2*time.Second) // queues its own closure
+	e.Play(Track{ID: 2, Source: newFakeSource(ramp(480000, 0), OutputRate)})
+	e.Seek(2, 3*time.Second) // must not coalesce into the queued track-1 request
+	close(release)
+
+	// Playing track 2 replaces track 1's audio, so no boundary Started event
+	// is guaranteed; the seek reaching the decoder is the observable effect.
+	waitFor(t, "track 2 sought to 3 s", func() bool { return last.Load() == uint64(3*OutputRate) })
+	quiet := time.After(100 * time.Millisecond)
+	for {
+		select {
+		case ev := <-e.Events():
+			if ev.Kind == EventSeekFailed && ev.TrackID == 2 {
+				t.Fatalf("spurious SeekFailed for track 2: %v", ev.Err)
+			}
+		case <-quiet:
+			return
+		}
+	}
+}
