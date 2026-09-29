@@ -15,17 +15,38 @@ import (
 
 type homeItem struct {
 	label    string
-	listType string // album list type; "" for Resume
+	listType string        // album list type
+	open     func() Screen // a section; nil for album lists and Resume
 }
 
 var homeLists = []homeItem{
-	{"Recently added", subsonic.ListNewest},
-	{"Recently played", subsonic.ListRecent},
-	{"Most played", subsonic.ListFrequent},
-	{"Random albums", subsonic.ListRandom},
+	{label: "Recently added", listType: subsonic.ListNewest},
+	{label: "Recently played", listType: subsonic.ListRecent},
+	{label: "Most played", listType: subsonic.ListFrequent},
+	{label: "Random albums", listType: subsonic.ListRandom},
 }
 
-// HomeScreen is the root: Resume (if a saved queue exists) and album lists.
+// sections are the library's parts: the HDMI sidebar after Home, and the
+// CRT root list after the album lists.
+var sections = []homeItem{
+	{label: "Artists", open: func() Screen { return NewArtistsScreen() }},
+	{label: "Albums", open: func() Screen { return NewAlbumsScreen() }},
+	{label: "Playlists", open: func() Screen { return NewPlaylistsScreen() }},
+	{label: "Starred", open: func() Screen { return NewStarredScreen() }},
+	{label: "Search", open: func() Screen { return NewSearchScreen() }},
+}
+
+// NewRootScreen is the first screen after connecting: the sidebar and home
+// feed on HDMI, the sections list on a CRT.
+func NewRootScreen(p Profile) Screen {
+	if p.SideW > 0 {
+		return newSidebarRoot()
+	}
+	return NewHomeScreen()
+}
+
+// HomeScreen is the CRT root (and the fallback): Resume (if a saved queue
+// exists), the album lists and the sections.
 type HomeScreen struct {
 	list   List
 	resume *player.Resume
@@ -52,7 +73,7 @@ func (s *HomeScreen) items() []homeItem {
 		song := s.resume.Songs[s.resume.Index]
 		out = append(out, homeItem{label: fmt.Sprintf("Resume: %s — %s", song.Title, song.Artist)})
 	}
-	return append(out, homeLists...)
+	return append(append(out, homeLists...), sections...)
 }
 
 func (s *HomeScreen) Handle(a *App, e input.Event) bool {
@@ -64,13 +85,16 @@ func (s *HomeScreen) Handle(a *App, e input.Event) bool {
 		return false
 	}
 	it := items[s.list.Focus]
-	if it.listType == "" {
+	switch {
+	case it.open != nil:
+		a.Push(it.open())
+	case it.listType == "":
 		a.Player().ResumeFrom(s.resume)
 		s.resume = nil
 		a.Push(NewNowPlayingScreen())
-		return true
+	default:
+		a.Push(NewAlbumListScreen(it.label, it.listType))
 	}
-	a.Push(NewAlbumListScreen(it.label, it.listType))
 	return true
 }
 
@@ -78,10 +102,10 @@ func (s *HomeScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	items := s.items()
 	s.list.Draw(c, area, len(items), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
 		col := colText
-		if items[i].listType == "" {
+		if items[i].listType == "" && items[i].open == nil {
 			col = colAccent
 		}
-		a.drawTextRow(c, r, "", false, items[i].label, "", col)
+		a.drawRow(c, r, row{main: items[i].label, col: col, focused: focused})
 	})
 }
 
