@@ -37,7 +37,9 @@ stop_leftovers() {
 }
 stop_leftovers
 
-# One launcher at a time. The app inherits the lock and holds it while it runs.
+# One launcher at a time. Only the app inherits the lock (fd 9) and holds it
+# while it runs; everything else closes it, so nothing outlives the launcher
+# holding the lock.
 exec 9>"$LOCK"
 if ! flock -w "$LOCK_WAIT" 9; then
 	echo "MiSTer Subsonic is already being started."
@@ -45,7 +47,7 @@ if ! flock -w "$LOCK_WAIT" 9; then
 fi
 
 # BGM takes commands on its socket. It can't pause: stop it, play it again after.
-bgm() { printf '%s' "$1" | socat -t 2 - "UNIX-CONNECT:$BGM_SOCK" 2>/dev/null; }
+bgm() { printf '%s' "$1" | socat -t 2 - "UNIX-CONNECT:$BGM_SOCK" 2>/dev/null 9>&-; }
 bgm_stopped=
 if [ -S "$BGM_SOCK" ]; then
 	status=$(bgm status)
@@ -58,15 +60,15 @@ fi
 # SAM would start a game over the app once it thinks the MiSTer is idle.
 sam_disabled=
 if [ -x "$SAM" ] && { pidof MiSTer_SAM_MCP >/dev/null || ps | grep -q '[M]iSTer_SAM_MCP'; }; then
-	"$SAM" disable >/dev/null 2>&1
+	"$SAM" disable >/dev/null 2>&1 9>&-
 	sam_disabled=1
 fi
 
 restore() {
-	"$APP" -restore-console >/dev/null 2>&1 # text mode again, even after a crash
+	"$APP" -restore-console >/dev/null 2>&1 9>&- # text mode again, even after a crash
 	printf '\033[?25h\033[2J\033[H'          # the cursor back, the screen cleared
 	[ -n "$bgm_stopped" ] && bgm play
-	[ -n "$sam_disabled" ] && "$SAM" enable >/dev/null 2>&1
+	[ -n "$sam_disabled" ] && "$SAM" enable >/dev/null 2>&1 9>&-
 	return 0
 }
 trap restore EXIT

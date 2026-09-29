@@ -8,6 +8,7 @@ tmp=$(mktemp -d)
 bg=()
 cleanup() {
 	for p in "${bg[@]}"; do kill "$p" 2>/dev/null; done
+	for f in "$tmp"/*/spawned; do [ -f "$f" ] && kill $(cat "$f") 2>/dev/null; done
 	rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -101,6 +102,18 @@ run_case "disables SAM and enables it after" 0 "sam disable" "app -volume -20" "
 sandbox sam-old
 PS_OUT="  812 root python /media/fat/Scripts/.MiSTer_SAM/MiSTer_SAM_MCP.py"
 run_case "finds an older SAM by its process" 0 "sam disable" "app -volume -20" "app -restore-console" "sam enable"
+
+sandbox sam-daemon
+PS_OUT="  812 root python /media/fat/Scripts/.MiSTer_SAM/MiSTer_SAM_MCP.py"
+cat >"$MSS_SAM" <<'S'
+#!/bin/bash
+echo "sam $1" >>"$LOG"
+# Like the real SAM: enable starts a monitor that outlives the caller.
+[ "$1" = enable ] && { sleep 30 >/dev/null 2>&1 & echo $! >>"$(dirname "$LOG")/spawned"; }
+exit 0
+S
+run_case "SAM's background monitor doesn't keep the lock" 0 "sam disable" "app -volume -20" "app -restore-console" "sam enable"
+flock -n "$MSS_LOCK" true || { echo "FAIL sam-daemon: the lock is still held after the launcher exited"; failures=$((failures + 1)); }
 
 sandbox leftover
 sleep 60 &
