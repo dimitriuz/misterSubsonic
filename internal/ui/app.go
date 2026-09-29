@@ -148,7 +148,8 @@ type App struct {
 	// their releases are dropped too.
 	swallowed map[input.Button]bool
 	insecure  bool
-	stars     map[subsonic.ID]bool   // star changes made in this session
+	stars     map[starKey]bool       // star changes made in this session
+	starGen   int                    // bumped by every successful star change
 	artists   []subsonic.ArtistIndex // getArtists, fetched once per connection
 	rep       input.Repeater
 	in        chan input.Event
@@ -165,7 +166,7 @@ func New(o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
-		swallowed: map[input.Button]bool{}, stars: map[subsonic.ID]bool{}}
+		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}}
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err

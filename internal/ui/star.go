@@ -22,6 +22,15 @@ type starItem struct {
 	server bool // starred according to the server's data
 }
 
+// starKey identifies an item: servers number songs, albums and artists
+// separately, so an id alone isn't unique.
+type starKey struct {
+	kind starKind
+	id   subsonic.ID
+}
+
+func (it starItem) key() starKey { return starKey{it.kind, it.id} }
+
 func songStar(s subsonic.Song) starItem {
 	return starItem{starSong, s.ID, s.Title, s.IsStarred()}
 }
@@ -45,7 +54,7 @@ func (it starItem) target() subsonic.StarTarget {
 // isStarred is the star state of it: changes made in this session win over
 // the (possibly older) server data a screen loaded.
 func (a *App) isStarred(it starItem) bool {
-	if on, ok := a.stars[it.id]; ok {
+	if on, ok := a.stars[it.key()]; ok {
 		return on
 	}
 	return it.server
@@ -73,7 +82,8 @@ func (a *App) toggleStar(owner Screen, it starItem) {
 			a.Toast("Couldn't %s %s: %s", verb, it.name, subsonic.Classify(err))
 			return
 		}
-		a.stars[it.id] = on
+		a.stars[it.key()] = on
+		a.starGen++
 		if on {
 			a.Toast("Starred %s", it.name)
 		} else {
