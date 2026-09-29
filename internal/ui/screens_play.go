@@ -6,6 +6,7 @@ import (
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/player"
+	"mistersubsonic/internal/subsonic"
 )
 
 func secs(n int) time.Duration { return time.Duration(n) * time.Second }
@@ -13,10 +14,21 @@ func secs(n int) time.Duration { return time.Duration(n) * time.Second }
 const (
 	seekStep     = 10 * time.Second
 	seekHoldStep = 30 * time.Second
+	// A held seek key sends at most one Seek per seekEvery (each Seek can
+	// open a new transcoded stream); the rest accumulate in the target.
+	seekEvery = 250 * time.Millisecond
+	// The pending target stays on screen this long after its last Seek, until
+	// the player's position catches up.
+	seekShow = time.Second
 )
 
 // NowPlayingScreen is the full-screen player (spec §8.2).
-type NowPlayingScreen struct{}
+type NowPlayingScreen struct {
+	target   time.Duration // pending seek target
+	song     subsonic.ID   // track the target belongs to
+	unsent   bool          // target not yet sent to the player
+	lastSeek time.Time
+}
 
 func NewNowPlayingScreen() *NowPlayingScreen { return &NowPlayingScreen{} }
 
@@ -35,6 +47,41 @@ var playModes = []struct {
 	{false, player.RepeatOne, "Repeat one"},
 }
 
+// Release flushes a seek target the throttle held back.
+func (s *NowPlayingScreen) Release(a *App, b input.Button) {
+	if (b == input.BtnLeft || b == input.BtnRight) && s.unsent {
+		s.send(a.Player(), a.o.Now())
+		a.dirty = true
+	}
+}
+
+func (s *NowPlayingScreen) curID(st player.State) subsonic.ID {
+	song, _ := st.Current()
+	return song.ID
+}
+
+func (s *NowPlayingScreen) send(pl Player, now time.Time) {
+	pl.Seek(s.target)
+	s.unsent, s.lastSeek = false, now
+}
+
+// clamp keeps a target inside the track, a second short of the end.
+func (s *NowPlayingScreen) clamp(t time.Duration, st player.State) time.Duration {
+	song, _ := st.Current()
+	if d := secs(song.Duration); d > 0 {
+		t = min(t, d-time.Second)
+	}
+	return max(t, 0)
+}
+
+// position is where playback is, or is about to be after a recent seek.
+func (s *NowPlayingScreen) position(a *App, st player.State, now time.Time) time.Duration {
+	if s.song != "" && s.song == s.curID(st) && (s.unsent || now.Sub(s.lastSeek) < seekShow) {
+		return s.target
+	}
+	return st.Position
+}
+
 func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 	pl := a.Player()
 	st := pl.State()
@@ -47,7 +94,12 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		if e.Button == input.BtnLeft {
 			step = -step
 		}
-		pl.Seek(st.Position + step)
+		now := a.o.Now()
+		s.target = s.clamp(s.position(a, st, now)+step, st)
+		s.song, s.unsent = s.curID(st), true
+		if e.Kind == input.Press || now.Sub(s.lastSeek) >= seekEvery {
+			s.send(pl, now)
+		}
 		return true
 	}
 	if e.Kind != input.Press {
@@ -117,12 +169,13 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	// Progress.
 	y += p.Margin / 2
 	d := secs(song.Duration)
+	pos := s.position(a, st, a.o.Now())
 	c.Fill(gfx.R(text.X, y, text.W, barH), colArtBg)
 	if d > 0 {
-		c.Fill(gfx.R(text.X, y, text.W*int(min(st.Position, d))/int(d), barH), colAccent)
+		c.Fill(gfx.R(text.X, y, progressW(text.W, pos, d), barH), colAccent)
 	}
 	y += barH + p.Margin/4
-	times := clock(st.Position)
+	times := clock(pos)
 	if d > 0 {
 		times += " / " + clock(d)
 	}

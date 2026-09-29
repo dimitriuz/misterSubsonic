@@ -164,11 +164,7 @@ func TestNowPlayingControls(t *testing.T) {
 	if ta.pl.seekPos != 85*time.Second {
 		t.Fatalf("seek to %v, want 85s", ta.pl.seekPos)
 	}
-	ta.onInput(input.Event{Button: input.BtnLeft, Kind: input.Repeat})
-	if ta.pl.seekPos != 45*time.Second {
-		t.Fatalf("held seek to %v, want 45s", ta.pl.seekPos)
-	}
-	want := []string{"toggle", "next", "prev", "seek", "seek"}
+	want := []string{"toggle", "next", "prev", "seek"}
 	if len(ta.pl.calls) != len(want) {
 		t.Fatalf("calls %v, want %v", ta.pl.calls, want)
 	}
@@ -446,5 +442,85 @@ func TestToastsAreCappedAndCoalesced(t *testing.T) {
 	ta.Toast("same")
 	if len(ta.toasts) != 1 {
 		t.Fatalf("toasts %+v", ta.toasts)
+	}
+}
+
+func TestProgressW(t *testing.T) {
+	cases := []struct {
+		w      int
+		pos, d time.Duration
+		want   int
+	}{
+		{1000, 90 * time.Second, 180 * time.Second, 500},
+		{1200, 30 * time.Minute, time.Hour, 600},
+		{1200, 2 * time.Hour, time.Hour, 1200},
+		{1200, -time.Second, time.Hour, 0},
+		{1200, time.Second, 0, 0},
+	}
+	for _, c := range cases {
+		if got := progressW(c.w, c.pos, c.d); got != c.want {
+			t.Errorf("progressW(%d,%v,%v)=%d, want %d", c.w, c.pos, c.d, got, c.want)
+		}
+	}
+}
+
+// holdSeek presses btn, feeds repeats every 50 ms until hold has passed, then
+// releases; the fake player never moves, like a seek that hasn't landed yet.
+func holdSeek(ta *testApp, btn input.Button, hold time.Duration) {
+	ta.onInput(input.Event{Button: btn, Kind: input.Press})
+	for el := 50 * time.Millisecond; el <= hold; el += 50 * time.Millisecond {
+		ta.now = ta.now.Add(50 * time.Millisecond)
+		ta.onInput(input.Event{Button: btn, Kind: input.Repeat})
+	}
+	ta.onInput(input.Event{Button: btn, Kind: input.Release})
+}
+
+func seekCount(ta *testApp) int {
+	n := 0
+	for _, c := range ta.pl.calls {
+		if c == "seek" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestNowPlayingTapSeeksOnce(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewNowPlayingScreen())
+	ta.press(input.BtnRight)
+	if n := seekCount(ta); n != 1 || ta.pl.seekPos != 85*time.Second {
+		t.Fatalf("tap: %d seeks, last %v; want 1 seek to 85s", n, ta.pl.seekPos)
+	}
+}
+
+func TestNowPlayingHoldThrottlesSeeks(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.pl.st.Queue = []subsonic.Song{{ID: "long", Title: "Long", Duration: 3600}}
+	ta.Push(NewNowPlayingScreen())
+	holdSeek(ta, input.BtnRight, 950*time.Millisecond)
+	if n := seekCount(ta); n > 5 {
+		t.Fatalf("%d seeks while held, want <= 5", n)
+	}
+	// press +10s, 19 repeats of +30s.
+	if want := 75*time.Second + 10*time.Second + 19*30*time.Second; ta.pl.seekPos != want {
+		t.Fatalf("final seek %v, want %v (release must flush the pending target)", ta.pl.seekPos, want)
+	}
+}
+
+func TestNowPlayingHoldClampsAtEnd(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta) // 240 s track
+	ta.Push(NewNowPlayingScreen())
+	holdSeek(ta, input.BtnRight, time.Second)
+	if want := 239 * time.Second; ta.pl.seekPos != want {
+		t.Fatalf("seek %v, want %v", ta.pl.seekPos, want)
+	}
+	ta.render() // pending target shown without panicking
+	holdSeek(ta, input.BtnLeft, time.Second)
+	if ta.pl.seekPos != 0 {
+		t.Fatalf("seek %v, want 0", ta.pl.seekPos)
 	}
 }

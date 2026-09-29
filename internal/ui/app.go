@@ -379,6 +379,8 @@ func (a *App) onInput(e input.Event) {
 	}
 	if e.Kind != input.Release {
 		a.dispatch(e)
+	} else if r, ok := a.Top().(interface{ Release(*App, input.Button) }); ok && !a.confirm {
+		r.Release(a, e.Button)
 	}
 }
 
@@ -476,7 +478,7 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 	base := r.Y + r.H/2 + f.Ascent()/3
 	iconText(c, f, statusIcon(st.Status), x, base, f.Truncate(line, w-f.Ascent()), colText, c.Bounds())
 	if d := time.Duration(song.Duration) * time.Second; d > 0 {
-		bw := w * int(min(st.Position, d)) / int(d)
+		bw := progressW(w, st.Position, d)
 		c.Fill(gfx.R(x, r.Bottom()-max(p.Margin/6, 2)-2, w, 2), colArtBg)
 		c.Fill(gfx.R(x, r.Bottom()-max(p.Margin/6, 2)-2, bw, 2), colAccent)
 	}
