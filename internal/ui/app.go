@@ -189,6 +189,9 @@ type App struct {
 	quit       bool
 	bDown      time.Time // when B went down on the root screen (zero if not held)
 	confirm    bool      // exit confirmation shown
+
+	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
+	overwritten bool      // the last check found the screen drawn over
 }
 
 func New(o Options) (*App, error) {
@@ -217,6 +220,9 @@ func New(o Options) (*App, error) {
 	a.canvas = gfx.NewCanvas(a.P.W, a.P.H)
 	pw, ph := o.Display.Size()
 	a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
+	if _, ok := o.Display.(gfx.Checker); ok {
+		a.checkAt = o.Now().Add(watchdogEvery)
+	}
 	for _, ch := range o.Inputs {
 		go func(ch <-chan input.Event) {
 			for e := range ch {
@@ -436,6 +442,7 @@ func (a *App) untilWake() time.Duration {
 	}
 	consider(a.mqWake)
 	consider(a.saveAt)
+	consider(a.checkAt)
 	consider(a.saverDue())
 	if a.saver {
 		consider(now.Add(saverStep)) // the drift; nothing else moves
@@ -492,6 +499,7 @@ func (a *App) onWake() {
 		a.saveAt = time.Time{}
 		a.saveConfig()
 	}
+	a.checkScreen(now)
 	if a.animate || (!a.mqWake.IsZero() && !now.Before(a.mqWake)) {
 		a.dirty = true
 	}

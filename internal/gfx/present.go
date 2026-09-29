@@ -10,6 +10,12 @@ type Display interface {
 	Close() error
 }
 
+// Checker is a Display that can tell whether something else drew over its
+// last frame (the MiSTer framebuffer: Main_MiSTer or the console).
+type Checker interface {
+	Intact() bool
+}
+
 // Scaler maps the logical UI canvas onto the physical framebuffer.
 // Framebuffers of 288 lines or fewer are CRT modes: the image fills the
 // screen and pixels may be non-square by design (a 320x240 UI on a 640x240

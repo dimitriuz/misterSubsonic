@@ -41,3 +41,38 @@ func (f fbFormat) pack(mem []byte, c *Canvas) {
 		}
 	}
 }
+
+// Sampling grid for matches: 17×17 points, corners and edges included.
+const matchGrid = 16
+
+// matches reports whether mem still holds c at a grid of sample points.
+func (f fbFormat) matches(mem []byte, c *Canvas) bool {
+	for gy := 0; gy <= matchGrid; gy++ {
+		y := min(gy*f.height/matchGrid, f.height-1)
+		for gx := 0; gx <= matchGrid; gx++ {
+			x := min(gx*f.width/matchGrid, f.width-1)
+			if f.read(mem, x, y) != f.encode(c.Pix[y*c.W+x]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// encode is a canvas pixel as the framebuffer stores it (XRGB8888 with X
+// zero, or RGB565).
+func (f fbFormat) encode(p uint32) uint32 {
+	if f.bpp == 32 {
+		return p & 0xFFFFFF
+	}
+	return p>>8&0xF800 | p>>5&0x07E0 | p>>3&0x001F
+}
+
+// read is the stored pixel at (x, y), in encode's form.
+func (f fbFormat) read(mem []byte, x, y int) uint32 {
+	o := y*f.stride + x*f.bpp/8
+	if f.bpp == 32 {
+		return uint32(mem[o]) | uint32(mem[o+1])<<8 | uint32(mem[o+2])<<16
+	}
+	return uint32(mem[o]) | uint32(mem[o+1])<<8
+}
