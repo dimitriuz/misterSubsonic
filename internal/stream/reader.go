@@ -28,7 +28,7 @@ type Options struct {
 	WindowBytes   int64           // RAM per reader; default 32 MiB
 	BehindBytes   int64           // kept behind the read position; default WindowBytes/4
 	NearBytes     int64           // forward seeks within this distance of the window just wait; default 256 KiB
-	PrefetchBytes int64           // if > 0, fetch at most this far ahead of the read position until Promote
+	PrefetchBytes int64           // if > 0, fetch at most this far ahead of the read position until Promote (ring 1.25×, grown to WindowBytes then)
 	StallTimeout  time.Duration   // no bytes for this long -> reconnect; default 10 s
 	Backoff       []time.Duration // retry delays; default 0.5, 1, 2, 4, 8 s (last repeats)
 	RetryBudget   time.Duration   // give up after this long without progress; default 30 s
@@ -91,7 +91,13 @@ func Open(ctx context.Context, url string, o Options) (*Reader, error) {
 	if o.RetryBudget <= 0 {
 		o.RetryBudget = 30 * time.Second
 	}
-	r := &Reader{url: url, o: o, ring: make([]byte, o.WindowBytes), size: -1, prefetch: o.PrefetchBytes}
+	ringBytes := o.WindowBytes
+	if o.PrefetchBytes > 0 {
+		// A queued successor needs only its prefetch until it plays; the
+		// full window comes with Promote.
+		ringBytes = min(o.WindowBytes, o.PrefetchBytes+o.PrefetchBytes/4)
+	}
+	r := &Reader{url: url, o: o, ring: make([]byte, ringBytes), size: -1, prefetch: o.PrefetchBytes}
 	r.cond = sync.NewCond(&r.mu)
 
 	fctx, cancel := context.WithCancel(context.Background())
@@ -128,12 +134,30 @@ func (r *Reader) Buffered() int64 {
 	return r.hi - r.pos
 }
 
-// Promote lifts the prefetch limit.
+// Promote lifts the prefetch limit and grows the ring to the full window.
 func (r *Reader) Promote() {
 	r.mu.Lock()
 	r.prefetch = 0
+	if int64(len(r.ring)) < r.o.WindowBytes {
+		r.growLocked(r.o.WindowBytes)
+	}
 	r.cond.Broadcast()
 	r.mu.Unlock()
+}
+
+// growLocked moves the buffered bytes [lo, hi) into a new ring of n bytes.
+func (r *Reader) growLocked(n int64) {
+	ring := make([]byte, n)
+	old := int64(len(r.ring))
+	for off := r.lo; off < r.hi; {
+		s := off % old
+		k := min(old-s, r.hi-off)
+		d := off % n
+		c := int64(copy(ring[d:], r.ring[s:s+k]))
+		copy(ring, r.ring[s+c:s+k]) // the part that wraps in the new ring, if any
+		off += k
+	}
+	r.ring = ring
 }
 
 func (r *Reader) Read(p []byte) (int, error) {
@@ -243,9 +267,12 @@ func (r *Reader) copyOut(p []byte) int {
 	return n
 }
 
-// effectiveLo is the lowest offset we must keep: BehindBytes behind pos.
+// effectiveLo is the lowest offset we must keep: BehindBytes behind pos, or
+// a quarter of the ring while it is still the small prefetch ring (keeping
+// more than the ring holds would leave the fetcher no room at all).
 func (r *Reader) effectiveLo() int64 {
-	lo := max(r.lo, r.pos-r.o.BehindBytes)
+	behind := min(r.o.BehindBytes, int64(len(r.ring))/4)
+	lo := max(r.lo, r.pos-behind)
 	return min(lo, r.hi)
 }
 

@@ -580,3 +580,52 @@ func TestReconnectWhenHeadersNeverArrive(t *testing.T) {
 		t.Fatalf("reconnect took %v, should be ~3s", elapsed)
 	}
 }
+
+// A prefetching reader (a queued next track) holds a small ring until it is
+// promoted, then grows to the full window without losing what it buffered.
+func TestPrefetchRingIsSmallUntilPromoted(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	r.mu.Lock()
+	small := len(r.ring)
+	r.mu.Unlock()
+	if small != 80<<10 {
+		t.Fatalf("prefetch ring %d bytes, want %d", small, 80<<10)
+	}
+	buf := make([]byte, 200<<10) // wraps the small ring more than twice
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, 0)
+	time.Sleep(50 * time.Millisecond) // let the fetcher fill up to the cap
+	r.Promote()
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes, want %d", big, 1<<20)
+	}
+	buf = make([]byte, 300<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, 200<<10) // what was buffered before Promote came across intact
+	reqs := s.requests.Load()
+	checkBytes(t, readAt(t, r, 400<<10, 64<<10), 400<<10) // behind the reader, inside the grown window
+	if s.requests.Load() != reqs {
+		t.Fatal("a seek inside the grown window made a new request")
+	}
+}
+
+// A reader opened without a prefetch limit gets the whole window at once.
+func TestPlainReaderHasTheFullWindow(t *testing.T) {
+	s := newServer(t, 1<<20, nil)
+	r := open(t, s.URL, testOptions())
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.ring) != 1<<20 {
+		t.Fatalf("ring %d bytes", len(r.ring))
+	}
+}
