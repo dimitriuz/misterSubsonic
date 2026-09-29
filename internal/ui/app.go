@@ -148,7 +148,8 @@ type App struct {
 	// their releases are dropped too.
 	swallowed map[input.Button]bool
 	insecure  bool
-	stars     map[subsonic.ID]bool // star changes made in this session
+	stars     map[subsonic.ID]bool   // star changes made in this session
+	artists   []subsonic.ArtistIndex // getArtists, fetched once per connection
 	rep       input.Repeater
 	in        chan input.Event
 	post      chan func()

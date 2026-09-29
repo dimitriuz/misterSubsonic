@@ -122,19 +122,19 @@ func TestNavigationHomeToAlbumToPlay(t *testing.T) {
 		t.Fatalf("top = %T", ta.Top())
 	}
 	ta.settle(t)
-	ta.press(input.BtnDown)
-	ta.press(input.BtnA) // Homogenic
+	ta.press(input.BtnRight) // HDMI: a cover grid
+	ta.press(input.BtnA)     // Homogenic
 	as, ok := ta.Top().(*AlbumScreen)
 	if !ok || as.stub.ID != "al-2" {
 		t.Fatalf("top = %T %+v", ta.Top(), ta.Top())
 	}
 	ta.Pop()
-	ta.press(input.BtnUp)
+	ta.press(input.BtnLeft)
 	ta.press(input.BtnA) // Радио Африка
 	ta.settle(t)
-	ta.press(input.BtnDown)
-	ta.press(input.BtnDown)
-	ta.press(input.BtnDown) // row 3 = track 2
+	for range albumActionRows + 1 { // past Play, Shuffle, Star to track 2
+		ta.press(input.BtnDown)
+	}
 	ta.press(input.BtnA)
 	if ta.pl.start != 1 || len(ta.pl.played) != 3 {
 		t.Fatalf("played start %d of %d", ta.pl.start, len(ta.pl.played))
@@ -262,8 +262,8 @@ func TestLoadErrorShowsRetry(t *testing.T) {
 	ta.lib.err = nil
 	ta.press(input.BtnA)
 	ta.settle(t)
-	if len(s.albums) != 3 {
-		t.Fatalf("retry loaded %d albums", len(s.albums))
+	if len(s.view.albums) != 3 {
+		t.Fatalf("retry loaded %d albums", len(s.view.albums))
 	}
 }
 
@@ -288,15 +288,15 @@ func TestAlbumListPagesOnScroll(t *testing.T) {
 	ta.Push(NewAlbumListScreen("Recently added", subsonic.ListNewest))
 	ta.settle(t)
 	s := ta.Top().(*AlbumListScreen)
-	if len(s.albums) != albumPage {
-		t.Fatalf("first page %d", len(s.albums))
+	if len(s.view.albums) != albumPage {
+		t.Fatalf("first page %d", len(s.view.albums))
 	}
 	for i := 0; i < 20; i++ {
 		ta.press(input.BtnR) // page down
 	}
 	ta.settle(t)
-	if len(s.albums) != 153 {
-		t.Fatalf("after scrolling, %d albums loaded, want 153", len(s.albums))
+	if len(s.view.albums) != 153 {
+		t.Fatalf("after scrolling, %d albums loaded, want 153", len(s.view.albums))
 	}
 	if q := ta.lib.calls[len(ta.lib.calls)-1]; q.Offset != albumPage {
 		t.Fatalf("second page offset %d", q.Offset)

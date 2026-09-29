@@ -10,7 +10,8 @@ import (
 	"mistersubsonic/internal/subsonic"
 )
 
-// AlbumScreen shows an album header and its tracks, with Play and Shuffle rows.
+// AlbumScreen shows an album header and its tracks, with Play, Shuffle and
+// Star rows. X opens the menu of the focused track, or of the album.
 type AlbumScreen struct {
 	stub  subsonic.Album // from the list, shown while loading
 	album *subsonic.AlbumWithSongs
@@ -18,7 +19,7 @@ type AlbumScreen struct {
 	err   error
 }
 
-const albumActionRows = 2 // Play, Shuffle
+const albumActionRows = 3 // Play, Shuffle, Star
 
 func NewAlbumScreen(a subsonic.Album) *AlbumScreen { return &AlbumScreen{stub: a} }
 
@@ -38,6 +39,14 @@ func (s *AlbumScreen) load(a *App) {
 	})
 }
 
+// info is the loaded album, or the stub from the list until then.
+func (s *AlbumScreen) info() subsonic.Album {
+	if s.album != nil {
+		return s.album.Album
+	}
+	return s.stub
+}
+
 func (s *AlbumScreen) songs() []subsonic.Song {
 	if s.album == nil {
 		return nil
@@ -46,16 +55,7 @@ func (s *AlbumScreen) songs() []subsonic.Song {
 }
 
 func (s *AlbumScreen) play(a *App, start int, shuffle bool) {
-	songs := s.songs()
-	if len(songs) == 0 {
-		return
-	}
-	a.Player().SetShuffle(shuffle)
-	if shuffle {
-		start = shuffleStart(len(songs))
-	}
-	a.Player().PlayNow(songs, start)
-	a.Push(NewNowPlayingScreen())
+	a.playSongs(s.songs(), start, shuffle)
 }
 
 func (s *AlbumScreen) Handle(a *App, e input.Event) bool {
@@ -79,8 +79,18 @@ func (s *AlbumScreen) Handle(a *App, e input.Event) bool {
 			s.play(a, 0, false)
 		case s.list.Focus == 1:
 			s.play(a, 0, true)
+		case s.list.Focus == 2:
+			a.toggleStar(s, albumStar(s.info()))
 		default:
 			s.play(a, s.list.Focus-albumActionRows, false)
+		}
+		return true
+	case input.BtnX:
+		if i := s.list.Focus - albumActionRows; s.album != nil && i >= 0 && i < len(s.songs()) {
+			so := s.songs()[i]
+			a.openMenu(so.Title, songMenu(a, so))
+		} else {
+			a.openMenu(s.info().Name, albumMenu(a, s.info()))
 		}
 		return true
 	case input.BtnSelect:
@@ -140,15 +150,21 @@ func (s *AlbumScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 			iconText(c, f, iconPlay, r.X+p.Margin, r.Y+(r.H+f.Ascent()-f.Descent())/2, "Play", colAccent, r)
 		case 1:
 			a.drawTextRow(c, r, "", false, "Shuffle", "", colAccent)
+		case 2:
+			label := "Star"
+			if a.isStarred(albumStar(s.info())) {
+				label = "Unstar"
+			}
+			a.drawTextRow(c, r, "", false, label, "", colAccent)
 		default:
 			so := songs[i-albumActionRows]
-			a.drawTrackRow(c, r, so, false)
+			a.drawTrackRow(c, r, so, false, focused)
 		}
 	})
 }
 
-// drawTrackRow: "03  Title ...  3:45".
-func (a *App) drawTrackRow(c *gfx.Canvas, r gfx.Rect, so subsonic.Song, current bool) {
+// drawTrackRow: "03  Title ...  ★ 3:45".
+func (a *App) drawTrackRow(c *gfx.Canvas, r gfx.Rect, so subsonic.Song, current, focused bool) {
 	p := a.P
 	f := a.F.Body
 	col := colText
@@ -166,5 +182,11 @@ func (a *App) drawTrackRow(c *gfx.Canvas, r gfx.Rect, so subsonic.Song, current 
 	dur := clock(secs(so.Duration))
 	dw := f.Measure(dur)
 	f.Draw(c, r.Right()-p.Margin-dw, y, dur, colDim, r)
-	f.Draw(c, x, y, f.Truncate(so.Title, r.Right()-p.Margin-dw-p.Margin/2-x), col, r)
+	right := r.Right() - p.Margin - dw - p.Margin/2
+	if a.isStarred(songStar(so)) {
+		s := f.Ascent() * 3 / 4
+		drawIcon(c, iconStar, gfx.R(right-s, y-f.Ascent()/2-s/2, s, s), colAccent)
+		right -= s + p.Margin/2
+	}
+	a.drawFit(c, f, x, y, right-x, so.Title, col, r, focused)
 }

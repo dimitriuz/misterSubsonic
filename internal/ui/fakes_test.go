@@ -269,12 +269,18 @@ func (fakeArt) Get(k art.Key) (*gfx.Image, bool) {
 func sampleLibrary() *fakeLibrary {
 	l := &fakeLibrary{tracks: map[subsonic.ID][]subsonic.Song{}}
 	l.albums = []subsonic.Album{
-		{ID: "al-1", Name: "Радио Африка", Artist: "Аквариум", CoverArt: "al-1", Year: 1983},
-		{ID: "al-2", Name: "Homogenic", Artist: "Björk", CoverArt: "al-2", Year: 1997},
-		{ID: "al-3", Name: "A Rather Long Album Title That Will Need Truncating Somewhere", Artist: "Some Artist", CoverArt: "al-3", Year: 2001},
+		{ID: "al-1", Name: "Радио Африка", Artist: "Аквариум", ArtistID: "ar-1", CoverArt: "al-1", Year: 1983},
+		{ID: "al-2", Name: "Homogenic", Artist: "Björk", ArtistID: "ar-2", CoverArt: "al-2", Year: 1997},
+		{ID: "al-3", Name: "A Rather Long Album Title That Will Need Truncating Somewhere", Artist: "Some Artist", ArtistID: "ar-3", CoverArt: "al-3", Year: 2001},
 	}
+	l.artists = []subsonic.ArtistIndex{
+		{Name: "B", Artists: []subsonic.Artist{{ID: "ar-2", Name: "Björk", CoverArt: "ar-2", AlbumCount: 1}}},
+		{Name: "S", Artists: []subsonic.Artist{{ID: "ar-3", Name: "Some Artist", CoverArt: "ar-3", AlbumCount: 1}}},
+		{Name: "А", Artists: []subsonic.Artist{{ID: "ar-1", Name: "Аквариум", CoverArt: "ar-1", AlbumCount: 1, Starred: "2026-01-01T00:00:00Z"}}},
+	}
+	l.genres = []subsonic.Genre{{Name: "rock", AlbumCount: 2}, {Name: "Electronic", AlbumCount: 1}}
 	l.tracks["al-1"] = []subsonic.Song{
-		{ID: "s1", Title: "Капитан Африка", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 1, Duration: 240, Suffix: "flac", BitDepth: 24, SamplingRate: 96000},
+		{ID: "s1", Title: "Капитан Африка", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", ArtistID: "ar-1", CoverArt: "al-1", Track: 1, Duration: 240, Suffix: "flac", BitDepth: 24, SamplingRate: 96000},
 		{ID: "s2", Title: "Время Луны", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 2, Duration: 160, Suffix: "flac", BitDepth: 16, SamplingRate: 44100},
 		{ID: "s3", Title: "Рок-н-ролл мёртв", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 3, Duration: 215, Suffix: "flac", BitDepth: 16, SamplingRate: 44100},
 	}
