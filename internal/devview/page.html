@@ -7,21 +7,25 @@
 </style></head>
 <body>
 <img id="f" alt="waiting for the first frame…">
-<p>Arrows move · Enter = A · Esc/Backspace = B · Tab = X · N/Q = Y · PgUp/PgDn = L/R · Space = Start · S = Select</p>
+<p>Arrows move · Enter = A · Esc/Backspace = B · Tab = X · N = Y · Q = Queue · PgUp/PgDn = L/R · Space = Start · S = Select · letters type in Search</p>
 <script>
-// Mapped on e.code, not e.key: Shift/CapsLock change key ("s" vs "S") between keydown and keyup.
+// Buttons are mapped on e.code, not e.key: Shift/CapsLock change key ("s" vs
+// "S") between keydown and keyup. The typed character (e.key) goes along as
+// t= so text fields can use letters that are also buttons.
 const keys = {ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right",
-  Enter:"a", NumpadEnter:"a", Escape:"b", Backspace:"b", Tab:"x", KeyN:"y", KeyQ:"y",
+  Enter:"a", NumpadEnter:"a", Escape:"b", Backspace:"b", Tab:"x", KeyN:"y", KeyQ:"queue",
   PageUp:"l", PageDown:"r", Space:"start", KeyS:"select"};
 const held = new Set();
 function send(e, down) {
-  const b = keys[e.code]; if (!b) return;
   if (down && (e.ctrlKey || e.altKey || e.metaKey)) return; // leave browser shortcuts alone
+  const b = keys[e.code] || "";
+  const t = !down ? "" : e.key.length === 1 ? e.key : e.code === "Backspace" ? "\b" : "";
+  if (!b && !t) return;
   if (!down && !held.has(b)) return;
   e.preventDefault();
-  if (down && held.has(b)) return; // the app does its own key repeat
-  down ? held.add(b) : held.delete(b);
-  fetch("/key?b=" + b + "&down=" + (down ? 1 : 0), {method: "POST"});
+  if (b && down && held.has(b)) return; // the app does its own key repeat
+  if (b) down ? held.add(b) : held.delete(b);
+  fetch("/key?b=" + b + "&down=" + (down ? 1 : 0) + (t ? "&t=" + encodeURIComponent(t) : ""), {method: "POST"});
 }
 addEventListener("keydown", e => send(e, true));
 addEventListener("keyup", e => send(e, false));

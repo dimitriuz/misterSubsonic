@@ -28,6 +28,7 @@ var buttons = map[string]input.Button{
 	"up": input.BtnUp, "down": input.BtnDown, "left": input.BtnLeft, "right": input.BtnRight,
 	"a": input.BtnA, "b": input.BtnB, "x": input.BtnX, "y": input.BtnY,
 	"l": input.BtnL, "r": input.BtnR, "select": input.BtnSelect, "start": input.BtnStart,
+	"queue": input.BtnQueue,
 }
 
 // Viewer is a gfx.Display that browsers watch.
@@ -36,9 +37,6 @@ type Viewer struct {
 	events chan input.Event
 	srv    *http.Server
 	ln     net.Listener
-	// allowHost is the listen address host when bound to a specific
-	// non-loopback IP; Host headers naming it are accepted too.
-	allowHost string
 
 	mu    sync.Mutex
 	cond  *sync.Cond
@@ -61,22 +59,32 @@ func (v *Viewer) Listen(addr string) error {
 		return err
 	}
 	v.ln = ln
-	if host, _, err := net.SplitHostPort(ln.Addr().String()); err == nil {
-		if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() && !ip.IsUnspecified() {
-			v.allowHost = host
-		}
-	}
 	v.srv = &http.Server{Handler: v.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go v.srv.Serve(ln)
 	return nil
 }
 
-// URL is the page address once Listen succeeded.
+// URL is the page address once Listen succeeded. For a wildcard bind
+// (":8090", "0.0.0.0:8090") it names this machine's loopback address.
 func (v *Viewer) URL() string {
 	if v.ln == nil {
 		return ""
 	}
-	return "http://" + v.ln.Addr().String() + "/"
+	return pageURL(v.ln.Addr().(*net.TCPAddr))
+}
+
+func pageURL(addr *net.TCPAddr) string {
+	host := addr.IP.String()
+	if addr.IP.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(addr.Port)) + "/"
+}
+
+// Exposed reports whether the viewer listens beyond loopback: anyone on
+// the network can then watch the screen and press keys.
+func (v *Viewer) Exposed() bool {
+	return v.ln != nil && !v.ln.Addr().(*net.TCPAddr).IP.IsLoopback()
 }
 
 func (v *Viewer) Events() <-chan input.Event { return v.events }
@@ -108,7 +116,8 @@ func (v *Viewer) Close() error {
 	return nil
 }
 
-// Handler serves the page (/), frames (/frame?after=N, long-poll) and keys (POST /key?b=a&down=1).
+// Handler serves the page (/), frames (/frame?after=N, long-poll) and keys
+// (POST /key?b=a&down=1, with t=<character> for keys that type).
 func (v *Viewer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -121,17 +130,28 @@ func (v *Viewer) Handler() http.Handler {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}
-		b, ok := buttons[r.URL.Query().Get("b")]
-		if !ok {
-			http.Error(w, "unknown button", http.StatusBadRequest)
+		q := r.URL.Query()
+		var e input.Event
+		if name := q.Get("b"); name != "" {
+			b, ok := buttons[name]
+			if !ok {
+				http.Error(w, "unknown button", http.StatusBadRequest)
+				return
+			}
+			e.Button = b
+		}
+		if t := []rune(q.Get("t")); len(t) == 1 {
+			e.Rune = t[0]
+		}
+		if e.Button == input.BtnNone && e.Rune == 0 {
+			http.Error(w, "no button or text", http.StatusBadRequest)
 			return
 		}
-		kind := input.Release
-		if r.URL.Query().Get("down") == "1" {
-			kind = input.Press
+		e.Kind = input.Release
+		if q.Get("down") == "1" {
+			e.Kind = input.Press
 		}
-		e := input.Event{Button: b, Kind: kind}
-		if kind == input.Release {
+		if e.Kind == input.Release {
 			// A lost Release would leave the button stuck (auto-repeating).
 			select {
 			case v.events <- e:
@@ -148,9 +168,11 @@ func (v *Viewer) Handler() http.Handler {
 	return v.checkHost(mux)
 }
 
-// checkHost refuses requests whose Host header isn't this machine's loopback
-// (or the configured listen address). Without it a DNS-rebinding page, which
-// is same-origin with its own hostname, could press keys and read frames.
+// checkHost refuses requests whose Host header is a name other than
+// localhost. A DNS-rebinding page is same-origin with its own hostname, so
+// without this it could press keys and read frames; it can't make the
+// browser send an IP address as Host, so IP literals (the LAN address of a
+// wildcard bind, say) are fine.
 func (v *Viewer) checkHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !v.hostAllowed(r.Host) {
@@ -167,11 +189,7 @@ func (v *Viewer) hostAllowed(hostport string) bool {
 		host = h
 	}
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	if host == "localhost" || (v.allowHost != "" && host == v.allowHost) {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return host == "localhost" || net.ParseIP(host) != nil
 }
 
 // sameOrigin refuses requests from other web pages, which could otherwise

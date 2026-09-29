@@ -22,9 +22,10 @@ const (
 	BtnR
 	BtnSelect
 	BtnStart
+	BtnQueue // keyboard only (Q): open the queue
 )
 
-var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start"}
+var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start", "queue"}
 
 func (b Button) String() string {
 	if int(b) < len(buttonNames) {
@@ -42,10 +43,14 @@ const (
 	Repeat // generated while a navigation button is held
 )
 
-// Event is one button transition.
+// Event is one button transition. Keyboard keys also carry the character
+// they type in Rune ('\b' for Backspace, 0 for keys that type nothing), so a
+// text field can take letters that are mapped to buttons too (N = Y,
+// Space = Start). Keys that only type have Button BtnNone.
 type Event struct {
 	Button Button
 	Kind   Kind
+	Rune   rune
 }
 
 // Repeat timing (spec §8.4).

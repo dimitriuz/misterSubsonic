@@ -132,6 +132,9 @@ func run(f flags) error {
 			return err
 		}
 		fmt.Println("MiSTer Subsonic dev viewer:", v.URL())
+		if v.Exposed() {
+			fmt.Println("warning: the viewer is open to your network: anyone on it can see the screen and press keys")
+		}
 		disp = v
 		inputs = append(inputs, v.Events())
 	case "headless":

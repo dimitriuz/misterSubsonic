@@ -23,7 +23,9 @@ const (
 	keyTab       = 15
 	keyQ         = 16
 	keyEnter     = 28
+	keyLShift    = 42
 	keyN         = 49
+	keyRShift    = 54
 	keySpace     = 57
 	keyPageUp    = 104
 	keyUp        = 103
@@ -53,12 +55,33 @@ var DefaultKeys = map[uint16]Button{
 	keyUp: BtnUp, keyDown: BtnDown, keyLeft: BtnLeft, keyRight: BtnRight,
 	keyEnter: BtnA, keyKPEnter: BtnA, keyEsc: BtnB, keyBackspace: BtnB,
 	keyTab: BtnX, keySpace: BtnStart, keyPageUp: BtnL, keyPageDown: BtnR,
-	keyN: BtnY, keyQ: BtnY,
+	keyN: BtnY, keyQ: BtnQueue,
 
 	btnEast: BtnA, btnSouth: BtnB, btnNorth: BtnX, btnWest: BtnY,
 	btnTL: BtnL, btnTR: BtnR, btnSelect: BtnSelect, btnStart: BtnStart,
 	btnDpadUp: BtnUp, btnDpadDn: BtnDown, btnDpadL: BtnLeft, btnDpadR: BtnRight,
 }
+
+// usLayout is what each key types on a US keyboard: {plain, with Shift}.
+var usLayout = func() map[uint16][2]rune {
+	m := map[uint16][2]rune{keySpace: {' ', ' '}, keyBackspace: {'\b', '\b'}}
+	rows := []struct {
+		first          uint16
+		plain, shifted string
+	}{
+		{2, "1234567890-=", "!@#$%^&*()_+"},
+		{16, "qwertyuiop[]", "QWERTYUIOP{}"},
+		{30, "asdfghjkl;'`", "ASDFGHJKL:\"~"},
+		{43, "\\zxcvbnm,./", "|ZXCVBNM<>?"},
+	}
+	for _, r := range rows {
+		plain, shifted := []rune(r.plain), []rune(r.shifted)
+		for i := range plain {
+			m[r.first+uint16(i)] = [2]rune{plain[i], shifted[i]}
+		}
+	}
+	return m
+}()
 
 // MiSTer .map slots (Main_MiSTer): 32 little-endian uint32, low 16 bits = key code.
 var misterSlots = [...]Button{BtnRight, BtnLeft, BtnDown, BtnUp, BtnA, BtnB, BtnX, BtnY, BtnL, BtnR, BtnSelect, BtnStart}
@@ -91,28 +114,47 @@ type AbsRange struct{ Min, Max int32 }
 type translator struct {
 	keys  map[uint16]Button
 	abs   map[uint16]AbsRange
-	state map[uint16]int // axis -> -1, 0, +1
+	state map[uint16]int  // axis -> -1, 0, +1
+	shift map[uint16]bool // Shift keys held
 }
 
 func newTranslator(keys map[uint16]Button, abs map[uint16]AbsRange) *translator {
-	return &translator{keys: keys, abs: abs, state: map[uint16]int{}}
+	return &translator{keys: keys, abs: abs, state: map[uint16]int{}, shift: map[uint16]bool{}}
 }
 
-// handle converts a raw event. value: 1 press, 0 release, 2 kernel autorepeat (ignored).
+// handle converts a raw event. value: 1 press, 0 release, 2 kernel
+// autorepeat (buttons ignore it, the app repeats them itself; typing repeats).
 func (t *translator) handle(typ, code uint16, value int32) []Event {
 	switch typ {
 	case evKey:
 		b, ok := t.keys[code]
+		if !ok && (code == keyLShift || code == keyRShift) {
+			t.shift[code] = value != 0
+			return nil
+		}
 		if !ok {
 			b, ok = DefaultKeys[code]
 		}
-		if !ok || value == 2 {
+		var r rune
+		if l, typed := usLayout[code]; typed {
+			r = l[0]
+			if t.shift[keyLShift] || t.shift[keyRShift] {
+				r = l[1]
+			}
+		}
+		if !ok && r == 0 {
 			return nil
 		}
-		if value == 1 {
-			return []Event{{b, Press}}
+		switch value {
+		case 1:
+			return []Event{{Button: b, Kind: Press, Rune: r}}
+		case 0:
+			return []Event{{Button: b, Kind: Release, Rune: r}}
 		}
-		return []Event{{b, Release}}
+		if r != 0 {
+			return []Event{{Kind: Press, Rune: r}}
+		}
+		return nil
 	case evAbs:
 		var neg, pos Button
 		switch code {
@@ -150,15 +192,15 @@ func (t *translator) handle(typ, code uint16, value int32) []Event {
 		var out []Event
 		switch prev {
 		case -1:
-			out = append(out, Event{neg, Release})
+			out = append(out, Event{Button: neg, Kind: Release})
 		case 1:
-			out = append(out, Event{pos, Release})
+			out = append(out, Event{Button: pos, Kind: Release})
 		}
 		switch dir {
 		case -1:
-			out = append(out, Event{neg, Press})
+			out = append(out, Event{Button: neg, Kind: Press})
 		case 1:
-			out = append(out, Event{pos, Press})
+			out = append(out, Event{Button: pos, Kind: Press})
 		}
 		return out
 	}

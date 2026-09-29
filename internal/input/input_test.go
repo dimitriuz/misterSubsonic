@@ -9,11 +9,11 @@ import (
 func TestRepeaterTiming(t *testing.T) {
 	var r Repeater
 	t0 := time.Unix(1000, 0)
-	r.Feed(Event{BtnDown, Press}, t0)
+	r.Feed(Event{Button: BtnDown, Kind: Press}, t0)
 	if got := r.Due(t0.Add(349 * time.Millisecond)); len(got) != 0 {
 		t.Fatalf("repeat before the 350 ms delay: %v", got)
 	}
-	if got := r.Due(t0.Add(350 * time.Millisecond)); len(got) != 1 || got[0] != (Event{BtnDown, Repeat}) {
+	if got := r.Due(t0.Add(350 * time.Millisecond)); len(got) != 1 || got[0] != (Event{Button: BtnDown, Kind: Repeat}) {
 		t.Fatalf("first repeat = %v", got)
 	}
 	// 5 more at 110 ms, then 45 ms.
@@ -28,7 +28,7 @@ func TestRepeaterTiming(t *testing.T) {
 	if n := len(r.Due(at)); n != 1 {
 		t.Fatalf("fast repeat: %d events", n)
 	}
-	r.Feed(Event{BtnDown, Release}, at)
+	r.Feed(Event{Button: BtnDown, Kind: Release}, at)
 	if !r.NextDeadline().IsZero() || len(r.Due(at.Add(time.Second))) != 0 {
 		t.Fatal("repeats continued after release")
 	}
@@ -37,13 +37,13 @@ func TestRepeaterTiming(t *testing.T) {
 func TestRepeaterOnlyNavigationButtons(t *testing.T) {
 	var r Repeater
 	t0 := time.Unix(0, 0)
-	r.Feed(Event{BtnA, Press}, t0)
+	r.Feed(Event{Button: BtnA, Kind: Press}, t0)
 	if len(r.Due(t0.Add(time.Second))) != 0 {
 		t.Fatal("A must not auto-repeat")
 	}
-	r.Feed(Event{BtnUp, Press}, t0)
-	r.Feed(Event{BtnDown, Press}, t0) // the newer button takes over
-	r.Feed(Event{BtnUp, Release}, t0) // releasing the old one changes nothing
+	r.Feed(Event{Button: BtnUp, Kind: Press}, t0)
+	r.Feed(Event{Button: BtnDown, Kind: Press}, t0) // the newer button takes over
+	r.Feed(Event{Button: BtnUp, Kind: Release}, t0) // releasing the old one changes nothing
 	if got := r.Due(t0.Add(RepeatDelay)); len(got) != 1 || got[0].Button != BtnDown {
 		t.Fatalf("got %v, want a Down repeat", got)
 	}
@@ -74,13 +74,13 @@ func TestParseMisterMap(t *testing.T) {
 
 func TestTranslatorKeysAndMapOverride(t *testing.T) {
 	tr := newTranslator(map[uint16]Button{btnSouth: BtnA}, nil)
-	if got := tr.handle(evKey, btnSouth, 1); len(got) != 1 || got[0] != (Event{BtnA, Press}) {
+	if got := tr.handle(evKey, btnSouth, 1); len(got) != 1 || got[0] != (Event{Button: BtnA, Kind: Press}) {
 		t.Fatalf("mapped south = %v", got)
 	}
-	if got := tr.handle(evKey, btnEast, 1); got[0] != (Event{BtnA, Press}) {
+	if got := tr.handle(evKey, btnEast, 1); got[0] != (Event{Button: BtnA, Kind: Press}) {
 		t.Fatalf("default east = %v", got)
 	}
-	if got := tr.handle(evKey, keyEnter, 0); got[0] != (Event{BtnA, Release}) {
+	if got := tr.handle(evKey, keyEnter, 0); got[0] != (Event{Button: BtnA, Kind: Release}) {
 		t.Fatalf("enter release = %v", got)
 	}
 	if got := tr.handle(evKey, keyDown, 2); got != nil {
@@ -93,22 +93,22 @@ func TestTranslatorKeysAndMapOverride(t *testing.T) {
 
 func TestTranslatorHatAndStick(t *testing.T) {
 	tr := newTranslator(nil, map[uint16]AbsRange{absX: {0, 255}})
-	if got := tr.handle(evAbs, absHat0Y, -1); len(got) != 1 || got[0] != (Event{BtnUp, Press}) {
+	if got := tr.handle(evAbs, absHat0Y, -1); len(got) != 1 || got[0] != (Event{Button: BtnUp, Kind: Press}) {
 		t.Fatalf("hat up = %v", got)
 	}
-	if got := tr.handle(evAbs, absHat0Y, 1); len(got) != 2 || got[0] != (Event{BtnUp, Release}) || got[1] != (Event{BtnDown, Press}) {
+	if got := tr.handle(evAbs, absHat0Y, 1); len(got) != 2 || got[0] != (Event{Button: BtnUp, Kind: Release}) || got[1] != (Event{Button: BtnDown, Kind: Press}) {
 		t.Fatalf("hat up→down = %v", got)
 	}
-	if got := tr.handle(evAbs, absHat0Y, 0); len(got) != 1 || got[0] != (Event{BtnDown, Release}) {
+	if got := tr.handle(evAbs, absHat0Y, 0); len(got) != 1 || got[0] != (Event{Button: BtnDown, Kind: Release}) {
 		t.Fatalf("hat centre = %v", got)
 	}
 	if got := tr.handle(evAbs, absX, 150); got != nil {
 		t.Fatalf("small stick movement = %v", got)
 	}
-	if got := tr.handle(evAbs, absX, 250); len(got) != 1 || got[0] != (Event{BtnRight, Press}) {
+	if got := tr.handle(evAbs, absX, 250); len(got) != 1 || got[0] != (Event{Button: BtnRight, Kind: Press}) {
 		t.Fatalf("stick right = %v", got)
 	}
-	if got := tr.handle(evAbs, absX, 128); len(got) != 1 || got[0] != (Event{BtnRight, Release}) {
+	if got := tr.handle(evAbs, absX, 128); len(got) != 1 || got[0] != (Event{Button: BtnRight, Kind: Release}) {
 		t.Fatalf("stick centre = %v", got)
 	}
 	if got := tr.handle(evAbs, absY, 0); got != nil {
@@ -119,7 +119,7 @@ func TestTranslatorHatAndStick(t *testing.T) {
 func TestRepeaterNoBurstAfterStall(t *testing.T) {
 	var r Repeater
 	t0 := time.Unix(1000, 0)
-	r.Feed(Event{BtnDown, Press}, t0)
+	r.Feed(Event{Button: BtnDown, Kind: Press}, t0)
 	now := t0.Add(5 * time.Second)
 	if got := r.Due(now); len(got) != 1 {
 		t.Fatalf("Due after a stall = %d events, want 1", len(got))
@@ -141,5 +141,46 @@ func TestParseMisterMapMasksHighBits(t *testing.T) {
 	}
 	if m[1] != BtnA || len(m) != 1 {
 		t.Fatalf("map = %v, want only code 1 -> BtnA", m)
+	}
+}
+
+func TestTranslatorTypesText(t *testing.T) {
+	tr := newTranslator(nil, nil)
+	const keyA, keyZ = 30, 44
+	if got := tr.handle(evKey, keyA, 1); len(got) != 1 || got[0] != (Event{Button: BtnNone, Kind: Press, Rune: 'a'}) {
+		t.Fatalf("a = %v", got)
+	}
+	if got := tr.handle(evKey, keyA, 0); len(got) != 1 || got[0] != (Event{Button: BtnNone, Kind: Release, Rune: 'a'}) {
+		t.Fatalf("a release = %v", got)
+	}
+	// Mapped keys keep their button and also type.
+	if got := tr.handle(evKey, keyN, 1); got[0] != (Event{Button: BtnY, Kind: Press, Rune: 'n'}) {
+		t.Fatalf("n = %v", got)
+	}
+	if got := tr.handle(evKey, keyQ, 1); got[0] != (Event{Button: BtnQueue, Kind: Press, Rune: 'q'}) {
+		t.Fatalf("q = %v", got)
+	}
+	if got := tr.handle(evKey, keySpace, 1); got[0] != (Event{Button: BtnStart, Kind: Press, Rune: ' '}) {
+		t.Fatalf("space = %v", got)
+	}
+	if got := tr.handle(evKey, keyLShift, 1); got != nil {
+		t.Fatalf("shift alone = %v", got)
+	}
+	if got := tr.handle(evKey, keyZ, 1); got[0].Rune != 'Z' {
+		t.Fatalf("shift+z = %v", got)
+	}
+	if got := tr.handle(evKey, 3, 1); got[0].Rune != '@' { // Shift+2
+		t.Fatalf("shift+2 = %v", got)
+	}
+	tr.handle(evKey, keyLShift, 0)
+	if got := tr.handle(evKey, 53, 1); got[0].Rune != '/' {
+		t.Fatalf("slash = %v", got)
+	}
+	// Kernel autorepeat repeats typing (Backspace held), never buttons.
+	if got := tr.handle(evKey, keyBackspace, 2); len(got) != 1 || got[0] != (Event{Kind: Press, Rune: '\b'}) {
+		t.Fatalf("backspace autorepeat = %v", got)
+	}
+	if got := tr.handle(evKey, keyEnter, 2); got != nil {
+		t.Fatalf("enter autorepeat = %v", got)
 	}
 }

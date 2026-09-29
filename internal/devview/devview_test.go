@@ -211,20 +211,57 @@ func TestRejectsForeignHost(t *testing.T) {
 	}
 }
 
-func TestAllowsConfiguredListenHost(t *testing.T) {
+// A wildcard bind (for a phone or another PC) is reached by IP address;
+// only hostnames other than localhost are refused.
+func TestHostCheckAllowsIPLiterals(t *testing.T) {
 	v := New(1, 1)
-	v.allowHost = "192.168.1.5"
+	for host, want := range map[string]bool{
+		"192.168.1.5:8090": true, "[fe80::1]:8090": true, "10.0.0.2": true, "localhost:8090": true,
+		"evil.example:8090": false, "localhost.": false, "127.0.0.1.nip.io:8090": false, "": false,
+	} {
+		if got := v.hostAllowed(host); got != want {
+			t.Errorf("hostAllowed(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+func TestURLForWildcardBindIsLoopback(t *testing.T) {
+	if got := pageURL(&net.TCPAddr{IP: net.IPv6unspecified, Port: 8090}); got != "http://127.0.0.1:8090/" {
+		t.Fatalf("wildcard URL = %q", got)
+	}
+	if got := pageURL(&net.TCPAddr{IP: net.IPv4(192, 168, 1, 5), Port: 8090}); got != "http://192.168.1.5:8090/" {
+		t.Fatalf("LAN URL = %q", got)
+	}
+}
+
+func TestTextKeys(t *testing.T) {
+	v := New(1, 1)
 	srv := httptest.NewServer(v.Handler())
 	defer srv.Close()
-	req, _ := http.NewRequest("GET", srv.URL+"/", nil)
-	req.Host = "192.168.1.5:8090"
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	post := func(q string) int {
+		resp, err := http.Post(srv.URL+"/key?"+q, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d for the listen address", resp.StatusCode)
+	for q, want := range map[string]input.Event{
+		"t=a&down=1":       {Kind: input.Press, Rune: 'a'},
+		"b=y&t=n&down=1":   {Button: input.BtnY, Kind: input.Press, Rune: 'n'},
+		"t=%D0%B6&down=1":  {Kind: input.Press, Rune: 'ж'},
+		"b=b&t=%08&down=1": {Button: input.BtnB, Kind: input.Press, Rune: '\b'},
+		"b=queue&down=1":   {Button: input.BtnQueue, Kind: input.Press},
+	} {
+		if c := post(q); c != http.StatusNoContent {
+			t.Fatalf("%s: status %d", q, c)
+		}
+		if e := <-v.Events(); e != want {
+			t.Fatalf("%s: event %+v, want %+v", q, e, want)
+		}
+	}
+	if c := post("down=1"); c != http.StatusBadRequest {
+		t.Fatalf("no button or text: status %d", c)
 	}
 }
 

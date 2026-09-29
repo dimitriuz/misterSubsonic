@@ -8,11 +8,16 @@ import (
 )
 
 func TestParseKeys(t *testing.T) {
-	got, err := parseKeys("a:2s, down ,a")
+	got, err := parseKeys("a:2s, down ,'abba:1s,queue")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []scripted{{input.BtnA, 2 * time.Second}, {input.BtnDown, 400 * time.Millisecond}, {input.BtnA, 400 * time.Millisecond}}
+	want := []scripted{
+		{b: input.BtnA, wait: 2 * time.Second},
+		{b: input.BtnDown, wait: 400 * time.Millisecond},
+		{text: "abba", wait: time.Second},
+		{b: input.BtnQueue, wait: 400 * time.Millisecond},
+	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v", got)
 	}
@@ -21,10 +26,9 @@ func TestParseKeys(t *testing.T) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	}
-	if _, err := parseKeys("jump"); err == nil {
-		t.Fatal("unknown button accepted")
-	}
-	if _, err := parseKeys("a:soon"); err == nil {
-		t.Fatal("bad duration accepted")
+	for _, bad := range []string{"jump", "a:soon", "'"} {
+		if _, err := parseKeys(bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
 	}
 }
