@@ -1,0 +1,50 @@
+name: release
+# A v* tag builds the release: the zip and its files as GitHub release
+# assets, and the MiSTer Downloader database on the db branch (spec §9).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: ./scripts/test-launcher.sh
+      - run: make release VERSION="$TAG"
+      - name: Publish the GitHub release
+        run: |
+          r=bin/release/sdcard
+          gh release create "$TAG" --title "MiSTer Subsonic $TAG" --generate-notes \
+            "bin/release/MiSTer_Subsonic-$TAG.zip" \
+            "$r/Scripts/MiSTer_Subsonic.sh" \
+            "$r/mistersubsonic/mistersubsonic" \
+            "$r/mistersubsonic/config.example.toml" \
+            "$r/mistersubsonic/LICENSE" \
+            "$r/mistersubsonic/THIRD_PARTY.txt"
+      - name: Publish the Downloader database on the db branch
+        run: |
+          make db BASE_URL="https://github.com/${{ github.repository }}/releases/download/$TAG/"
+          cp bin/release/db.json "$RUNNER_TEMP/db.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan db-publish
+          git rm -rfq .
+          cp "$RUNNER_TEMP/db.json" db.json
+          git add db.json
+          git commit -qm "db: $TAG"
+          git push -f origin HEAD:db
