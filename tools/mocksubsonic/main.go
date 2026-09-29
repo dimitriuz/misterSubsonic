@@ -2,6 +2,13 @@
 // Subsonic server, for exercising the client without a real Navidrome.
 // It accepts any credentials and supports HTTP Range on stream.
 //
+// A file whose name contains "-transcoded" is listed as an m4a (which the
+// client can't decode, so it asks for a transcode). A stream request with
+// a format other than "raw" is answered like a Navidrome transcode: HTTP
+// 200, chunked, no Content-Length, no Accept-Ranges, Range ignored. The
+// file's bytes are sent as they are, so a transcoded file must already be
+// in the requested format.
+//
 //	go run ./tools/mocksubsonic -dir internal/audio/testdata -addr 127.0.0.1:4533
 package main
 
@@ -50,7 +57,7 @@ func main() {
 	http.HandleFunc("/rest/", func(w http.ResponseWriter, r *http.Request) {
 		endpoint := strings.TrimSuffix(path.Base(r.URL.Path), ".view")
 		q := r.URL.Query()
-		log.Printf("%s %s range=%q", endpoint, q.Get("id"), r.Header.Get("Range"))
+		log.Printf("%s %s format=%q range=%q", endpoint, q.Get("id"), q.Get("format"), r.Header.Get("Range"))
 		switch endpoint {
 		case "stream":
 			i, err := strconv.Atoi(strings.TrimPrefix(q.Get("id"), "so-"))
@@ -64,6 +71,10 @@ func main() {
 				return
 			}
 			defer f.Close()
+			if format := q.Get("format"); format != "raw" {
+				serveTranscode(w, f, format)
+				return
+			}
 			w.Header().Set("Content-Type", songs[i].ContentType)
 			http.ServeContent(w, r, "", time.Time{}, f)
 		case "ping", "scrobble", "savePlayQueue", "star", "unstar":
@@ -90,6 +101,31 @@ func main() {
 	})
 	log.Printf("serving %d songs from %s on http://%s", len(songs), *dir, *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+// serveTranscode streams f the way Navidrome sends a live transcode: status
+// 200 with chunked encoding (Flush before the handler returns, and never set
+// Content-Length), no Accept-Ranges, and any Range header ignored.
+func serveTranscode(w http.ResponseWriter, f *os.File, format string) {
+	ct := map[string]string{"mp3": "audio/mpeg", "flac": "audio/flac", "wav": "audio/wav"}[format]
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(http.StatusOK)
+	buf := make([]byte, 16<<10)
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 func reply(w http.ResponseWriter, payload map[string]any) {
@@ -122,9 +158,13 @@ func scan(dir string) ([]song, error) {
 		if err != nil {
 			return nil, err
 		}
+		suffix, ct := strings.TrimPrefix(filepath.Ext(n), "."), types[f]
+		if strings.Contains(n, "-transcoded") {
+			suffix, ct = "m4a", "audio/mp4" // not decodable on the device: the client asks for a transcode
+		}
 		out = append(out, song{
 			ID: fmt.Sprintf("so-%d", i), Title: strings.TrimSuffix(n, filepath.Ext(n)), Album: "Mock Album", Artist: "Mock Artist",
-			AlbumID: "al-mock", Track: i + 1, Suffix: strings.TrimPrefix(filepath.Ext(n), "."), ContentType: types[f],
+			AlbumID: "al-mock", Track: i + 1, Suffix: suffix, ContentType: ct,
 			Duration: durationOf(p, f), Size: fi.Size(), path: p,
 		})
 	}
