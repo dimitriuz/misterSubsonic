@@ -246,3 +246,86 @@ func TestStarredRefreshesAfterAStarChange(t *testing.T) {
 		}
 	})
 }
+
+// Navidrome answers nothing to a one-letter query: that's not "nothing found".
+func TestSearchOneLetterSaysKeepTyping(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewHomeScreen())
+	s := NewSearchScreen()
+	ta.Push(s)
+	typeKeys(ta, "q")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	if len(ta.lib.searches) != 1 || ta.lib.searches[0] != "q" {
+		t.Fatalf("searches %v: one-letter queries are still sent", ta.lib.searches)
+	}
+	if text, col := s.statusText(); text != "Keep typing…" || col != colDim {
+		t.Fatalf("status %q", text)
+	}
+	typeKeys(ta, "z")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	if text, _ := s.statusText(); text != "Nothing found for “qz”" {
+		t.Fatalf("status %q", text)
+	}
+}
+
+func TestSearchSelectRetriesAFailedSearch(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewHomeScreen())
+	s := NewSearchScreen()
+	ta.Push(s)
+	ta.lib.err = errOffline
+	typeKeys(ta, "bj")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	want := "Search failed: " + subsonic.Classify(errOffline).String() + " — Select to retry"
+	if text, col := s.statusText(); s.err == nil || text != want || col != colError {
+		t.Fatalf("err %v, status %q; want %q", s.err, text, want)
+	}
+	ta.lib.err = nil
+	ta.press(input.BtnSelect) // no debounce
+	ta.settle(t)
+	if s.err != nil || len(s.artists.artists) != 1 || len(ta.lib.searches) != 2 {
+		t.Fatalf("after Select: err %v, artists %v, searches %v", s.err, s.artists.artists, ta.lib.searches)
+	}
+}
+
+func TestKeyboardLayoutsAreBuiltOnce(t *testing.T) {
+	var k Keyboard
+	a, b := k.rows(), k.rows()
+	if &a[0][0] != &b[0][0] {
+		t.Fatal("rows() rebuilt the layout")
+	}
+	k.ToggleLayout()
+	c, d := k.rows(), k.rows()
+	if &c[0][0] != &d[0][0] || &a[0][0] == &c[0][0] {
+		t.Fatal("the Cyrillic layout is not cached separately")
+	}
+}
+
+// The labels are rebuilt when the results change, not on every frame.
+func TestSearchTabLabelsFollowTheResults(t *testing.T) {
+	s := NewSearchScreen()
+	var songs []subsonic.Song
+	for range searchPage {
+		songs = append(songs, subsonic.Song{})
+	}
+	s.setResults(&subsonic.SearchResult{Songs: songs, Albums: []subsonic.Album{{}}}, "x")
+	if got := s.tabs.Labels; got[resArtists] != "Artists 0" || got[resAlbums] != "Albums 1" || got[resTracks] != "Tracks 50+" {
+		t.Fatalf("labels %q", got)
+	}
+	ta, s := tuneSearch(t, ProfileHDMI)
+	for i := 0; s.more[resTracks] && i < 100; i++ {
+		ta.press(input.BtnDown)
+		ta.settle(t)
+	}
+	s.tabs.Labels[resTracks] = "stale" // Draw must leave them alone
+	ta.settle(t)
+	if s.tabs.Labels[resTracks] != "stale" {
+		t.Fatal("Draw rewrote the labels")
+	}
+}

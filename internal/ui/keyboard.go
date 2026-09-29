@@ -39,13 +39,12 @@ var (
 	cyrillicRows = []string{"1234567890", "абвгдеёжзи", "йклмнопрст", "уфхцчшщъыь", "эюя-'.&"}
 )
 
-// rows is the current layout.
-func (k *Keyboard) rows() [][]kbKey {
-	src := latinRows
-	sw := "АБВ"
-	if k.cyrillic {
-		src, sw = cyrillicRows, "ABC"
-	}
+// The two layouts, built once (rows is called several times per frame).
+var latinKeys, cyrillicKeys = buildKeys(latinRows, "АБВ"), buildKeys(cyrillicRows, "ABC")
+
+// buildKeys makes the key rows of a layout; sw labels the layout switch key
+// (it names the other layout).
+func buildKeys(src []string, sw string) [][]kbKey {
 	out := make([][]kbKey, 0, len(src)+1)
 	for _, s := range src {
 		var row []kbKey
@@ -60,6 +59,14 @@ func (k *Keyboard) rows() [][]kbKey {
 		{label: sw, action: keyLayout, units: 2},
 		{label: "Clear", action: keyClear, units: 2},
 	})
+}
+
+// rows is the current layout. Callers must not modify it.
+func (k *Keyboard) rows() [][]kbKey {
+	if k.cyrillic {
+		return cyrillicKeys
+	}
+	return latinKeys
 }
 
 // Focused is the key under the cursor.

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
@@ -47,7 +48,21 @@ type SearchScreen struct {
 }
 
 func NewSearchScreen() *SearchScreen {
-	return &SearchScreen{tabs: Tabs{Labels: []string{"Artists", "Albums", "Tracks"}}}
+	s := &SearchScreen{tabs: Tabs{Labels: make([]string, 3)}}
+	s.relabel()
+	return s
+}
+
+// relabel rebuilds the tab labels (kind, count, "+" when more pages exist);
+// call it whenever the results or more change.
+func (s *SearchScreen) relabel() {
+	counts := s.counts()
+	for i, base := range []string{"Artists", "Albums", "Tracks"} {
+		s.tabs.Labels[i] = fmt.Sprintf("%s %d", base, counts[i])
+		if s.more[i] {
+			s.tabs.Labels[i] += "+"
+		}
+	}
 }
 
 func (s *SearchScreen) Title() string { return "Search" }
@@ -133,6 +148,7 @@ func (s *SearchScreen) setResults(r *subsonic.SearchResult, q string) {
 	if s.total() == 0 {
 		s.inResults = false
 	}
+	s.relabel()
 }
 
 func (s *SearchScreen) counts() [3]int {
@@ -167,6 +183,7 @@ func (s *SearchScreen) loadMore(a *App) {
 		}
 		if err != nil {
 			s.more[kind] = true // the next move near the end tries again
+			s.relabel()
 			a.Toast("Couldn't load more: %s", subsonic.Classify(err).String())
 			return
 		}
@@ -182,6 +199,7 @@ func (s *SearchScreen) loadMore(a *App) {
 			s.songs.songs = append(s.songs.songs, r.Songs...)
 			s.more[kind] = len(r.Songs) == searchPage
 		}
+		s.relabel()
 	})
 }
 
@@ -217,6 +235,13 @@ func (s *SearchScreen) Handle(a *App, e input.Event) bool {
 			s.edit(a, nil)
 		}
 		return true
+	case input.BtnSelect: // retry a failed search now
+		if s.err != nil && strings.TrimSpace(string(s.query)) != "" {
+			s.gen++ // any pending debounce is stale
+			s.search(a)
+			return true
+		}
+		return false
 	case input.BtnX: // shortcut for Del
 		if len(s.query) > 0 {
 			s.edit(a, s.query[:len(s.query)-1])
@@ -312,13 +337,6 @@ func (s *SearchScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		return
 	}
 	h := p.RowH
-	counts := s.counts()
-	for i, base := range []string{"Artists", "Albums", "Tracks"} {
-		s.tabs.Labels[i] = fmt.Sprintf("%s %d", base, counts[i])
-		if s.more[i] {
-			s.tabs.Labels[i] += "+"
-		}
-	}
 	s.tabs.Draw(a, c, gfx.R(results.X, results.Y, results.W, h), s.inResults && s.onTabs)
 	view := gfx.R(results.X, results.Y+h, results.W, results.H-h)
 	a.drawDimmed(!s.inResults, func() {
@@ -371,24 +389,30 @@ func firstRune(s string) (rune, int) {
 // found, or (on a CRT under the keyboard) the counts.
 func (s *SearchScreen) drawStatus(a *App, c *gfx.Canvas, r gfx.Rect) {
 	f := a.F.Small
-	var text string
-	col := colDim
-	switch {
-	case s.err != nil:
-		text, col = "Search failed: "+subsonic.Classify(s.err).String(), colError
-	case s.searching:
-		text = "Searching…"
-	case s.searched != "" && s.total() == 0:
-		text = "Nothing found for “" + s.searched + "”"
-	case s.total() > 0:
-		c := s.counts()
-		text = plural(c[0], "artist") + " · " + plural(c[1], "album") + " · " + plural(c[2], "track") + " — Down for results"
-	case len(s.query) == 0:
-		text = "Results appear as you type"
-	default:
+	text, col := s.statusText()
+	if text == "" {
 		return
 	}
 	f.Draw(c, r.X+a.P.Margin/2, r.Y+f.Ascent(), f.Truncate(text, r.W-a.P.Margin), col, r)
+}
+
+func (s *SearchScreen) statusText() (string, gfx.Color) {
+	switch {
+	case s.err != nil:
+		return "Search failed: " + subsonic.Classify(s.err).String() + " — Select to retry", colError
+	case s.searching:
+		return "Searching…", colDim
+	case s.searched != "" && s.total() == 0 && utf8.RuneCountInString(s.searched) == 1:
+		return "Keep typing…", colDim // some servers (Navidrome) don't answer one letter
+	case s.searched != "" && s.total() == 0:
+		return "Nothing found for “" + s.searched + "”", colDim
+	case s.total() > 0:
+		c := s.counts()
+		return plural(c[0], "artist") + " · " + plural(c[1], "album") + " · " + plural(c[2], "track") + " — Down for results", colDim
+	case len(s.query) == 0:
+		return "Results appear as you type", colDim
+	}
+	return "", colDim
 }
 
 // plural is "1 album", "3 albums".
