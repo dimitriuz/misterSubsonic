@@ -122,6 +122,9 @@ func (s *AlbumListScreen) loadMore(a *App) {
 		s.loading = false
 		if err != nil {
 			s.err = err
+			if len(s.view.albums) > 0 {
+				a.Toast("Couldn't load more: %s", subsonic.Classify(err))
+			}
 			return
 		}
 		page, _ := v.([]subsonic.Album)
@@ -133,13 +136,21 @@ func (s *AlbumListScreen) loadMore(a *App) {
 
 func (s *AlbumListScreen) Handle(a *App, e input.Event) bool {
 	if s.view.Handle(a, e) {
-		if s.view.cur.nearEnd(a, len(s.view.albums)) {
+		// After a failure, only a Press retries, not the repeats of a held key.
+		if s.view.cur.nearEnd(a, len(s.view.albums)) && (s.err == nil || e.Kind == input.Press) {
 			s.loadMore(a)
 		}
 		return true
 	}
 	if e.Kind != input.Press {
 		return false
+	}
+	// Down at the very end does not move, but retries a page that failed.
+	switch e.Button {
+	case input.BtnDown, input.BtnRight, input.BtnR:
+		if len(s.view.albums) > 0 && s.view.cur.nearEnd(a, len(s.view.albums)) {
+			s.loadMore(a)
+		}
 	}
 	switch e.Button {
 	case input.BtnA:

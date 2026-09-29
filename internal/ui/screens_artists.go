@@ -81,6 +81,9 @@ func (s *ArtistsScreen) Handle(a *App, e input.Event) bool {
 	if (e.Button == input.BtnL || e.Button == input.BtnR) && e.Kind != input.Release && len(s.letters) > 0 {
 		cur, _ := s.letter()
 		target := cur.at // L: the start of this letter, or of the previous one
+		if e.Button == input.BtnR {
+			target = s.view.cur.focus() // R on the last letter stays put
+		}
 		for i, l := range s.letters {
 			if l.name != cur.name {
 				continue

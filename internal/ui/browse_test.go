@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"mistersubsonic/internal/input"
@@ -266,5 +268,56 @@ func TestMenusWithoutIDs(t *testing.T) {
 		if e.label == "Go to artist" {
 			t.Fatal("album menu offers Go to artist without an artist ID")
 		}
+	}
+}
+
+// R inside the last letter has nowhere to go: the focus stays.
+func TestArtistsRAtLastLetterStaysPut(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	ta.lib.artists = []subsonic.ArtistIndex{
+		{Name: "A", Artists: []subsonic.Artist{{ID: "a0", Name: "A0"}}},
+		{Name: "B", Artists: []subsonic.Artist{{ID: "b0", Name: "B0"}, {ID: "b1", Name: "B1"}, {ID: "b2", Name: "B2"}}},
+	}
+	ta.Push(NewHomeScreen())
+	s := NewArtistsScreen()
+	ta.Push(s)
+	ta.settle(t)
+	ta.press(input.BtnR) // B, at 1
+	ta.press(input.BtnDown)
+	if s.view.cur.focus() != 2 {
+		t.Fatalf("focus %d, want 2", s.view.cur.focus())
+	}
+	ta.press(input.BtnR)
+	if s.view.cur.focus() != 2 || s.Title() != "Artists · B" {
+		t.Fatalf("R at the last letter moved focus to %d", s.view.cur.focus())
+	}
+}
+
+// A failed next page is announced, and Down at the end retries it.
+func TestAlbumListRetriesFailedPage(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	for i := range 147 {
+		ta.lib.albums = append(ta.lib.albums, subsonic.Album{ID: subsonic.ID(fmt.Sprint("x", i)), Name: "Filler"})
+	}
+	ta.Push(NewHomeScreen())
+	s := NewAlbumListScreen("Recently added", subsonic.ListNewest)
+	ta.Push(s)
+	ta.settle(t)
+	if len(s.view.albums) != albumPage {
+		t.Fatalf("first page %d", len(s.view.albums))
+	}
+	ta.lib.err = errors.New("boom")
+	for range 20 {
+		ta.press(input.BtnR)
+	}
+	ta.settle(t)
+	if len(ta.toasts) == 0 || !strings.HasPrefix(ta.toasts[0].text, "Couldn't load more: ") {
+		t.Fatalf("toasts %v", ta.toasts)
+	}
+	ta.lib.err = nil
+	ta.press(input.BtnDown)
+	ta.settle(t)
+	if len(s.view.albums) != 150 {
+		t.Fatalf("after retry %d albums, want 150", len(s.view.albums))
 	}
 }
