@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"mistersubsonic/internal/devview"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/logfile"
 	"mistersubsonic/internal/ui"
 )
 
@@ -33,10 +35,10 @@ var openDevice = audio.OpenDevice
 var version = "dev"
 
 type flags struct {
-	config, display, viewerAddr, frames, profile, fbdev, keys string
-	null                                                      bool
-	volume                                                    float64
-	exitAfter                                                 time.Duration
+	config, display, viewerAddr, frames, profile, fbdev, keys, log string
+	null                                                           bool
+	volume                                                         float64
+	exitAfter                                                      time.Duration
 }
 
 func main() {
@@ -49,6 +51,7 @@ func main() {
 	flag.StringVar(&f.fbdev, "fb", "/dev/fb0", "framebuffer device")
 	flag.BoolVar(&f.null, "null", false, "use the null audio device (silent)")
 	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
+	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
 	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
 	flag.Parse()
@@ -79,6 +82,46 @@ func startVolume(cfgDB, flagDB float64, null bool, display, goos, goarch string)
 	return cfgDB, false
 }
 
+// logMax caps log.txt (and crash.txt): two files of 1 MB at most (spec §9).
+const logMax = 1 << 20
+
+// openLog sends the log to log.txt next to the config when the app runs on
+// the framebuffer (the MiSTer: nobody sees stderr there), or where -log
+// says. Crashes the app can't catch (runtime errors, panics off the UI
+// goroutine) go to crash.txt beside it. A log that can't be opened falls
+// back to stderr. The returned func restores stderr and closes the files.
+func openLog(flagPath, display, dataDir string) func() {
+	path := flagPath
+	if path == "auto" {
+		path = "-"
+		if display == "fbdev" {
+			path = filepath.Join(dataDir, "log.txt")
+		}
+	}
+	if path == "-" || path == "" {
+		return func() {}
+	}
+	lf, err := logfile.Open(path, logMax)
+	if err != nil {
+		log.Printf("log: %v (logging to stderr)", err)
+		return func() {}
+	}
+	log.SetOutput(lf)
+	crash := filepath.Join(filepath.Dir(path), "crash.txt")
+	if st, err := os.Stat(crash); err == nil && st.Size() > logMax {
+		os.Remove(crash)
+	}
+	if cf, err := os.OpenFile(crash, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644); err == nil {
+		debug.SetCrashOutput(cf, debug.CrashOptions{}) // keeps its own copy of the file
+		cf.Close()
+	}
+	return func() {
+		debug.SetCrashOutput(nil, debug.CrashOptions{})
+		log.SetOutput(os.Stderr)
+		lf.Close()
+	}
+}
+
 func run(f flags) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -95,6 +138,12 @@ func run(f flags) error {
 		}
 	}
 
+	dataDir := filepath.Dir(f.config)
+	closeLog := openLog(f.log, f.display, dataDir)
+	defer closeLog()
+	log.Printf("MiSTer Subsonic %s starting (%s, config %s)", version, f.display, f.config)
+	defer log.Printf("MiSTer Subsonic exiting")
+
 	cfg, warns, cfgErr := config.Load(f.config)
 	if cfg == nil {
 		cfg = config.Default()
@@ -102,7 +151,6 @@ func run(f flags) error {
 	for _, w := range warns {
 		log.Printf("config: %s", w)
 	}
-	dataDir := filepath.Dir(f.config)
 
 	// Display and layout.
 	profileName := cfg.Display.Profile

@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,5 +130,45 @@ func TestExitDuringConnectBuildsNothing(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(dir, "servers")); err == nil {
 		t.Fatal("a session was built after the app exited")
+	}
+}
+
+func TestLogGoesToTheFileGiven(t *testing.T) {
+	nullDevice(t)
+	dir, cfg := writeConfig(t, "http://127.0.0.1:1")
+	logPath := filepath.Join(dir, "app.log")
+	err := run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: logPath})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "MiSTer Subsonic dev starting") || !strings.Contains(string(b), "exiting") {
+		t.Fatalf("log:\n%s", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "crash.txt")); err != nil {
+		t.Fatal("no crash.txt beside the log:", err)
+	}
+}
+
+func TestLogDefaultsToLogTxtOnTheFramebuffer(t *testing.T) {
+	dir := t.TempDir()
+	closeLog := openLog("auto", "fbdev", dir)
+	log.Print("hello")
+	closeLog()
+	if b, _ := os.ReadFile(filepath.Join(dir, "log.txt")); !strings.Contains(string(b), "hello") {
+		t.Fatalf("log.txt: %q", b)
+	}
+	other := t.TempDir()
+	openLog("auto", "viewer", other)() // elsewhere: stderr, no files
+	if ents, _ := os.ReadDir(other); len(ents) != 0 {
+		t.Fatalf("the viewer wrote %v", ents)
+	}
+}
+
+func TestAnUnwritableLogFallsBackToStderr(t *testing.T) {
+	closeLog := openLog(filepath.Join(t.TempDir(), "missing", "log.txt"), "fbdev", "")
+	defer closeLog()
+	if log.Writer() != os.Stderr {
+		t.Fatal("the log went somewhere other than stderr")
 	}
 }
