@@ -95,12 +95,13 @@ type Engine struct {
 	quit   chan struct{}
 	done   chan struct{}
 
-	mu     sync.Mutex
-	segs   []segment // guarded by mu
-	evq    []Event   // guarded by mu
-	busy   io.Closer // guarded by mu: source of the voice being decoded
-	killed io.Closer // guarded by mu: source closed by interrupt, reason for failed open
-	closed bool      // guarded by mu
+	mu      sync.Mutex
+	segs    []segment // guarded by mu
+	evq     []Event   // guarded by mu
+	busy    io.Closer // guarded by mu: source of the voice being decoded
+	killed  io.Closer // guarded by mu: source closed by interrupt, reason for failed open
+	closed  bool      // guarded by mu
+	seekReq *seekReq  // guarded by mu: latest requested seek, not yet run
 
 	// Owned by the run goroutine.
 	cur      *voice
@@ -177,10 +178,32 @@ func (e *Engine) Stop() {
 // command: the decoder seek may restart an HTTP request, and the caller
 // must not wait for that. A failure arrives as EventSeekFailed; success
 // shows in Position.
+type seekReq struct {
+	id  uint64
+	pos time.Duration
+}
+
+// Seek asks for a seek and returns at once. Seeks coalesce: if one is already
+// waiting to run, it is replaced by this one (latest wins), so a burst of
+// seeks behind a slow HTTP restart never fills the command queue.
 func (e *Engine) Seek(id uint64, pos time.Duration) {
+	e.mu.Lock()
+	queued := e.seekReq != nil
+	e.seekReq = &seekReq{id, pos}
+	e.mu.Unlock()
+	if queued {
+		return
+	}
 	e.send(func() {
-		if err := e.doSeek(id, pos); err != nil {
-			e.queueEvent(Event{Kind: EventSeekFailed, TrackID: id, Err: err})
+		e.mu.Lock()
+		r := e.seekReq
+		e.seekReq = nil
+		e.mu.Unlock()
+		if r == nil {
+			return
+		}
+		if err := e.doSeek(r.id, r.pos); err != nil {
+			e.queueEvent(Event{Kind: EventSeekFailed, TrackID: r.id, Err: err})
 		}
 	})
 }

@@ -646,3 +646,51 @@ func TestNewClampsVolume(t *testing.T) {
 		t.Fatalf("VolumeDB = %v, want -60 (clamped from -100)", got)
 	}
 }
+
+func TestStateNextIndexFollowsRepeatAndShuffle(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(3, 100), 0)
+	if n := h.p.State().NextIndex; n != 1 {
+		t.Fatalf("NextIndex = %d, want 1", n)
+	}
+	h.p.Jump(2)
+	if n := h.p.State().NextIndex; n != -1 {
+		t.Fatalf("at the end with repeat off: NextIndex = %d, want -1", n)
+	}
+	h.p.SetRepeat(RepeatAll)
+	if n := h.p.State().NextIndex; n != 0 {
+		t.Fatalf("repeat-all wrap: NextIndex = %d, want 0", n)
+	}
+	h.p.SetRepeat(RepeatOne)
+	if n := h.p.State().NextIndex; n != 2 {
+		t.Fatalf("repeat-one: NextIndex = %d, want 2", n)
+	}
+	h.p.SetRepeat(RepeatOff)
+	h.p.Jump(0)
+	h.p.SetShuffle(true)
+	st := h.p.State()
+	var order []int
+	h.p.do(func() { order = append([]int(nil), h.p.order...) })
+	if st.NextIndex != order[1] {
+		t.Fatalf("shuffled NextIndex = %d, want order[1] = %d", st.NextIndex, order[1])
+	}
+}
+
+func TestUserActionResetsFailureCount(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.fail["sa"], h.opener.fail["sb"], h.opener.fail["x1"] = true, true, true
+	h.p.PlayNow(songs(2, 100), 0) // both fail: 2 failures, then the queue ends
+	h.waitFor("stopped after two failures", func() bool {
+		return h.p.State().Status == Stopped && len(h.opener.callList()) == 2
+	})
+	fresh := []subsonic.Song{{ID: "x1", Suffix: "flac", Duration: 100}, {ID: "x2", Suffix: "flac", Duration: 100}}
+	h.p.PlayNow(fresh, 0) // x1 fails; that must be failure 1, not 3
+	h.waitFor("x2 opened", func() bool {
+		for _, c := range h.opener.callList() {
+			if c.id == "x2" {
+				return true
+			}
+		}
+		return false
+	})
+}

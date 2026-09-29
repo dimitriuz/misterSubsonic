@@ -2,7 +2,9 @@ package audio
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -560,5 +562,53 @@ func TestEngineSoftClipsBoostedSamples(t *testing.T) {
 	}
 	if peak := got[2*(n-1)]; peak < 0.95 {
 		t.Fatalf("peak %v: the loud end was squashed, not clipped", peak)
+	}
+}
+
+// blockingSeekDecoder blocks inside SeekFrame until released, like a raw
+// FLAC seek waiting on an HTTP Range restart.
+type blockingSeekDecoder struct {
+	fakeDecoder
+	release chan struct{}
+	seeks   *atomic.Int32
+	last    *atomic.Uint64
+}
+
+func (d *blockingSeekDecoder) SeekFrame(f uint64) error {
+	d.seeks.Add(1)
+	<-d.release
+	d.last.Store(f)
+	return d.fakeDecoder.SeekFrame(f)
+}
+
+func TestEngineSeeksCoalesceLatestWins(t *testing.T) {
+	out := newFakeOutput(1000)
+	release := make(chan struct{})
+	var seeks atomic.Int32
+	var last atomic.Uint64
+	open := func(src io.ReadSeeker, f Format) (Decoder, error) {
+		d, err := fakeOpen(src, f)
+		if err != nil {
+			return nil, err
+		}
+		return &blockingSeekDecoder{fakeDecoder: *d.(*fakeDecoder), release: release, seeks: &seeks, last: &last}, nil
+	}
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: open, ChunkFrames: 256, Poll: time.Millisecond})
+	defer e.Close()
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(480000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+
+	start := time.Now()
+	for i := 1; i <= 200; i++ { // far more than the 64-slot command queue
+		e.Seek(1, time.Duration(i)*10*time.Millisecond)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("200 seeks took %v; Seek must not block", d)
+	}
+	waitFor(t, "first seek running", func() bool { return seeks.Load() >= 1 })
+	close(release)
+	waitFor(t, "latest seek applied", func() bool { return last.Load() == uint64(2*OutputRate) })
+	if n := seeks.Load(); n > 2 {
+		t.Fatalf("%d decoder seeks for a burst of 200; want at most 2 (running + latest)", n)
 	}
 }

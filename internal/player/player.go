@@ -69,6 +69,9 @@ type State struct {
 	Repeat     Repeat
 	VolumeDB   float64
 	Transcoded bool
+	// NextIndex is the queue index that plays after the current song
+	// (honouring shuffle and repeat), or -1.
+	NextIndex int
 }
 
 func (s State) Current() (subsonic.Song, bool) {
@@ -251,6 +254,7 @@ func (p *Player) do(f func()) {
 // PlayNow replaces the queue and starts songs[start].
 func (p *Player) PlayNow(songs []subsonic.Song, start int) {
 	p.do(func() {
+		p.failures = 0 // a user action starts a fresh failure count
 		if start < 0 || start >= len(songs) {
 			return
 		}
@@ -365,6 +369,7 @@ func (p *Player) Clear() {
 // Jump plays queue[i].
 func (p *Player) Jump(i int) {
 	p.do(func() {
+		p.failures = 0 // a user action starts a fresh failure count
 		for oi, qi := range p.order {
 			if qi == i {
 				p.startAt(oi, 0)
@@ -376,6 +381,7 @@ func (p *Player) Jump(i int) {
 
 func (p *Player) Next() {
 	p.do(func() {
+		p.failures = 0 // a user action starts a fresh failure count
 		if c := p.followingCursor(false); c >= 0 {
 			p.startAt(c, 0)
 		} else {
@@ -388,6 +394,7 @@ func (p *Player) Next() {
 // played for more than 3 seconds.
 func (p *Player) Prev() {
 	p.do(func() {
+		p.failures = 0 // a user action starts a fresh failure count
 		if p.cursor < 0 {
 			return
 		}
@@ -488,6 +495,7 @@ func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
 // ResumeFrom loads r into the queue and starts playing at its position.
 func (p *Player) ResumeFrom(r *Resume) {
 	p.do(func() {
+		p.failures = 0 // a user action starts a fresh failure count
 		if r == nil || r.Index < 0 || r.Index >= len(r.Songs) {
 			return
 		}
@@ -514,7 +522,10 @@ func (p *Player) emit(ev Event) {
 
 func (p *Player) publish() {
 	s := State{Queue: p.queue, Index: p.currentIndex(), Status: p.status, Position: p.position,
-		Shuffle: p.shuffle, Repeat: p.repeat, VolumeDB: p.volumeDB, Transcoded: p.curSrc.Transcoded}
+		Shuffle: p.shuffle, Repeat: p.repeat, VolumeDB: p.volumeDB, Transcoded: p.curSrc.Transcoded, NextIndex: -1}
+	if c := p.followingCursor(true); c >= 0 {
+		s.NextIndex = p.order[c]
+	}
 	p.mu.Lock()
 	p.snap = s
 	p.mu.Unlock()
