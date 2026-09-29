@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -107,6 +108,10 @@ func (v *Viewer) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /frame", v.serveFrame)
 	mux.HandleFunc("POST /key", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
 		b, ok := buttons[r.URL.Query().Get("b")]
 		if !ok {
 			http.Error(w, "unknown button", http.StatusBadRequest)
@@ -116,13 +121,37 @@ func (v *Viewer) Handler() http.Handler {
 		if r.URL.Query().Get("down") == "1" {
 			kind = input.Press
 		}
-		select {
-		case v.events <- input.Event{Button: b, Kind: kind}:
-		default: // UI not keeping up; drop rather than block the browser
+		e := input.Event{Button: b, Kind: kind}
+		if kind == input.Release {
+			// A lost Release would leave the button stuck (auto-repeating).
+			select {
+			case v.events <- e:
+			case <-time.After(time.Second):
+			}
+		} else {
+			select {
+			case v.events <- e:
+			default: // UI not keeping up; drop rather than block the browser
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	return mux
+}
+
+// sameOrigin refuses requests from other web pages, which could otherwise
+// press buttons (and start playback) through the user's browser.
+func sameOrigin(r *http.Request) bool {
+	if s := r.Header.Get("Sec-Fetch-Site"); s != "" && s != "same-origin" && s != "none" {
+		return false
+	}
+	if o := r.Header.Get("Origin"); o != "" {
+		u, err := url.Parse(o)
+		if err != nil || u.Host != r.Host {
+			return false
+		}
+	}
+	return true
 }
 
 var errGone = errors.New("viewer closed")

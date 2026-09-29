@@ -9,11 +9,15 @@
 <img id="f" alt="waiting for the first frame…">
 <p>Arrows move · Enter = A · Esc/Backspace = B · Tab = X · N/Q = Y · PgUp/PgDn = L/R · Space = Start · S = Select</p>
 <script>
+// Mapped on e.code, not e.key: Shift/CapsLock change key ("s" vs "S") between keydown and keyup.
 const keys = {ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right",
-  Enter:"a", Escape:"b", Backspace:"b", Tab:"x", n:"y", q:"y", PageUp:"l", PageDown:"r", " ":"start", s:"select"};
+  Enter:"a", NumpadEnter:"a", Escape:"b", Backspace:"b", Tab:"x", KeyN:"y", KeyQ:"y",
+  PageUp:"l", PageDown:"r", Space:"start", KeyS:"select"};
 const held = new Set();
 function send(e, down) {
-  const b = keys[e.key]; if (!b) return;
+  const b = keys[e.code]; if (!b) return;
+  if (down && (e.ctrlKey || e.altKey || e.metaKey)) return; // leave browser shortcuts alone
+  if (!down && !held.has(b)) return;
   e.preventDefault();
   if (down && held.has(b)) return; // the app does its own key repeat
   down ? held.add(b) : held.delete(b);
