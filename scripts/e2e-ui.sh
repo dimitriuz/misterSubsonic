@@ -1,8 +1,10 @@
 #!/bin/sh
 # End-to-end check of the app: the mock server serves an album, the app runs
-# headless on the NULL audio device (silent), scripted keys go
-# Home -> Recently added -> album -> Play, and every frame is saved as PNG.
-# Passes if the app exits cleanly, drew frames and streamed the first track.
+# headless on the NULL audio device (silent), and every frame is saved as PNG.
+# Scripted keys: the home feed's first cover -> album -> Play (streams the
+# first track); back to the root, the sidebar -> Search, type "mock", into
+# the results -> Tracks -> the second track (streams it).
+# Passes if the app exits cleanly, drew frames, searched and streamed both.
 set -eu
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d)
@@ -37,15 +39,19 @@ if [ -z "$up" ]; then
 fi
 
 "$tmp/mistersubsonic" -config "$tmp/config.toml" -display headless -frames "$tmp/frames" -null \
-  -keys "a:1500ms,a:800ms,a:800ms" -exit-after 6s > "$tmp/app.log" 2>&1 || {
+  -keys "a:1500ms,a:800ms,b:800ms,b,left,down,down,down,down,down,right,'mock,right:1s$(printf ',right:100ms%.0s' 1 2 3 4 5 6 7 8 9),up,right,right,down,down,a" \
+  -exit-after 14s > "$tmp/app.log" 2>&1 || {
   echo "e2e-ui failed: app exited with an error" >&2
   cat "$tmp/app.log" >&2
   exit 1
 }
 frames=$(ls "$tmp/frames" | wc -l)
-if [ "$frames" -lt 5 ] || ! grep -q 'stream so-0' "$tmp/mock.log"; then
+# A stream after the search3 line comes from the search results (the album's
+# tracks, including the gapless prefetch, were streamed before it).
+searched_then_streamed() { awk '/search3 .*query="mock"/ { s = 1 } s && /stream so-/ { ok = 1 } END { exit !ok }' "$tmp/mock.log"; }
+if [ "$frames" -lt 5 ] || ! grep -q 'stream so-0' "$tmp/mock.log" || ! searched_then_streamed; then
   echo "e2e-ui failed: $frames frames; mock log:" >&2
   cat "$tmp/mock.log" >&2
   exit 1
 fi
-echo "e2e-ui ok: $frames frames rendered; Home -> album -> Play streamed the first track (null device)"
+echo "e2e-ui ok: $frames frames rendered; the feed and Search both played (null device)"

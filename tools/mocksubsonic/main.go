@@ -53,11 +53,13 @@ func main() {
 		log.Fatalf("no audio files in %s (%v)", *dir, err)
 	}
 	album := map[string]any{"id": "al-mock", "name": "Mock Album", "artist": "Mock Artist", "artistId": "ar-mock", "songCount": len(songs)}
+	artist := map[string]any{"id": "ar-mock", "name": "Mock Artist", "albumCount": 1}
+	playlist := map[string]any{"id": "pl-mock", "name": "Mock Playlist", "owner": "test", "songCount": len(songs)}
 
 	http.HandleFunc("/rest/", func(w http.ResponseWriter, r *http.Request) {
 		endpoint := strings.TrimSuffix(path.Base(r.URL.Path), ".view")
 		q := r.URL.Query()
-		log.Printf("%s %s format=%q range=%q", endpoint, q.Get("id"), q.Get("format"), r.Header.Get("Range"))
+		log.Printf("%s %s format=%q range=%q query=%q", endpoint, q.Get("id"), q.Get("format"), r.Header.Get("Range"), q.Get("query"))
 		switch endpoint {
 		case "stream":
 			i, err := strconv.Atoi(strings.TrimPrefix(q.Get("id"), "so-"))
@@ -90,9 +92,38 @@ func main() {
 		case "getAlbumList2":
 			reply(w, map[string]any{"albumList2": map[string]any{"album": []any{album}}})
 		case "getArtists":
-			reply(w, map[string]any{"artists": map[string]any{"index": []any{map[string]any{"name": "M", "artist": []any{map[string]any{"id": "ar-mock", "name": "Mock Artist", "albumCount": 1}}}}}})
+			reply(w, map[string]any{"artists": map[string]any{"index": []any{map[string]any{"name": "M", "artist": []any{artist}}}}})
+		case "getArtist":
+			a := map[string]any{"album": []any{album}}
+			for k, v := range artist {
+				a[k] = v
+			}
+			reply(w, map[string]any{"artist": a})
+		case "getGenres":
+			reply(w, map[string]any{"genres": map[string]any{"genre": []any{map[string]any{"value": "Test", "albumCount": 1, "songCount": len(songs)}}}})
+		case "getPlaylists":
+			reply(w, map[string]any{"playlists": map[string]any{"playlist": []any{playlist}}})
+		case "getPlaylist":
+			p := map[string]any{"entry": songs}
+			for k, v := range playlist {
+				p[k] = v
+			}
+			reply(w, map[string]any{"playlist": p})
+		case "getStarred2":
+			reply(w, map[string]any{"starred2": map[string]any{}})
 		case "search3":
-			reply(w, map[string]any{"searchResult3": map[string]any{"song": songs}})
+			// Everything matches; only the first page has results.
+			res := map[string]any{}
+			if q.Get("artistOffset") == "0" && q.Get("artistCount") != "0" {
+				res["artist"] = []any{artist}
+			}
+			if q.Get("albumOffset") == "0" && q.Get("albumCount") != "0" {
+				res["album"] = []any{album}
+			}
+			if q.Get("songOffset") == "0" && q.Get("songCount") != "0" {
+				res["song"] = songs
+			}
+			reply(w, map[string]any{"searchResult3": res})
 		case "getPlayQueue":
 			reply(w, nil)
 		default:

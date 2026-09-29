@@ -270,6 +270,8 @@ func run(f flags) error {
 		s.started = true
 		go func() { s.pl.Run(pctx); close(playerDone) }()
 		a.Attach(c, s.pl, s.loader)
+		srv, _ := cfg.ActiveServer()
+		a.SetInsecure(srv.InsecureSkipVerify)
 	}
 
 	app, err := ui.New(ui.Options{
@@ -308,7 +310,7 @@ func run(f flags) error {
 							return
 						}
 						startSession(a, c, s)
-						a.Replace(ui.NewHomeScreen())
+						a.Replace(ui.NewRootScreen(a.P))
 					})
 				}()
 			}

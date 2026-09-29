@@ -3,11 +3,28 @@
 A Subsonic / Navidrome music player for [MiSTer FPGA](https://github.com/MiSTer-devel), in progress.
 Design: `docs/superpowers/specs/2026-09-28-mister-subsonic-design.md`.
 
-Status: **playback core plus a first TV interface**: Home (resume, recent/most played/random
-albums), album pages, Now Playing and the queue, on HDMI or CRT layouts, driven by a controller
-or keyboard. Streaming, FLAC/MP3/WAV decoding, gapless playback, seek, scrobbling and resume work.
-Still to come: artists, playlists, starred, search, the setup wizard and the MiSTer launcher.
-On-device (MiSTer) checks are still pending; see `docs/spikes.md`.
+Status: **playback core plus the library interface**: a home feed with resume, artists (A–Z),
+albums (A–Z, by year, by genre), playlists, starred items and search with an on-screen keyboard,
+album pages, Now Playing and the queue, on HDMI (sidebar and cover grids) or CRT (lists)
+layouts, driven by a controller or keyboard. Streaming, FLAC/MP3/WAV decoding, gapless playback,
+seek, scrobbling and resume work. Still to come: the setup wizard, settings, the screensaver and
+the MiSTer launcher. On-device (MiSTer) checks are still pending; see `docs/spikes.md`.
+
+## Controls
+
+| Button | Browsing | Now Playing |
+|---|---|---|
+| D-pad | move (Left into the HDMI sidebar) | ←/→ seek ±10 s (held: ±30 s), ↑/↓ volume |
+| A | open / play | play/pause |
+| B | back (hold 2 s on the root to exit) | back |
+| X | menu: play now/next, add to queue, star, go to artist/album | star/unstar |
+| Y | Now Playing | queue |
+| L / R | page (letter jump on Artists) | previous / next track |
+| Start | play/pause | play/pause |
+| Select | shuffle-play the list | shuffle / repeat modes |
+
+Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, PgUp/PgDn = L/R,
+Space = Start. In Search, letters type.
 
 ## Developing
 
