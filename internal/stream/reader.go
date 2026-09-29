@@ -28,7 +28,7 @@ type Options struct {
 	WindowBytes   int64           // RAM per reader; default 32 MiB
 	BehindBytes   int64           // kept behind the read position; default WindowBytes/4
 	NearBytes     int64           // forward seeks within this distance of the window just wait; default 256 KiB
-	PrefetchBytes int64           // if > 0, stop fetching at this offset until Promote
+	PrefetchBytes int64           // if > 0, fetch at most this far ahead of the read position until Promote
 	StallTimeout  time.Duration   // no bytes for this long -> reconnect; default 10 s
 	Backoff       []time.Duration // retry delays; default 0.5, 1, 2, 4, 8 s (last repeats)
 	RetryBudget   time.Duration   // give up after this long without progress; default 30 s
@@ -253,7 +253,10 @@ func (r *Reader) effectiveLo() int64 {
 func (r *Reader) room() int64 {
 	room := int64(len(r.ring)) - (r.hi - r.effectiveLo())
 	if r.prefetch > 0 {
-		room = min(room, r.prefetch-r.hi)
+		// The cap is relative to the reader: a decoder that must read past
+		// PrefetchBytes to open (big embedded art, an MP3 length scan) keeps
+		// going instead of deadlocking at an absolute offset.
+		room = min(room, r.pos+r.prefetch-r.hi)
 	}
 	return room
 }

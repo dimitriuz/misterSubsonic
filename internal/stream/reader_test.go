@@ -335,6 +335,35 @@ func TestPrefetchLimitThenPromote(t *testing.T) {
 	}
 }
 
+// C2: the prefetch cap limits how far the fetcher runs ahead of the reader,
+// not an absolute offset. A decoder that must read past PrefetchBytes to
+// open (large embedded art, an MP3 length scan) must not block there.
+func TestPrefetchCapIsRelativeToReadPosition(t *testing.T) {
+	const limit = 256 << 10
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = limit
+	r := open(t, s.URL, o)
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadFull(r, make([]byte, 512<<10))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		r.Close()
+		t.Fatal("reading 512 KiB blocked at the 256 KiB prefetch cap")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if b := r.Buffered(); b > limit {
+		t.Fatalf("buffered %d bytes ahead of the reader, limit is %d", b, limit)
+	}
+}
+
 func TestCloseUnblocksRead(t *testing.T) {
 	s := newServer(t, 1<<20, func(_ int, w http.ResponseWriter, r *http.Request) bool {
 		w.Header().Set("Content-Length", "1048576")
