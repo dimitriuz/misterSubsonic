@@ -127,3 +127,34 @@ Still open from the lists above: the Plan 3 items, the input nits, the art and c
 Still open: the Plan 3 items, the marquee and tab-row nit, the input and UX nits, and the test gaps listed above.
 
 Also still open: ReplayGain changes take effect from the track after the prefetched one (the next track is queued with the old gain); Plan 3 could re-queue it.
+
+## Plan 2c minors (deferred)
+
+- Screensaver:
+  - toasts (player errors) are hidden while it's on and don't wake it;
+  - it can start over the exit prompt on a root Now Playing;
+  - the waking press's Release isn't swallowed.
+- Settings:
+  - `cycle()` starts from the first choice for a hand-edited value (bitrate 160);
+  - switching to a default that is still connecting re-dials it.
+- Wizard:
+  - a config backup whose wizard was left during the save leaves no new file (the next start runs the wizard again);
+  - `normalizeURL` keeps `?query` and `#fragment`.
+- Sessions:
+  - `serverDir` names can collide after sanitising (`a/b` vs `a_b`; names that differ only in case, on FAT);
+  - the `MkdirAll` error is ignored;
+  - folders of removed servers stay.
+- Stars: the `starBusy` reset lives in `Connected` (`Detach` would be the safer home); `popTo` calls `Shown` on intermediate screens; a Starred list in error retries on every Pop.
+- `HomeScreen.sync` mutates state from `Draw` and doesn't adjust the list's scroll offset.
+- The keyboard's `clear` helper shadows the builtin.
+- `-keys` text items can't contain a comma or edge spaces.
+- Every config save re-encodes the file, so the comments of a hand-edited `config.toml` are dropped.
+- Test gaps:
+  - AddServer with a third name collision;
+  - Enter as A in Search;
+  - that consent is kept when the same address is retyped in another form;
+  - the screensaver waking on a typed rune or a toast;
+  - Connected clearing `starBusy`;
+  - `playKeys`;
+  - the wizard keyboard-fit test uses the safe area rather than Draw's area, and doesn't cover the API-key step or a mini bar;
+  - the config flush race test is probabilistic.
