@@ -305,3 +305,69 @@ func TestCloseWaitsForTheStopWhenNoServerIsLeft(t *testing.T) {
 		t.Fatal("close returned before the session was stopped")
 	}
 }
+
+// A connect that is superseded while its session is being built must stop
+// that session, not install it (by a newer connect, or by a no-server one).
+func TestSupersededDuringBuildStopsTheSession(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		next  func(a, b string) *config.Config
+		wantB bool
+	}{
+		{"another server", func(a, b string) *config.Config { return cfgFor(map[string]string{"b": b}, "b") }, true},
+		{"no server", func(a, b string) *config.Config { return config.Default() }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := pingServer(nil), pingServer(nil)
+			defer a.Close()
+			defer b.Close()
+			m, _ := testSessions(t)
+			f := &fakeUI{}
+			built := make(chan *session, 1)
+			release := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			var first sync.Once
+			m.afterBuild = func(s *session) {
+				first.Do(func() { built <- s; <-release })
+			}
+			m.connect(f, cfgFor(map[string]string{"a": a.URL}, "a"))
+			var s *session
+			select {
+			case s = <-built:
+			case <-time.After(3 * time.Second):
+				t.Fatal("a was never built")
+			}
+			m.connect(f, tc.next(a.URL, b.URL)) // arrives mid-build
+			unblock()
+			if tc.wantB {
+				f.wait(t, "connected to b", func() bool { return len(f.connected) == 1 })
+			}
+			if !tc.wantB { // nothing may be installed, without help from close
+				time.Sleep(100 * time.Millisecond)
+				m.swap.Lock()
+				m.mu.Lock()
+				left := m.cur
+				m.mu.Unlock()
+				m.swap.Unlock()
+				if left != nil {
+					t.Fatal("the superseded session was installed")
+				}
+			}
+			m.close() // waits for everything in flight
+			select {
+			case <-s.done:
+			default:
+				t.Fatal("the superseded session is still running")
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			for _, c := range f.connected {
+				if c.Server.Name == "a" {
+					t.Fatal("the superseded session was shown")
+				}
+			}
+		})
+	}
+}

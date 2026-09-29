@@ -50,6 +50,7 @@ type sessions struct {
 	swap sync.Mutex
 
 	beforeStop func(*session) // test hook, nil in production
+	afterBuild func(*session) // test hook: a session is built, not yet installed
 }
 
 type session struct {
@@ -97,9 +98,22 @@ func (m *sessions) connect(a sessionUI, cfg *config.Config) {
 			return // superseded or shutting down: build nothing
 		}
 		s := m.build(a, c, server, cfg.Playback, cfg.Cache)
+		if m.afterBuild != nil {
+			m.afterBuild(s)
+		}
 		m.mu.Lock()
-		m.cur = s // gen is current: checked above, and connect/close need mu to change it
+		stale := gen != m.gen || m.closing // connect and close change these without swap
+		if stale {
+			m.retired = append(m.retired, s)
+		} else {
+			m.cur = s
+		}
 		m.mu.Unlock()
+		if stale {
+			m.drainLocked() // superseded while building: stop it, never show it
+			m.swap.Unlock()
+			return
+		}
 		m.swap.Unlock()
 		a.Post(func() {
 			if m.current(gen) {
