@@ -216,7 +216,7 @@ And also:
 - **Memory:**
   - A prefetching stream (the queued next track) holds a ring of 1.25× its prefetch (5 MiB) until it plays, then grows to the full window.
   - Covers are scaled straight from the decoder's output, so the full-size picture isn't converted.
-  - A 48 MiB decode budget replaces the 4096² pixel cap. A 4096² JPEG still decodes, but not an RGBA PNG of that size.
+  - A 48 MiB decode budget replaces the 4096² pixel cap. A 4096² baseline JPEG still decodes (progressive and CMYK cost more and are refused sooner), but not an RGBA PNG of that size.
 - **Covers:**
   - `FromImage` reads YCbCr, RGBA, NRGBA and Gray directly.
   - `Resize` sums are 64-bit.
@@ -243,3 +243,5 @@ Still open:
 - On the device: spikes 2 and 3, the `Repaint` benchmarks, input with real maps and grabs next to Main_MiSTer, and the CRT margins (see `docs/spikes.md` and `docs/testing-on-mister.md`).
 - `drawField` trims by rune.
 - The minor lists above.
+- A sized MP3 reopens its stream on every seek, even inside the buffered window (a few HTTP requests; still far faster than dr_mp3 decoding from byte 0). Reuse the reader when the estimate falls inside its window.
+- VBR MP3 seeks land by proportion; reading the Xing TOC (100 points) after the ID3v2 tag would make them accurate.

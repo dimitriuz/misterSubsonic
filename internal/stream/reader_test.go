@@ -738,3 +738,26 @@ func TestParseRetryAfter(t *testing.T) {
 		}
 	}
 }
+
+// A Retry-After that would run past the context's deadline reports the
+// server's answer at once, not context deadline exceeded after the wait.
+func TestOpenRetryAfterBeyondTheDeadlineReportsTheServer(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return true
+	})
+	o := testOptions()
+	o.RetryBudget = 30 * time.Second // the budget alone would wait
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := Open(ctx, s.URL, o)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Open error = %v, want an HTTPError with status 503", err)
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("Open took %v", d)
+	}
+}

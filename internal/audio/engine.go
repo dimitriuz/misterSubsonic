@@ -100,11 +100,13 @@ type Engine struct {
 	events  chan Event // closed once the engine has closed
 	openCh  chan openResult
 	quit    chan struct{}
+	closing chan struct{} // closed first thing in Close: frees senders blocked on cmds
 	done    chan struct{}
 	openers sync.WaitGroup // queued tracks still opening
 
-	sendMu sync.Mutex // orders commands against Close
-	closed bool       // guarded by sendMu
+	closeOnce sync.Once
+	sendMu    sync.Mutex // orders commands against Close
+	closed    bool       // guarded by sendMu
 
 	mu      sync.Mutex
 	segs    []segment // guarded by mu
@@ -152,6 +154,7 @@ func NewEngine(o EngineOptions) *Engine {
 		events:  make(chan Event, 256),
 		openCh:  make(chan openResult, 4),
 		quit:    make(chan struct{}),
+		closing: make(chan struct{}),
 		done:    make(chan struct{}),
 		segs:    []segment{{start: 0, id: 0}},
 		scratch: make([]float32, o.ChunkFrames*2),
@@ -276,6 +279,7 @@ func (e *Engine) Position() (id uint64, pos time.Duration, ok bool) {
 // finished opening too late. Events() is closed afterwards. The Output is
 // not closed.
 func (e *Engine) Close() {
+	e.closeOnce.Do(func() { close(e.closing) }) // before sendMu: a blocked send holds it
 	e.sendMu.Lock()
 	if e.closed {
 		e.sendMu.Unlock()
@@ -283,8 +287,8 @@ func (e *Engine) Close() {
 	}
 	e.closed = true
 	e.sendMu.Unlock()
+	close(e.quit) // before interrupt: the run loop must see quit when the read fails
 	e.interrupt(nil)
-	close(e.quit)
 	<-e.done
 	go func() { e.openers.Wait(); close(e.openCh) }()
 	for r := range e.openCh {
@@ -312,6 +316,9 @@ func (e *Engine) send(f func(), src io.ReadSeeker) bool {
 	select {
 	case e.cmds <- command{run: f, src: src}:
 		return true
+	case <-e.closing:
+		closeSource(src)
+		return false
 	case <-e.done:
 		closeSource(src)
 		return false
@@ -373,11 +380,18 @@ func (e *Engine) run() {
 // poll runs queued commands and open results without blocking.
 func (e *Engine) poll() bool {
 	for {
+		if e.quitting() {
+			return false // checked first: with quit closed, no queued command runs
+		}
 		select {
 		case c := <-e.cmds:
-			c.run()
+			if !e.runCommand(c) {
+				return false
+			}
 		case r := <-e.openCh:
-			e.onOpened(r)
+			if !e.handleOpened(r) {
+				return false
+			}
 		case <-e.quit:
 			return false
 		default:
@@ -386,19 +400,50 @@ func (e *Engine) poll() bool {
 	}
 }
 
+func (e *Engine) quitting() bool {
+	select {
+	case <-e.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+// runCommand runs c unless the engine is closing; then it only closes the
+// source c took over (a Play would open a decoder, which may block on the
+// network).
+func (e *Engine) runCommand(c command) bool {
+	if e.quitting() {
+		closeSource(c.src)
+		return false
+	}
+	c.run()
+	return true
+}
+
+// handleOpened is runCommand for an open result.
+func (e *Engine) handleOpened(r openResult) bool {
+	if e.quitting() {
+		closeVoice(r.v)
+		return false
+	}
+	e.onOpened(r)
+	return true
+}
+
 func (e *Engine) wait(d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
 	case c := <-e.cmds:
-		c.run()
+		return e.runCommand(c)
 	case r := <-e.openCh:
-		e.onOpened(r)
+		return e.handleOpened(r)
 	case <-e.quit:
 		return false
 	case <-t.C:
 	}
-	return true
+	return !e.quitting()
 }
 
 func (e *Engine) queueEvent(ev Event) {

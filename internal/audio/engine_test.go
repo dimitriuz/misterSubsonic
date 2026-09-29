@@ -977,3 +977,77 @@ func TestEngineSetGainReachesTheSuccessor(t *testing.T) {
 		e.Close()
 	}
 }
+
+// A sender blocked on a full command queue must not hold Close up: Close
+// releases it, and every queued source ends up closed.
+func TestEngineCloseDoesNotWaitBehindBlockedSender(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	a := newFakeSource(ramp(1000, 0), OutputRate)
+	a.block = make(chan struct{}) // the run goroutine sits in a read
+	e.Play(Track{ID: 1, Source: a})
+	waitFor(t, "a being read", func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.busy != nil })
+	time.Sleep(20 * time.Millisecond) // let the run goroutine reach its blocked read
+	var srcs []*fakeSource
+	for i := range cap(e.cmds) { // fills the queue
+		s := newFakeSource(ramp(10, 0), OutputRate)
+		srcs = append(srcs, s)
+		e.QueueNext(Track{ID: uint64(10 + i), Source: s})
+	}
+	blocked := newFakeSource(ramp(10, 0), OutputRate)
+	srcs = append(srcs, blocked)
+	sent := make(chan struct{})
+	go func() { e.QueueNext(Track{ID: 99, Source: blocked}); close(sent) }()
+	select {
+	case <-sent:
+		t.Fatal("the extra QueueNext did not block; the queue was not full")
+	case <-time.After(50 * time.Millisecond):
+	}
+	closed := make(chan struct{})
+	go func() { e.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close waited behind a blocked sender")
+	}
+	<-sent
+	e.Close() // a second Close is harmless
+	for i, s := range append(srcs, a) {
+		if !s.isClosed() {
+			t.Errorf("source %d left open", i)
+		}
+	}
+}
+
+// After Close, a queued Play is not run: its decoder open (which may block
+// on the network) never starts, and its source is closed.
+func TestEngineCloseRunsNoQueuedCommand(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	a := newFakeSource(ramp(1000, 0), OutputRate)
+	a.block = make(chan struct{})
+	e.Play(Track{ID: 1, Source: a})
+	waitFor(t, "a being read", func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.busy != nil })
+	b := newFakeSource(ramp(10, 0), OutputRate)
+	b.openHold = make(chan struct{}) // never released: an open that started would hang Close
+	b.openStarted = make(chan struct{})
+	defer close(b.openHold)
+	// Queue the Play without Play's interrupt, so a's read stays stalled
+	// until Close.
+	e.send(func() { e.doPlay(Track{ID: 2, Source: b}) }, b)
+	closed := make(chan struct{})
+	go func() { e.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return: a queued Play ran")
+	}
+	select {
+	case <-b.openStarted:
+		t.Error("the queued Play opened its decoder after Close")
+	default:
+	}
+	if !b.isClosed() {
+		t.Error("the queued Play's source was left open")
+	}
+}

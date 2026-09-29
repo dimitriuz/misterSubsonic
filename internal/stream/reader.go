@@ -129,7 +129,8 @@ func Open(ctx context.Context, url string, o Options) (*Reader, error) {
 
 	fctx, cancel := context.WithCancel(context.Background())
 	stop := context.AfterFunc(ctx, cancel)
-	resp, reqCancel, err := r.openRequest(fctx)
+	deadline, _ := ctx.Deadline() // fctx is detached from ctx, so openRequest is told separately
+	resp, reqCancel, err := r.openRequest(fctx, deadline)
 	stop()
 	if err != nil {
 		cancel()
@@ -339,8 +340,9 @@ func stripURL(err error) error {
 
 // openRequest is the first request. A server that asks to come back later
 // (429 and the like) is retried within RetryBudget and ctx; anything else
-// fails Open at once.
-func (r *Reader) openRequest(ctx context.Context) (*http.Response, context.CancelFunc, error) {
+// fails Open at once. A wait that would end after deadline (zero: none) is
+// not taken: the server's answer is returned instead.
+func (r *Reader) openRequest(ctx context.Context, deadline time.Time) (*http.Response, context.CancelFunc, error) {
 	start := time.Now()
 	for attempt := 0; ; attempt++ {
 		resp, reqCancel, err := r.request(ctx, 0)
@@ -351,6 +353,9 @@ func (r *Reader) openRequest(ctx context.Context) (*http.Response, context.Cance
 		d := max(r.o.Backoff[min(attempt, len(r.o.Backoff)-1)], he.RetryAfter)
 		if time.Since(start)+d > r.o.RetryBudget {
 			return nil, nil, err
+		}
+		if !deadline.IsZero() && time.Now().Add(d).After(deadline) {
+			return nil, nil, err // the wait would outlast the caller's ctx
 		}
 		t := time.NewTimer(d)
 		select {
