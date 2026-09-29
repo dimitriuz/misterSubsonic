@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -52,5 +53,66 @@ func TestFindMapFileAndIDs(t *testing.T) {
 	os.WriteFile(filepath.Join(ids, "product"), []byte("028e\n"), 0o644)
 	if v, p, ok := readIDs(ids); !ok || v != 0x045e || p != 0x028e {
 		t.Fatalf("ids = %x %x %v", v, p, ok)
+	}
+}
+
+func newIdleManager(rescan time.Duration) *Manager {
+	return NewManager(ManagerOptions{Glob: filepath.Join(os.TempDir(), "no-such-dir-xyz", "event*"), Rescan: rescan})
+}
+
+func TestCloseReturnsWithIdleDevice(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	deviceName(r) // ENOTTY on a pipe; must not make the fd blocking
+	hasEventType(r, evKey)
+	m := newIdleManager(20 * time.Millisecond)
+	m.attach("pipe", r, newTranslator(nil, nil))
+	time.Sleep(100 * time.Millisecond) // let the reader block in read
+	done := make(chan struct{})
+	go func() { m.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close hung with an idle device")
+	}
+}
+
+func TestCloseTwiceAndAttachAfterClose(t *testing.T) {
+	m := newIdleManager(20 * time.Millisecond)
+	m.Close()
+	m.Close() // must not panic
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	m.attach("pipe", r, newTranslator(nil, nil))
+	if len(m.devs) != 0 {
+		t.Fatalf("device registered after Close: %v", m.devs)
+	}
+	if _, err := r.Read(make([]byte, 1)); err == nil {
+		t.Fatal("file still open after attach on a closed manager")
+	}
+}
+
+func TestScanPrunesStalePlaceholders(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "event0")
+	os.WriteFile(p, nil, 0o644)
+	m := NewManager(ManagerOptions{Glob: filepath.Join(dir, "event*"), Rescan: time.Hour})
+	defer m.Close()
+	m.mu.Lock()
+	v, ok := m.devs[p]
+	m.mu.Unlock()
+	if !ok || v != nil {
+		t.Fatalf("expected nil placeholder, got %v %v", v, ok)
+	}
+	os.Remove(p)
+	m.scan()
+	m.mu.Lock()
+	_, ok = m.devs[p]
+	m.mu.Unlock()
+	if ok {
+		t.Fatal("stale placeholder not pruned")
 	}
 }
