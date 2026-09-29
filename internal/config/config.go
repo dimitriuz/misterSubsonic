@@ -83,7 +83,7 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 	cfg = Default()
 	md, err := toml.Decode(string(b), cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("config: %s: %w", path, err)
+		return nil, nil, fmt.Errorf("config: %s: %w", path, redactParseError(err))
 	}
 	for _, k := range md.Undecoded() {
 		warnings = append(warnings, "unknown key "+k.String())
@@ -92,6 +92,21 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 		return nil, warnings, fmt.Errorf("config: %s: %w", path, err)
 	}
 	return cfg, warnings, nil
+}
+
+// redactParseError keeps where a TOML syntax error is but drops the parser's
+// message, which quotes the offending text: for an unquoted password or
+// token that text is the secret. Other decode errors name only types.
+func redactParseError(err error) error {
+	var pe toml.ParseError
+	if !errors.As(err, &pe) {
+		return err
+	}
+	msg := fmt.Sprintf("invalid TOML syntax at line %d, column %d", pe.Position.Line, pe.Position.Col)
+	if pe.LastKey != "" {
+		msg += fmt.Sprintf(" near key %q", pe.LastKey)
+	}
+	return errors.New(msg + " (are text values in double quotes?)")
 }
 
 // Validate checks values a user could plausibly get wrong.

@@ -180,3 +180,19 @@ func TestLoadToleratesBOMAndCRLF(t *testing.T) {
 		t.Fatalf("password = %q", s.Password)
 	}
 }
+
+// R14: the TOML parser quotes the offending text in its message ("found
+// \"hunter\" instead"), which for an unquoted secret is the secret itself.
+// The error shown on screen and in log.txt must say where, not what.
+func TestParseErrorDoesNotEchoSecrets(t *testing.T) {
+	_, _, err := Load(write(t, "[[server]]\nname=\"h\"\nurl=\"http://x:1\"\nusername=\"u\"\npassword = hunter2secret\n"))
+	if err == nil {
+		t.Fatal("want a parse error")
+	}
+	if strings.Contains(err.Error(), "hunter") {
+		t.Fatalf("error echoes the secret: %v", err)
+	}
+	if !strings.Contains(err.Error(), "line 5") {
+		t.Fatalf("error does not say where: %v", err)
+	}
+}

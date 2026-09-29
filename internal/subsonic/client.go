@@ -249,7 +249,7 @@ func (c *Client) call(ctx context.Context, endpoint string, extra url.Values) (*
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpointURL(endpoint, extra), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("subsonic: %s: %w", endpoint, stripURL(err)) // the URL carries credentials
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
