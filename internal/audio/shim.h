@@ -13,11 +13,13 @@ typedef struct mss_decoder mss_decoder;
 
 typedef struct {
     uint32_t sample_rate;
-    uint64_t length_frames; /* 0 when unknown */
 } mss_decoder_info;
 
 mss_decoder* mss_decoder_open(uintptr_t handle, int format, int* result);
 void mss_decoder_get_info(mss_decoder* d, mss_decoder_info* info);
+/* Total length in frames, 0 when unknown. Not called at open: for an MP3
+   without a Xing header miniaudio scans the whole stream to answer. */
+uint64_t mss_decoder_length(mss_decoder* d);
 /* Returns a miniaudio result code; MA_AT_END (-17) with *frames_read == 0 at end of stream. */
 int mss_decoder_read(mss_decoder* d, float* out, uint64_t frames, uint64_t* frames_read);
 int mss_decoder_seek(mss_decoder* d, uint64_t frame);

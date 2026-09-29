@@ -40,11 +40,12 @@ type source struct {
 }
 
 type cDecoder struct {
-	d      *C.mss_decoder
-	h      cgo.Handle
-	src    *source
-	rate   int
-	length uint64
+	d         *C.mss_decoder
+	h         cgo.Handle
+	src       *source
+	rate      int
+	length    uint64
+	lengthSet bool
 }
 
 // OpenDecoder opens a miniaudio decoder that pulls bytes from src.
@@ -65,11 +66,21 @@ func OpenDecoder(src io.ReadSeeker, f Format) (Decoder, error) {
 	}
 	var info C.mss_decoder_info
 	C.mss_decoder_get_info(d, &info)
-	return &cDecoder{d: d, h: h, src: s, rate: int(info.sample_rate), length: uint64(info.length_frames)}, nil
+	return &cDecoder{d: d, h: h, src: s, rate: int(info.sample_rate)}, nil
 }
 
-func (c *cDecoder) SampleRate() int      { return c.rate }
-func (c *cDecoder) LengthFrames() uint64 { return c.length }
+func (c *cDecoder) SampleRate() int { return c.rate }
+
+// LengthFrames is computed on first use and cached. For an MP3 without a
+// Xing header miniaudio reads the whole stream to answer (then seeks back),
+// so the engine never calls it; tools working on local files may.
+func (c *cDecoder) LengthFrames() uint64 {
+	if !c.lengthSet && c.d != nil {
+		c.length = uint64(C.mss_decoder_length(c.d))
+		c.lengthSet = true
+	}
+	return c.length
+}
 
 func (c *cDecoder) Read(dst []float32) (int, error) {
 	frames := len(dst) / 2

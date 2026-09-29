@@ -60,13 +60,16 @@ mss_decoder* mss_decoder_open(uintptr_t handle, int format, int* result) {
 void mss_decoder_get_info(mss_decoder* d, mss_decoder_info* info) {
     ma_format fmt;
     ma_uint32 ch, rate;
-    ma_uint64 len = 0;
     ma_decoder_get_data_format(&d->dec, &fmt, &ch, &rate, NULL, 0);
+    info->sample_rate = rate;
+}
+
+uint64_t mss_decoder_length(mss_decoder* d) {
+    ma_uint64 len = 0;
     if (ma_decoder_get_length_in_pcm_frames(&d->dec, &len) != MA_SUCCESS) {
         len = 0;
     }
-    info->sample_rate = rate;
-    info->length_frames = len;
+    return len;
 }
 
 int mss_decoder_read(mss_decoder* d, float* out, uint64_t frames, uint64_t* frames_read) {

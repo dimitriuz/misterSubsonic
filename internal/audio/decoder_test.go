@@ -140,6 +140,55 @@ func TestDecodeChunkedUnknownLengthMP3(t *testing.T) {
 	}
 }
 
+type countingReader struct {
+	io.ReadSeeker
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	k, err := c.ReadSeeker.Read(p)
+	c.n += int64(k)
+	return k, err
+}
+
+// id3Len is the size of the ID3v2 tag at the start of b (0 if none).
+func id3Len(b []byte) int {
+	if len(b) < 10 || string(b[:3]) != "ID3" {
+		return 0
+	}
+	return 10 + (int(b[6])<<21 | int(b[7])<<14 | int(b[8])<<7 | int(b[9]))
+}
+
+// C2: asking for the length of an MP3 without a Xing header makes dr_mp3
+// scan the whole stream. At open that meant reading an entire prefetched
+// transcode, far past the 4 MiB prefetch cap, so the length is now lazy.
+// Before the fix open read 100% of the stream.
+func TestDecoderOpenDoesNotScanWholeMP3(t *testing.T) {
+	one, err := os.ReadFile("testdata/tone-44k16-noxing.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 32 back-to-back copies (~700 KB, 16 s) so a full scan is unmistakable.
+	data := append([]byte(nil), one...)
+	for i := 1; i < 32; i++ {
+		data = append(data, one[id3Len(one):]...)
+	}
+	src := &countingReader{ReadSeeker: bytes.NewReader(data)}
+	d, err := OpenDecoder(src, FormatMP3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	// dr_mp3 fills one 64 KiB data chunk (MA_DR_MP3_DATA_CHUNK_SIZE) after
+	// the ID3 tag while probing the first frame, so allow two chunks.
+	if src.n >= 128<<10 {
+		t.Fatalf("OpenDecoder read %d of %d bytes, want < 128 KiB", src.n, len(data))
+	}
+	if n := d.LengthFrames(); n < 32*44100*4/10 {
+		t.Fatalf("LengthFrames = %d, want about %d (computed on demand)", n, 32*22050)
+	}
+}
+
 func TestDecoderSeek(t *testing.T) {
 	all, d0 := decodeAll(t, "tone-44k16.flac", FormatFLAC)
 	d0.Close()
