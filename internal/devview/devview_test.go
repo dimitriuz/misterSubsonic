@@ -3,8 +3,10 @@ package devview
 import (
 	"bytes"
 	"image/png"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,7 +73,9 @@ func TestFrameLongPollAndKeys(t *testing.T) {
 func TestPageServed(t *testing.T) {
 	v := New(1, 1)
 	rec := httptest.NewRecorder()
-	v.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "127.0.0.1:8090"
+	v.Handler().ServeHTTP(rec, req)
 	if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte("/frame?after=")) {
 		t.Fatalf("page: %d", rec.Code)
 	}
@@ -169,5 +173,76 @@ func TestKeyRejectsCrossOrigin(t *testing.T) {
 	}
 	if c := post(map[string]string{"Origin": srv.URL, "Sec-Fetch-Site": "same-origin"}); c != http.StatusNoContent {
 		t.Fatalf("same-origin status %d", c)
+	}
+}
+
+func TestRejectsForeignHost(t *testing.T) {
+	v := New(2, 2)
+	v.Present(gfx.NewCanvas(2, 2))
+	srv := httptest.NewServer(v.Handler())
+	defer srv.Close()
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	do := func(method, path, host string) int {
+		req, _ := http.NewRequest(method, srv.URL+path, nil)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, ep := range []struct{ method, path string }{{"GET", "/"}, {"GET", "/frame?after=0"}, {"POST", "/key?b=start&down=1"}} {
+		if c := do(ep.method, ep.path, "evil.example:"+port); c != http.StatusForbidden {
+			t.Errorf("%s %s with foreign Host: status %d, want 403", ep.method, ep.path, c)
+		}
+	}
+	select {
+	case e := <-v.Events():
+		t.Fatalf("event from a refused request: %+v", e)
+	default:
+	}
+	for _, ep := range []struct{ method, path string }{{"GET", "/"}, {"GET", "/frame?after=0"}, {"POST", "/key?b=start&down=1"}} {
+		for _, h := range []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port, "127.0.0.2"} {
+			if c := do(ep.method, ep.path, h); c == http.StatusForbidden {
+				t.Errorf("%s %s with Host %s: refused", ep.method, ep.path, h)
+			}
+		}
+	}
+}
+
+func TestAllowsConfiguredListenHost(t *testing.T) {
+	v := New(1, 1)
+	v.allowHost = "192.168.1.5"
+	srv := httptest.NewServer(v.Handler())
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL+"/", nil)
+	req.Host = "192.168.1.5:8090"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d for the listen address", resp.StatusCode)
+	}
+}
+
+// After an app restart the frame counter starts over; a tab still polling
+// with the old, higher sequence number must get the current frame at once.
+func TestFramePollWithStaleSeqReturnsCurrent(t *testing.T) {
+	v := New(2, 2)
+	v.Present(gfx.NewCanvas(2, 2))
+	srv := httptest.NewServer(v.Handler())
+	defer srv.Close()
+	defer v.Close()
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(srv.URL + "/frame?after=500")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Seq") != "1" {
+		t.Fatalf("status %d seq %q, want 200 seq 1", resp.StatusCode, resp.Header.Get("X-Seq"))
 	}
 }

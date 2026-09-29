@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,9 @@ type Viewer struct {
 	events chan input.Event
 	srv    *http.Server
 	ln     net.Listener
+	// allowHost is the listen address host when bound to a specific
+	// non-loopback IP; Host headers naming it are accepted too.
+	allowHost string
 
 	mu    sync.Mutex
 	cond  *sync.Cond
@@ -57,6 +61,11 @@ func (v *Viewer) Listen(addr string) error {
 		return err
 	}
 	v.ln = ln
+	if host, _, err := net.SplitHostPort(ln.Addr().String()); err == nil {
+		if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() && !ip.IsUnspecified() {
+			v.allowHost = host
+		}
+	}
 	v.srv = &http.Server{Handler: v.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go v.srv.Serve(ln)
 	return nil
@@ -136,7 +145,33 @@ func (v *Viewer) Handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	return mux
+	return v.checkHost(mux)
+}
+
+// checkHost refuses requests whose Host header isn't this machine's loopback
+// (or the configured listen address). Without it a DNS-rebinding page, which
+// is same-origin with its own hostname, could press keys and read frames.
+func (v *Viewer) checkHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !v.hostAllowed(r.Host) {
+			http.Error(w, "unexpected Host header", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (v *Viewer) hostAllowed(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == "localhost" || (v.allowHost != "" && host == v.allowHost) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // sameOrigin refuses requests from other web pages, which could otherwise
@@ -161,7 +196,9 @@ func (v *Viewer) waitFrame(ctx context.Context, after int) ([]byte, int, error) 
 	defer stop()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	for v.seq <= after && !v.done && ctx.Err() == nil {
+	// after > seq means the app restarted and the counter started over: hand
+	// over the current frame instead of waiting for a number never reached.
+	for v.seq <= after && !(after > v.seq && v.frame != nil) && !v.done && ctx.Err() == nil {
 		v.cond.Wait()
 	}
 	if v.done {
