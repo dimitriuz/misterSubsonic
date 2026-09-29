@@ -41,10 +41,13 @@ stop_leftovers
 # while it runs; everything else closes it, so nothing outlives the launcher
 # holding the lock.
 exec 9>"$LOCK"
-if ! flock -w "$LOCK_WAIT" 9; then
-	echo "MiSTer Subsonic is already being started."
-	exit 1
-fi
+# BusyBox's flock has no -w: poll with -n.
+locked=
+for ((i = 0; i < LOCK_WAIT; i++)); do
+	flock -n 9 && { locked=1; break; }
+	sleep 1
+done
+[ -n "$locked" ] || flock -n 9 || { echo "MiSTer Subsonic is already being started."; exit 1; }
 
 # BGM takes commands on its socket. It can't pause: stop it, play it again after.
 bgm() { printf '%s' "$1" | socat -t 2 - "UNIX-CONNECT:$BGM_SOCK" 2>/dev/null 9>&-; }
@@ -82,6 +85,6 @@ restore
 if [ "$code" -eq 0 ]; then
 	echo "MiSTer Subsonic closed."
 else
-	echo "MiSTer Subsonic stopped with an error ($code). The log is in $DIR/log.txt."
+	echo "MiSTer Subsonic stopped with an error ($code). See $DIR/log.txt and, after a crash, $DIR/crash.txt."
 fi
 exit "$code"

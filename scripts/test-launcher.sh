@@ -129,12 +129,43 @@ BGM_STATUS=$'yes\trandom\tall\tx'
 APP_EXIT=2
 run_case "restores everything after a crash" 2 "bgm status" "bgm stop" "app -volume -20" "app -restore-console" "bgm play"
 grep -q "log.txt" "$c/out" || { echo "FAIL crash: no pointer to the log"; failures=$((failures + 1)); }
+grep -q "crash.txt" "$c/out" || { echo "FAIL crash: no pointer to crash.txt"; failures=$((failures + 1)); }
+
+sandbox term
+socket
+BGM_STATUS=$'yes\trandom\tall\tx'
+echo $$ >"$PIDS.MiSTer_SAM_MCP"
+cat >"$MSS_DIR/mistersubsonic" <<'S'
+#!/bin/bash
+echo "app $*" >>"$LOG"
+[ "$1" = -restore-console ] && exit 0
+# Bash runs the launcher's trap once this returns: end on our own soon.
+sleep 2
+exit 0
+S
+"$launcher" -volume -20 >"$c/out" 2>&1 &
+lpid=$!
+for _ in $(seq 50); do grep -q "^app -volume" "$LOG" && break; sleep 0.1; done
+kill -TERM "$lpid"
+wait "$lpid"
+code=$?
+want=$(printf '%s\n' "bgm status" "bgm stop" "sam disable" "app -volume -20" "app -restore-console" "bgm play" "sam enable")
+if [ "$code" -eq 0 ] || [ "$(cat "$LOG")" != "$want" ]; then
+	echo "FAIL term: exit $code"; sed 's/^/    /' "$LOG"
+	failures=$((failures + 1))
+else
+	echo "ok   restores everything when the launcher is terminated"
+fi
+flock -n "$MSS_LOCK" true || { echo "FAIL term: the lock is still held"; failures=$((failures + 1)); }
 
 sandbox locked
 flock "$MSS_LOCK" sleep 30 &
 bg+=("$!")
 sleep 0.2
 run_case "won't start while another launcher holds the lock" 1
+
+# BusyBox's flock has no -w.
+if grep -q 'flock -w' "$launcher"; then echo "FAIL: the launcher uses flock -w"; failures=$((failures + 1)); fi
 
 sandbox missing
 rm "$MSS_DIR/mistersubsonic"

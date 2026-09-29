@@ -43,6 +43,7 @@ mister:
 # The release: the SD card tree (Scripts/ and mistersubsonic/) in bin/release/sdcard,
 # zipped as bin/release/MiSTer_Subsonic-$(VERSION).zip.
 release:
+	./scripts/check-notices.sh
 	rm -rf $(REL)
 	mkdir -p $(REL)/sdcard/Scripts $(REL)/sdcard/mistersubsonic
 	$(ARM_ENV) $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" \
@@ -51,8 +52,11 @@ release:
 	cp sdcard/Scripts/MiSTer_Subsonic.sh $(REL)/sdcard/Scripts/
 	cp sdcard/mistersubsonic/config.example.toml LICENSE $(REL)/sdcard/mistersubsonic/
 	{ echo "MiSTer Subsonic includes this third-party software."; \
+	  echo "Source code: https://github.com/dimitriuz/misterSubsonic/tree/$(VERSION)"; \
 	  echo; echo "== speexdsp resampler (BSD) =="; cat third_party/speexdsp/COPYING; \
 	  echo; echo "== Noto Sans fonts (SIL Open Font License 1.1) =="; cat internal/gfx/fonts/OFL.txt; \
+	  echo; echo "== Go (runtime, standard library, golang.org/x/image, golang.org/x/text, golang.org/x/sys) (BSD-3-Clause) =="; cat third_party/licenses/GO-LICENSE; \
+	  echo; echo "== BurntSushi/toml (MIT) =="; cat third_party/licenses/BurntSushi-toml-COPYING; \
 	  echo; echo "== miniaudio (public domain or MIT No Attribution): https://miniaud.io =="; \
 	  echo; echo "== Mozilla CA certificate bundle (MPL-2.0): https://curl.se/docs/caextract.html =="; \
 	} > $(REL)/sdcard/mistersubsonic/THIRD_PARTY.txt

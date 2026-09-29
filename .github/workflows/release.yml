@@ -8,18 +8,21 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.16.0
       - run: go vet ./...
@@ -27,9 +30,14 @@ jobs:
       - run: ./scripts/test-launcher.sh
       - run: make release VERSION="$TAG"
       - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           r=bin/release/sdcard
-          gh release create "$TAG" --title "MiSTer Subsonic $TAG" --generate-notes \
+          # A tag with a "-" (v1.1.0-rc1) is a pre-release.
+          pre=
+          case "$TAG" in *-*) pre=--prerelease ;; esac
+          gh release create "$TAG" $pre --title "MiSTer Subsonic $TAG" --generate-notes \
             "bin/release/MiSTer_Subsonic-$TAG.zip" \
             "$r/Scripts/MiSTer_Subsonic.sh" \
             "$r/mistersubsonic/mistersubsonic" \
@@ -37,6 +45,9 @@ jobs:
             "$r/mistersubsonic/LICENSE" \
             "$r/mistersubsonic/THIRD_PARTY.txt"
       - name: Publish the Downloader database on the db branch
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           make db BASE_URL="https://github.com/${{ github.repository }}/releases/download/$TAG/"
           cp bin/release/db.json "$RUNNER_TEMP/db.json"

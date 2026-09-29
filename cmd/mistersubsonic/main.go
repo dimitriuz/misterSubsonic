@@ -150,11 +150,14 @@ func armDeadline(t **time.Timer, d time.Duration) {
 	}
 }
 
+// shutdownSignals end the app cleanly (SIGHUP: the terminal went away).
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+
 // beforeRun runs just before the UI loop; tests use it.
 var beforeRun = func(*ui.App) {}
 
 func run(f flags) (err error) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
 	defer stop()
 	if f.exitAfter > 0 {
 		var cancel context.CancelFunc

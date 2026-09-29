@@ -44,8 +44,8 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 12. **SAM.** With Super Attract Mode enabled, leave the app idle past SAM's
     timeout: no game starts. After exit, SAM is enabled again.
 13. **Crash recovery.** Over ssh, run `kill -9 $(pidof mistersubsonic)` while
-    the app runs. The launcher puts the console back and returns to the
-    menu, and the next start works.
+    the app runs. The launcher shows "stopped with an error" (it's `kill -9`),
+    puts the console back and returns to the menu, and the next start works.
 14. **Leftover app.** Start the app over ssh
     (`/media/fat/mistersubsonic/mistersubsonic &`), then from the Scripts
     menu. The first one is stopped and the new one takes over.
