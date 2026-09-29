@@ -161,7 +161,7 @@ ui ──action──▶ player ──track URL──▶ stream (Range reader, s
 **Go decode loop**, one goroutine per active track:
 
 1. Read a chunk from the decoder.
-2. Apply ReplayGain and volume as one float multiply. Apply a soft clip only if the gain is positive and the samples exceed 1.0.
+2. Apply ReplayGain and volume as one float multiply. When the gain is above unity, apply a soft clip: samples up to ±0.9 pass unchanged and larger ones bend smoothly toward ±1.0 (a continuous, monotonic knee; unity and attenuating gains stay bit-exact). The resampler can still overshoot slightly afterwards.
 3. Resample.
 4. Write into the ring, blocking on space.
 
