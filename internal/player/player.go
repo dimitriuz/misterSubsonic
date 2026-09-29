@@ -168,6 +168,10 @@ type Player struct {
 	announced  bool          // true after now-playing sent for current play
 	seekTarget time.Duration // position of the last raw seek sent to the engine
 	seekRetry  bool          // a failed seek already caused one reopen
+	// A seek that arrived while the current track was still opening; the
+	// open applies it when it lands (openSeek is valid when hasOpenSeek).
+	openSeek    time.Duration
+	hasOpenSeek bool
 }
 
 func New(o Options) *Player {
@@ -268,6 +272,9 @@ func (p *Player) PlayNow(songs []subsonic.Song, start int) {
 // PlayNext inserts songs right after the current one.
 func (p *Player) PlayNext(songs []subsonic.Song) {
 	p.do(func() {
+		if len(songs) == 0 {
+			return
+		}
 		if len(p.queue) == 0 {
 			p.queue = append([]subsonic.Song(nil), songs...)
 			p.rebuildOrder(0)
@@ -296,6 +303,9 @@ func (p *Player) PlayNext(songs []subsonic.Song) {
 // Enqueue appends songs to the end of the queue.
 func (p *Player) Enqueue(songs []subsonic.Song) {
 	p.do(func() {
+		if len(songs) == 0 {
+			return
+		}
 		if len(p.queue) == 0 {
 			p.queue = append([]subsonic.Song(nil), songs...)
 			p.rebuildOrder(0)
@@ -317,7 +327,9 @@ func (p *Player) Enqueue(songs []subsonic.Song) {
 	})
 }
 
-// Remove deletes queue[i]. Removing the current song plays the next one.
+// Remove deletes queue[i]. Removing the current song plays the next one
+// (wrapping under repeat-all) and keeps a paused player paused; with nothing
+// left to play it stops with no song selected.
 func (p *Player) Remove(i int) {
 	p.do(func() {
 		if i < 0 || i >= len(p.queue) {
@@ -348,11 +360,22 @@ func (p *Player) Remove(i int) {
 			p.queueChanged()
 			return
 		}
-		p.emit(Event{Kind: QueueChanged})
-		if next := p.cursor + 1; next < len(p.order) {
-			p.startAt(next, 0)
-		} else {
+		wasPaused := p.status == Paused
+		next := p.cursor + 1
+		if next >= len(p.order) && p.repeat == RepeatAll {
+			next = 0
+		}
+		if next >= len(p.order) {
+			p.cursor = -1
+			p.emit(Event{Kind: QueueChanged})
 			p.stop()
+			return
+		}
+		p.emit(Event{Kind: QueueChanged})
+		p.startAt(next, 0)
+		if wasPaused {
+			p.o.Engine.SetPaused(true)
+			p.setStatus(Paused)
 		}
 	})
 }
@@ -414,8 +437,12 @@ func (p *Player) TogglePause() {
 			p.setStatus(Paused)
 		case Paused:
 			p.o.Engine.SetPaused(false)
+			p.lastMove = p.o.Now() // the paused time isn't a stall
 			p.setStatus(Playing)
 		case Stopped:
+			if p.cursor < 0 && len(p.order) > 0 {
+				p.cursor = 0 // nothing selected: play the queue from the top
+			}
 			if p.cursor >= 0 {
 				p.startAt(p.cursor, 0)
 			}
@@ -438,6 +465,11 @@ func (p *Player) Seek(pos time.Duration) {
 		}
 		p.lastPos, p.position = pos, pos
 		p.seekRetry = false
+		if p.curSrc.Source == nil {
+			// Still opening: the open applies it when it lands.
+			p.openSeek, p.hasOpenSeek = pos, true
+			return
+		}
 		if p.curSrc.Transcoded {
 			p.reopenAt(pos) // I2: use reopenAt to preserve listen state and pause
 			return
@@ -635,6 +667,7 @@ func (p *Player) startAt(cursor int, offset time.Duration) {
 	p.curSrc = Opened{}
 	p.position, p.lastPos = offset, offset
 	p.seekRetry = false
+	p.hasOpenSeek = false
 	p.resetListen()
 	p.o.Engine.SetPaused(false)
 	p.setStatus(Loading)
@@ -654,6 +687,7 @@ func (p *Player) reopenAt(offset time.Duration) {
 	p.curID = id
 	p.curSrc = Opened{}
 	p.position, p.lastPos = offset, offset
+	p.hasOpenSeek = false
 	// Don't reset listen state or pause state; just reopening at a new offset
 	if p.status != Paused {
 		p.setStatus(Loading)
@@ -695,8 +729,9 @@ func (p *Player) onOpened(r openResult) {
 			return
 		}
 		if r.err != nil {
+			// No toast: the song is opened again when its turn comes, and
+			// that attempt reports if it fails too.
 			p.nextID = 0
-			p.emit(Event{Kind: Error, Song: r.song, Err: r.err})
 			return
 		}
 		p.nextSrc = r.opened
@@ -710,6 +745,15 @@ func (p *Player) onOpened(r openResult) {
 	if r.err != nil {
 		p.trackFailed(r.song, r.err)
 		return
+	}
+	if p.hasOpenSeek {
+		p.hasOpenSeek = false
+		if r.opened.Transcoded {
+			closeOpened(r.opened) // opened at the old offset
+			p.reopenAt(p.openSeek)
+			return
+		}
+		r.seek = p.openSeek
 	}
 	p.curSrc = r.opened
 	p.o.Engine.Play(p.track(r.id, r.song, r.opened))
@@ -789,10 +833,9 @@ func (p *Player) onEngine(ev audio.Event) {
 		switch ev.TrackID {
 		case p.nextID:
 			// The engine dropped the successor (failed or timed out opening;
-			// it closed the source). Ended(cur) then falls back to startAt.
-			song := p.queue[p.order[p.nextCursor]]
+			// it closed the source). Ended(cur) then falls back to startAt,
+			// which reports if the song fails again.
 			p.nextID, p.nextSrc = 0, Opened{}
-			p.emit(Event{Kind: Error, Song: song, Err: ev.Err})
 		case p.curID:
 			song, _ := p.currentSong()
 			if p.nextID != 0 {
