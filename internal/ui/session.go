@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -39,12 +40,12 @@ func (a *App) start() {
 	switch {
 	case a.o.AudioErr != nil:
 		a.Replace(NewMessageScreen("No audio device", fmt.Sprintf("Couldn't open the audio device (%v).\nCheck alsa_device in %s, or that nothing else is using the sound card.", a.o.AudioErr, a.o.ConfigPath), nil))
-	case a.cfg == nil && errors.Is(a.o.ConfigErr, config.ErrNotFound):
-		a.Replace(NewMessageScreen("Setup needed", "No config file yet. Create "+a.o.ConfigPath+" with a [[server]] section (name, url, username, password), then restart.", nil))
+	case a.cfg == nil && errors.Is(a.o.ConfigErr, config.ErrNotFound), a.cfg != nil && len(a.cfg.Servers) == 0:
+		a.Replace(NewWizardScreen(true, false))
 	case a.cfg == nil:
-		a.Replace(NewMessageScreen("Setup needed", "The config file has a problem:\n"+fmt.Sprint(a.o.ConfigErr), nil))
-	case len(a.cfg.Servers) == 0:
-		a.Replace(NewMessageScreen("Setup needed", "Add a [[server]] to "+a.o.ConfigPath+".", nil))
+		a.Replace(NewMessageAction("The config file has a problem",
+			fmt.Sprintf("%v\n\nFix %s and restart, or set up again: the file is then kept as %s.invalid-<date>.", a.o.ConfigErr, a.o.ConfigPath, a.o.ConfigPath),
+			"Press A to set up again", func() { a.Push(NewWizardScreen(false, true)) }))
 	default:
 		a.Connect()
 	}
@@ -181,6 +182,31 @@ func (a *App) flushConfig() {
 		log.Printf("config: %v", err)
 	}
 	a.saveAt = time.Time{}
+}
+
+// ConnectTimeout bounds Dial.
+const ConnectTimeout = 10 * time.Second
+
+// Dial makes a client for srv and checks that the server answers (ping,
+// with the auth fallbacks of spec §4). It does network I/O: call it off the
+// UI goroutine.
+func Dial(ctx context.Context, srv config.Server) (*subsonic.Client, *subsonic.ServerInfo, error) {
+	c, err := subsonic.New(subsonic.Options{
+		BaseURL: srv.URL,
+		Credentials: subsonic.Credentials{Username: srv.Username, Password: srv.Password, Token: srv.Token,
+			Salt: srv.Salt, APIKey: srv.APIKey, AllowPlaintext: srv.AllowPlaintextPassword},
+		CAFile: srv.CAFile, InsecureSkipVerify: srv.InsecureSkipVerify,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, ConnectTimeout)
+	defer cancel()
+	info, err := c.Connect(cctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, info, nil
 }
 
 // displayURL is raw without credentials, safe to show on screen or log.

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"errors"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,8 +55,23 @@ func TestStartExplainsProblemsOrConnects(t *testing.T) {
 	ta.o.AudioErr = nil
 	ta.o.ConfigErr = config.ErrNotFound
 	ta.start()
-	if messageTitle(ta) != "Setup needed" {
-		t.Fatalf("no config: %q", messageTitle(ta))
+	if w, ok := ta.Top().(*WizardScreen); !ok || !w.firstRun || w.backup {
+		t.Fatalf("no config: top %T", ta.Top())
+	}
+	ta.o.ConfigErr = errors.New("config: line 3: invalid TOML")
+	ta.start()
+	if messageTitle(ta) != "The config file has a problem" {
+		t.Fatalf("invalid config: %q", messageTitle(ta))
+	}
+	ta.press(input.BtnA)
+	if w, ok := ta.Top().(*WizardScreen); !ok || w.firstRun || !w.backup {
+		t.Fatalf("A on the invalid-config message: top %T", ta.Top())
+	}
+	ta.o.ConfigErr = nil
+	ta.cfg = config.Default() // valid, but no servers
+	ta.start()
+	if _, ok := ta.Top().(*WizardScreen); !ok {
+		t.Fatalf("no servers: top %T", ta.Top())
 	}
 	ta.cfg = twoServers()
 	ta.start()
@@ -168,6 +185,8 @@ func TestSaveFailureIsAToastWithoutSecrets(t *testing.T) {
 		t.Skip("root ignores the directory permissions this test relies on")
 	}
 	ta, _ := sessionApp(t, twoServers())
+	log.SetOutput(io.Discard) // the failure is logged too; keep the test output clean
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	dir := t.TempDir()
 	os.Chmod(dir, 0o500)
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })

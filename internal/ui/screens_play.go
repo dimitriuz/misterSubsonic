@@ -334,10 +334,16 @@ func isPlayScreen(s Screen) bool {
 type MessageScreen struct {
 	title, message string
 	retry          func()
+	label          string // what A does
 }
 
 func NewMessageScreen(title, message string, retry func()) *MessageScreen {
-	return &MessageScreen{title: title, message: message, retry: retry}
+	return &MessageScreen{title: title, message: message, retry: retry, label: "Press A to try again"}
+}
+
+// NewMessageAction is a message whose A action is described by label.
+func NewMessageAction(title, message, label string, action func()) *MessageScreen {
+	return &MessageScreen{title: title, message: message, retry: action, label: label}
 }
 
 func (s *MessageScreen) Title() string { return s.title }
@@ -361,7 +367,7 @@ func (s *MessageScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	}
 	if s.retry != nil {
 		y += p.Margin
-		f.Draw(c, area.X+p.Margin, y+f.Ascent(), "Press A to try again", colAccent, area)
+		f.Draw(c, area.X+p.Margin, y+f.Ascent(), s.label, colAccent, area)
 	}
 }
 

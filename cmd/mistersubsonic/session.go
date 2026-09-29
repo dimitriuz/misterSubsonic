@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"mistersubsonic/internal/art"
 	"mistersubsonic/internal/audio"
@@ -51,8 +50,6 @@ type session struct {
 	done   chan struct{} // closed when pl.Run returns
 }
 
-const connectTimeout = 10 * time.Second
-
 func newSessions(ctx context.Context, eng *audio.Engine, dataDir string, volume float64) *sessions {
 	return &sessions{ctx: ctx, eng: eng, dataDir: dataDir, volume: volume}
 }
@@ -73,7 +70,7 @@ func (m *sessions) connect(a sessionUI, cfg *config.Config) {
 		if old != nil {
 			m.stop(old)
 		}
-		c, info, err := dial(m.ctx, server)
+		c, info, err := ui.Dial(m.ctx, server)
 		if err != nil {
 			a.Post(func() {
 				if m.current(gen) {
@@ -106,26 +103,6 @@ func (m *sessions) current(gen int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return gen == m.gen && !m.closing
-}
-
-// dial makes a client for srv and checks it answers (ping, auth fallback).
-func dial(ctx context.Context, srv config.Server) (*subsonic.Client, *subsonic.ServerInfo, error) {
-	c, err := subsonic.New(subsonic.Options{
-		BaseURL: srv.URL,
-		Credentials: subsonic.Credentials{Username: srv.Username, Password: srv.Password, Token: srv.Token,
-			Salt: srv.Salt, APIKey: srv.APIKey, AllowPlaintext: srv.AllowPlaintextPassword},
-		CAFile: srv.CAFile, InsecureSkipVerify: srv.InsecureSkipVerify,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	cctx, cancel := context.WithTimeout(ctx, connectTimeout)
-	defer cancel()
-	info, err := c.Connect(cctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return c, info, nil
 }
 
 // build makes and starts the player and art loader (disk I/O: off the UI
