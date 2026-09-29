@@ -35,6 +35,7 @@ type fakeEngine struct {
 	posOK     bool
 	events    chan audio.Event
 	eventReqs atomic.Int32 // Events() calls
+	gains     map[uint64]float32
 }
 
 func newFakeEngine() *fakeEngine { return &fakeEngine{events: make(chan audio.Event, 64)} }
@@ -50,10 +51,24 @@ func (e *fakeEngine) QueueNext(t audio.Track) {
 	e.queued = append(e.queued, t)
 	e.mu.Unlock()
 }
-func (e *fakeEngine) ClearNext()                 { e.mu.Lock(); e.clears++; e.mu.Unlock() }
-func (e *fakeEngine) Stop()                      { e.mu.Lock(); e.stops++; e.posOK = false; e.mu.Unlock() }
-func (e *fakeEngine) SetPaused(p bool)           { e.mu.Lock(); e.paused = p; e.mu.Unlock() }
-func (e *fakeEngine) SetVolume(v float32)        { e.mu.Lock(); e.volume = v; e.mu.Unlock() }
+func (e *fakeEngine) ClearNext()          { e.mu.Lock(); e.clears++; e.mu.Unlock() }
+func (e *fakeEngine) Stop()               { e.mu.Lock(); e.stops++; e.posOK = false; e.mu.Unlock() }
+func (e *fakeEngine) SetPaused(p bool)    { e.mu.Lock(); e.paused = p; e.mu.Unlock() }
+func (e *fakeEngine) SetVolume(v float32) { e.mu.Lock(); e.volume = v; e.mu.Unlock() }
+func (e *fakeEngine) SetGain(id uint64, g float32) {
+	e.mu.Lock()
+	if e.gains == nil {
+		e.gains = map[uint64]float32{}
+	}
+	e.gains[id] = g
+	e.mu.Unlock()
+}
+func (e *fakeEngine) gainOf(id uint64) (float32, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	g, ok := e.gains[id]
+	return g, ok
+}
 func (e *fakeEngine) getVolume() float32         { e.mu.Lock(); defer e.mu.Unlock(); return e.volume }
 func (e *fakeEngine) Events() <-chan audio.Event { e.eventReqs.Add(1); return e.events }
 

@@ -930,3 +930,50 @@ func TestEngineEventsCloseAfterClose(t *testing.T) {
 		t.Fatal("Events() stayed open after Close")
 	}
 }
+
+// SetGain changes the gain of the track being played from the next chunk on.
+func TestEngineSetGainAppliesNow(t *testing.T) {
+	out := newFakeOutput(512) // a small ring: most of the track is still to decode
+	e := newTestEngine(out)
+	defer e.Close()
+	pcm := ramp(5000, 1)
+	e.Play(Track{ID: 1, Source: newFakeSource(pcm, OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	e.SetGain(1, 0.5)
+	playOut(t, out, 5000)
+	got := out.written()
+	if got[0] != pcm[0] {
+		t.Fatalf("first sample %v, want the unity-gain %v", got[0], pcm[0])
+	}
+	if last := len(pcm) - 2; got[last] != pcm[last]*0.5 {
+		t.Fatalf("last sample %v, want %v at the new gain", got[last], pcm[last]*0.5)
+	}
+}
+
+// SetGain also reaches a successor that is queued or still opening.
+func TestEngineSetGainReachesTheSuccessor(t *testing.T) {
+	for _, stillOpening := range []bool{false, true} {
+		out := newFakeOutput(100000)
+		e := newTestEngine(out)
+		b := newFakeSource(ramp(100, 1), OutputRate)
+		if stillOpening {
+			b.openBlock = make(chan struct{})
+			b.openStarted = make(chan struct{})
+		}
+		e.Play(Track{ID: 1, Source: newFakeSource(ramp(100, 1), OutputRate)})
+		e.QueueNext(Track{ID: 2, Source: b})
+		if stillOpening {
+			<-b.openStarted
+		}
+		e.SetGain(2, 0.25)
+		if stillOpening {
+			close(b.openBlock)
+		}
+		playOut(t, out, 200)
+		got := out.written()
+		if want := ramp(100, 1)[99*2] * 0.25; got[199*2] != want {
+			t.Errorf("opening %v: successor's last sample %v, want %v", stillOpening, got[199*2], want)
+		}
+		e.Close()
+	}
+}

@@ -26,6 +26,8 @@ type Engine interface {
 	Seek(id uint64, pos time.Duration)
 	SetPaused(bool)
 	SetVolume(float32)
+	// SetGain changes a playing or queued track's gain at once.
+	SetGain(id uint64, gain float32)
 	Position() (uint64, time.Duration, bool)
 	Events() <-chan audio.Event
 }
@@ -531,10 +533,19 @@ func (p *Player) applyVolume() {
 	p.o.Engine.SetVolume(g)
 }
 
-// SetReplayGain sets the ReplayGain mode (off, track or album) for the
-// tracks opened from now on.
+// SetReplayGain sets the ReplayGain mode (off, track or album). It applies
+// at once: to the playing track, the queued successor, and every track
+// opened from now on.
 func (p *Player) SetReplayGain(mode string) {
-	p.do(func() { p.o.ReplayGain = mode })
+	p.do(func() {
+		p.o.ReplayGain = mode
+		if song, ok := p.currentSong(); ok && p.curID != 0 {
+			p.o.Engine.SetGain(p.curID, ReplayGainFactor(song, mode))
+		}
+		if p.nextID != 0 {
+			p.o.Engine.SetGain(p.nextID, ReplayGainFactor(p.queue[p.order[p.nextCursor]], mode))
+		}
+	})
 }
 
 // SetScrobble turns now-playing and scrobble reports on or off.

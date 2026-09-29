@@ -232,6 +232,25 @@ func (e *Engine) Seek(id uint64, pos time.Duration) {
 	}, nil)
 }
 
+// SetGain changes a track's gain (ReplayGain) at once: the track being
+// decoded, the queued successor, or one still opening. What is already
+// buffered (about half a second) plays at the old gain. 0 means unity.
+func (e *Engine) SetGain(id uint64, gain float32) {
+	if gain == 0 {
+		gain = 1
+	}
+	e.send(func() {
+		for _, v := range []*voice{e.cur, e.next} {
+			if v != nil && v.t.ID == id {
+				v.gain = gain
+			}
+		}
+		if e.opening != nil && e.opening.ID == id {
+			e.opening.Gain = gain // applied when it opens
+		}
+	}, nil)
+}
+
 func (e *Engine) SetPaused(p bool)    { e.o.Output.SetPaused(p) }
 func (e *Engine) SetVolume(v float32) { e.o.Output.SetVolume(v) }
 
@@ -639,7 +658,8 @@ func (e *Engine) doStop() {
 func (e *Engine) doQueueNext(t Track) {
 	e.cancelNext()
 	e.gen++
-	e.opening = &t
+	op := t // SetGain may change op; the opener goroutine reads t
+	e.opening = &op
 	e.openedAt = time.Now()
 	gen := e.gen
 	e.openers.Add(1)
@@ -678,10 +698,14 @@ func (e *Engine) onOpened(r openResult) {
 		closeVoice(r.v)
 		return
 	}
+	gain := e.opening.Gain
 	e.opening = nil
 	if r.err != nil {
 		e.queueEvent(Event{Kind: EventError, TrackID: r.t.ID, Err: r.err})
 		return
+	}
+	if gain != 0 {
+		r.v.gain = gain // a SetGain that came while it opened
 	}
 	e.next = r.v
 	if e.cur == nil && e.ended {

@@ -41,3 +41,27 @@ func TestSetScrobbleOff(t *testing.T) {
 		t.Fatalf("%d scrobble calls with scrobbling off", n)
 	}
 }
+
+// A ReplayGain change reaches the playing track and the queued successor
+// at once, not only the tracks opened after it.
+func TestSetReplayGainAppliesNow(t *testing.T) {
+	h := newHarness(t, nil) // ReplayGain off
+	q := songs(2, 100)
+	g, g2 := -6.0, -12.0
+	q[0].ReplayGain = &subsonic.ReplayGain{TrackGain: &g}
+	q[1].ReplayGain = &subsonic.ReplayGain{TrackGain: &g2}
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 90*time.Second) // near the end: the next song is prefetched
+	h.waitFor("the successor queued", func() bool { return h.eng.queueCount() == 1 })
+	h.p.SetReplayGain("track")
+	if got, ok := h.eng.gainOf(a.ID); !ok || got < 0.50 || got > 0.51 {
+		t.Fatalf("playing track's gain %v (set %v), want -6 dB", got, ok)
+	}
+	h.eng.mu.Lock()
+	next := h.eng.queued[0].ID
+	h.eng.mu.Unlock()
+	if got, ok := h.eng.gainOf(next); !ok || got < 0.25 || got > 0.26 {
+		t.Fatalf("queued track's gain %v (set %v), want -12 dB", got, ok)
+	}
+}
