@@ -370,6 +370,8 @@ func TestQueueEditBetweenEndedAndStartedDoesNotWedge(t *testing.T) {
 	h.waitFor("QueueNext", func() bool { return h.eng.queueCount() == 1 })
 	b := h.eng.queued[0]
 	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
+	// Wait for Run to receive the event before enqueuing, to ensure deterministic ordering
+	h.waitFor("Ended processed", func() bool { return len(h.eng.events) == 0 })
 	h.p.do(func() {})
 	h.p.Enqueue([]subsonic.Song{{ID: "y", Suffix: "flac", Duration: 100}})
 	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
@@ -433,6 +435,10 @@ func TestTranscodedSeekKeepsListenTimeAndPause(t *testing.T) {
 	b := h.eng.lastPlayed()
 	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
 	h.p.do(func() {})
+	time.Sleep(30 * time.Millisecond) // Let async nowPlaying complete
+	if len(h.api.nowPlayings()) != nowPlayingsBefore {
+		t.Fatalf("after Started, nowPlayings=%d, want %d (no duplicate announce)", len(h.api.nowPlayings()), nowPlayingsBefore)
+	}
 	h.p.TogglePause()
 	pos = 200 * time.Second
 	for i := 0; i < 44; i++ { // 44 * 250ms = 11s; total listened = 140 + 11 = 151s > 150s threshold
@@ -458,5 +464,43 @@ func TestCommandsAfterRunExitDoNotBlock(t *testing.T) {
 	case <-done:
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("commands blocked after Run exit")
+	}
+}
+
+// Next during a transcoded reopen must still announce the next track.
+func TestNextDuringTranscodedReopenStillAnnouncesNext(t *testing.T) {
+	h := newHarness(t, nil)
+	q := songs(2, 100)
+	q[0].Suffix = "m4a"
+	q[1].Suffix = "m4a"
+	h.p.PlayNow(q, 0)
+	_ = h.playAndStart(1)
+	h.p.Seek(100 * time.Second)
+	h.waitFor("reopen", func() bool { return h.eng.playCount() == 2 })
+	h.p.Next()
+	h.waitFor("second song plays", func() bool { return h.eng.playCount() == 3 })
+	b := h.eng.lastPlayed()
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
+	h.p.do(func() {})
+	h.waitFor("both announced", func() bool { return slices.Equal(h.api.nowPlayings(), []subsonic.ID{"sa", "sb"}) })
+}
+
+// Seek while loading must announce when Started arrives.
+func TestSeekWhileLoadingStillAnnounces(t *testing.T) {
+	h := newHarness(t, nil)
+	h.eng.seekErr = audio.ErrNotCurrent
+	h.p.PlayNow(songs(1, 100), 0)
+	h.waitFor("engine.Play", func() bool { return h.eng.playCount() >= 1 })
+	h.p.Seek(30 * time.Second)
+	h.waitFor("fallback reopen", func() bool { return h.eng.playCount() == 2 })
+	tr := h.eng.lastPlayed()
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: tr.ID}
+	h.p.do(func() {})
+	time.Sleep(30 * time.Millisecond) // Wait for async nowPlaying to complete
+	if len(h.api.nowPlayings()) != 1 {
+		t.Fatalf("nowPlayings=%d, want 1", len(h.api.nowPlayings()))
+	}
+	if !slices.Equal(h.api.nowPlayings(), []subsonic.ID{"sa"}) {
+		t.Fatalf("nowPlayings=%v, want [sa]", h.api.nowPlayings())
 	}
 }

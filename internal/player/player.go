@@ -161,7 +161,7 @@ type Player struct {
 	startedAt  time.Time
 	failures   int
 	lastSave   time.Time
-	reopening  bool // true while reopening after a transcoded seek (I2)
+	announced  bool // true after now-playing sent for current play
 }
 
 func New(o Options) *Player {
@@ -638,7 +638,6 @@ func (p *Player) reopenAt(offset time.Duration) {
 	if p.status != Paused {
 		p.setStatus(Loading)
 	}
-	p.reopening = true
 	p.openAsync(id, song, offset, false)
 }
 
@@ -730,17 +729,8 @@ func (p *Player) onEngine(ev audio.Event) {
 		if ev.TrackID != p.curID {
 			return
 		}
-		if p.reopening { // I2: skip normal started handling for reopening seek
-			p.reopening = false
-			if pr, ok := p.curSrc.Source.(Promoter); ok {
-				pr.Promote()
-			}
-			p.failures = 0
-			p.lastMove = p.o.Now()
-			if p.status != Paused {
-				p.setStatus(Playing)
-			}
-			return // skip nowPlaying for reopening
+		if !p.announced {
+			p.nowPlaying() // announce this play unless already announced
 		}
 		if pr, ok := p.curSrc.Source.(Promoter); ok {
 			pr.Promote()
@@ -750,7 +740,6 @@ func (p *Player) onEngine(ev audio.Event) {
 		if p.status != Paused {
 			p.setStatus(Playing)
 		}
-		p.nowPlaying()
 	case audio.EventEnded:
 		if ev.TrackID != p.curID {
 			return
@@ -843,6 +832,7 @@ func (p *Player) resetListen() {
 	p.listened = 0
 	p.scrobbled = false
 	p.startedAt = p.o.Now()
+	p.announced = false
 }
 
 func (p *Player) nowPlaying() {
@@ -851,6 +841,7 @@ func (p *Player) nowPlaying() {
 	}
 	song, _ := p.currentSong()
 	p.startedAt = p.o.Now()
+	p.announced = true
 	go p.o.API.Scrobble(p.ctx, song.ID, p.startedAt, false)
 }
 
