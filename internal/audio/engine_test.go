@@ -637,8 +637,19 @@ func TestEngineSeekForNewTrackIsNotRetargeted(t *testing.T) {
 	e.Seek(2, 3*time.Second) // must not coalesce into the queued track-1 request
 	close(release)
 
-	// Playing track 2 replaces track 1's audio, so no boundary Started event
-	// is guaranteed; the seek reaching the decoder is the observable effect.
+	var seen []Event
+	deadline := time.After(2 * time.Second)
+	for started := false; !started; {
+		out.consume(1 << 30)
+		select {
+		case ev := <-e.Events():
+			seen = append(seen, ev)
+			started = ev.Kind == EventStarted && ev.TrackID == 2
+		case <-time.After(time.Millisecond):
+		case <-deadline:
+			t.Fatalf("Started(2) never arrived; events: %+v", seen)
+		}
+	}
 	waitFor(t, "track 2 sought to 3 s", func() bool { return last.Load() == uint64(3*OutputRate) })
 	quiet := time.After(100 * time.Millisecond)
 	for {
@@ -648,6 +659,68 @@ func TestEngineSeekForNewTrackIsNotRetargeted(t *testing.T) {
 				t.Fatalf("spurious SeekFailed for track 2: %v", ev.Err)
 			}
 		case <-quiet:
+			return
+		}
+	}
+}
+
+func TestEngineSeekRightAfterPlayStillAnnounces(t *testing.T) {
+	out := newFakeOutput(1 << 16)
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: 100 * time.Millisecond})
+	defer e.Close()
+	e.Play(Track{ID: 5, Source: newFakeSource(ramp(48000, 0), OutputRate)})
+	// A slow monitor tick lets the seek run before the boundary is announced.
+	e.Seek(5, 500*time.Millisecond) // the player's resume path: no wait in between
+
+	started := 0
+	deadline := time.After(time.Second)
+loop:
+	for {
+		select {
+		case ev := <-e.Events():
+			switch {
+			case ev.Kind == EventStarted && ev.TrackID == 5:
+				started++
+			case ev.Kind == EventSeekFailed:
+				t.Fatalf("unexpected SeekFailed: %+v", ev)
+			}
+		case <-deadline:
+			break loop
+		}
+	}
+	if started != 1 {
+		t.Fatalf("Started(5) fired %d times, want exactly 1", started)
+	}
+	id, pos, ok := e.Position()
+	if !ok || id != 5 || pos < 490*time.Millisecond || pos > 700*time.Millisecond {
+		t.Fatalf("Position = %d %v %v, want track 5 near 500ms", id, pos, ok)
+	}
+}
+
+func TestEngineSeekOfGaplessSuccessorAnnounces(t *testing.T) {
+	out := newFakeOutput(1000)
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond})
+	defer e.Close()
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(300, 0), OutputRate)})
+	e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(48000, 300), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	waitFor(t, "B being decoded", func() bool { return len(out.written())/2 > 300 })
+
+	e.Seek(2, 100*time.Millisecond)
+	expectEvent(t, e, EventEnded, 1)
+	expectEvent(t, e, EventStarted, 2)
+
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		out.consume(1 << 30)
+		select {
+		case ev := <-e.Events():
+			// Ended(2) is fine: track 2 plays out once consumed.
+			if ev.Kind == EventStarted || ev.Kind == EventSeekFailed || (ev.Kind == EventEnded && ev.TrackID == 1) {
+				t.Fatalf("duplicate or unexpected event %+v", ev)
+			}
+		case <-time.After(time.Millisecond):
+		case <-deadline:
 			return
 		}
 	}

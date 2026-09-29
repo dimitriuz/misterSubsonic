@@ -650,7 +650,18 @@ func (e *Engine) doSeek(id uint64, pos time.Duration) error {
 	if err := v.dec.SeekFrame(uint64(rel.Seconds() * float64(rate))); err != nil {
 		return err
 	}
-	e.resetSegments(segment{start: e.written, id: id, base: pos})
+	e.mu.Lock()
+	// The seek makes track id audible now. If the monitor hasn't announced
+	// it yet (its boundary is still pending), announce it here, because the
+	// reset below discards that boundary.
+	if cur := e.segs[0].id; cur != id {
+		if cur != 0 {
+			e.evq = append(e.evq, Event{Kind: EventEnded, TrackID: cur})
+		}
+		e.evq = append(e.evq, Event{Kind: EventStarted, TrackID: id})
+	}
+	e.segs = []segment{{start: e.written, id: id, base: pos}}
+	e.mu.Unlock()
 	e.o.Output.Flush()
 	e.pending = e.pending[:0]
 	if e.rs != nil {
