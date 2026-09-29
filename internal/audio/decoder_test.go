@@ -2,12 +2,17 @@ package audio
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mistersubsonic/internal/stream"
 )
 
 func decodeAll(t *testing.T, name string, f Format) ([]float32, Decoder) {
@@ -20,6 +25,12 @@ func decodeAll(t *testing.T, name string, f Format) ([]float32, Decoder) {
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}
+	return readAll(t, name, d), d
+}
+
+// readAll decodes d to the end, failing the test on any error but io.EOF.
+func readAll(t *testing.T, name string, d Decoder) []float32 {
+	t.Helper()
 	var all []float32
 	buf := make([]float32, 4096*2)
 	for {
@@ -32,7 +43,7 @@ func decodeAll(t *testing.T, name string, f Format) ([]float32, Decoder) {
 			t.Fatalf("read %s: %v", name, err)
 		}
 	}
-	return all, d
+	return all
 }
 
 func TestDecodeFLACMatchesWAV(t *testing.T) {
@@ -91,6 +102,41 @@ func TestDecodeMP3(t *testing.T) {
 	}
 	if peak < 0.1 {
 		t.Fatalf("mp3 decoded to near-silence (peak %v)", peak)
+	}
+}
+
+// C1: Navidrome transcodes arrive as HTTP 200, chunked, with no
+// Content-Length and no Accept-Ranges. dr_mp3 probes SeekEnd at open, which
+// such a stream can't answer; that failed seek must not poison later reads.
+func TestDecodeChunkedUnknownLengthMP3(t *testing.T) {
+	data, err := os.ReadFile("testdata/tone-44k16-noxing.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		for off := 0; off < len(data); off += 4096 {
+			w.Write(data[off:min(off+4096, len(data))])
+			w.(http.Flusher).Flush() // forces chunked encoding, no Content-Length
+		}
+	}))
+	defer srv.Close()
+	r, err := stream.Open(context.Background(), srv.URL, stream.Options{WindowBytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if r.Size() != -1 || r.Seekable() {
+		t.Fatalf("test server must look like a live transcode: size=%d seekable=%v", r.Size(), r.Seekable())
+	}
+	d, err := OpenDecoder(r, FormatMP3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	frames := len(readAll(t, "chunked mp3", d)) / 2
+	if frames < 44100*4/10 || frames > 44100*6/10 {
+		t.Fatalf("decoded %d frames, want about 22050", frames)
 	}
 }
 

@@ -32,7 +32,11 @@ const maAtEnd = -17 // MA_AT_END
 
 type source struct {
 	r   io.ReadSeeker
-	err error
+	err error // last read error; sticky, returned by Read
+	// seekErr is the last seek error. It is kept apart from err because
+	// miniaudio probes seeks it can live without (dr_mp3 asks for SeekEnd at
+	// open, which a chunked transcode with no Content-Length can't answer).
+	seekErr error
 }
 
 type cDecoder struct {
@@ -53,6 +57,9 @@ func OpenDecoder(src io.ReadSeeker, f Format) (Decoder, error) {
 		h.Delete()
 		if s.err != nil {
 			return nil, fmt.Errorf("audio: open %s decoder: %w", f, s.err)
+		}
+		if s.seekErr != nil {
+			return nil, fmt.Errorf("audio: open %s decoder: %w", f, s.seekErr)
 		}
 		return nil, fmt.Errorf("audio: open %s decoder: miniaudio result %d", f, int(rc))
 	}
@@ -84,7 +91,11 @@ func (c *cDecoder) Read(dst []float32) (int, error) {
 }
 
 func (c *cDecoder) SeekFrame(frame uint64) error {
+	c.src.seekErr = nil
 	if rc := C.mss_decoder_seek(c.d, C.uint64_t(frame)); rc != 0 {
+		if c.src.seekErr != nil {
+			return c.src.seekErr
+		}
 		if c.src.err != nil {
 			return c.src.err
 		}
@@ -128,7 +139,7 @@ func mssGoRead(h C.uintptr_t, buf unsafe.Pointer, n C.size_t, nread *C.size_t) C
 func mssGoSeek(h C.uintptr_t, offset C.int64_t, whence C.int) C.int {
 	s := cgo.Handle(h).Value().(*source)
 	if _, err := s.r.Seek(int64(offset), int(whence)); err != nil {
-		s.err = err
+		s.seekErr = err
 		return 1
 	}
 	return 0
