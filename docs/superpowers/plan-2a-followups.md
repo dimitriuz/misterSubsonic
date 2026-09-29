@@ -180,3 +180,33 @@ And also:
 - **Input:** check that default keys fire only for codes a user's map omits, and that devices whose grab returns EBUSY are handled, alongside Main_MiSTer on the device.
 - **ReplayGain:** re-queue the prefetched track on a change.
 - **Performance:** whatever the device benchmarks and spikes 2 and 3 call for.
+
+## Plan 3a minors (deferred)
+
+- **Log:**
+  - After a failed rename, every later line rotates the log and it can pass 2× the cap.
+  - A failed reopen quietly ends logging.
+  - A failed open of `crash.txt` is silent. An oversized one is deleted, not rotated.
+- **Framebuffer:**
+  - `fbLayout`'s end overstates by `xoffset` bytes.
+  - The 32-bit int maths isn't range-checked.
+  - `OpenFB`'s slicing has no test.
+- **Mute and Settings:** holding Left/Right on a toggle row (Mute, Scrobbling) flips it on every repeat.
+- **Shutdown:** errors from `con.Restore` and `forceExit`'s `RestoreText` aren't logged. The final `error:` line comes after "exiting".
+- **Example config:**
+  - The test's key match is loose.
+  - It doesn't say to edit url/username/password first.
+  - The `allow_plaintext_password` comment should say it only matters for http://.
+- **Launcher:**
+  - TERM to the launcher alone waits for the app to exit, then exits 130.
+  - An INT during the explicit restore skips the rest of it.
+  - A failed `exec 9>` isn't checked.
+  - The harness's socat stand-in doesn't check the missing newline or the timeout.
+  - The locked case's `flock … sleep 30` leaves its `sleep` running after cleanup.
+  - No case covers a missing SAM script.
+- **Releases:**
+  - `mkdb` doesn't normalize `-base-url` or guard `-o` inside `-dir` or non-regular files.
+  - With no tags, `VERSION` is a bare hash.
+  - `check-notices.sh` passes when `go list` fails (no `pipefail`) and checks the host dependency graph, not the ARM one.
+- **Docs:** the README's Install section doesn't list `config.example.toml`, `LICENSE` and `THIRD_PARTY.txt`.
+- **To check on the device:** `flock --help` and `bash --version`; `pidof`/`ps` with SAM running; what Main_MiSTer sends a script it cancels; `RestoreText` on `/dev/tty0` if Main_MiSTer switched terminals; whether Downloader accepts `"v": 1` and the `mistersubsonic/` folder.
