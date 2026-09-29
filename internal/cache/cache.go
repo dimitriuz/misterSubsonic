@@ -11,9 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+// writeFile is replaceable in tests (a full SD card fails mid-write).
+var writeFile = os.WriteFile
 
 type Disk struct {
 	dir string
@@ -25,6 +29,7 @@ type Disk struct {
 }
 
 // Open uses dir (created if needed) with a byte budget. maxBytes <= 0 disables caching.
+// Half-written entries left by a crash (*.tmp) are removed.
 func Open(dir string, maxBytes int64) (*Disk, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -32,9 +37,15 @@ func Open(dir string, maxBytes int64) (*Disk, error) {
 	d := &Disk{dir: dir, max: maxBytes, now: time.Now}
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if info, err := e.Info(); err == nil && info.Mode().IsRegular() {
-			d.size += info.Size()
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
 		}
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			os.Remove(filepath.Join(dir, e.Name()))
+			continue
+		}
+		d.size += info.Size()
 	}
 	return d, nil
 }
@@ -73,7 +84,8 @@ func (d *Disk) Put(key string, data []byte) error {
 		old = info.Size()
 	}
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := writeFile(tmp, data, 0o644); err != nil {
+		os.Remove(tmp) // don't leave a partial entry behind (a full card)
 		return err
 	}
 	if err := os.Rename(tmp, p); err != nil {
@@ -111,7 +123,9 @@ func (d *Disk) Delete(key string) {
 var evictions int
 
 // evictLocked removes the oldest entries down to a low-water mark of 90% of
-// the budget, so the directory walk happens once per ~10% of new data.
+// the budget, so the directory walk happens once per ~10% of new data. The
+// walk also recounts the size, which drifts if files are deleted behind the
+// cache's back.
 func (d *Disk) evictLocked(keep string) {
 	evictions++
 	target := d.max * 9 / 10
@@ -121,11 +135,17 @@ func (d *Disk) evictLocked(keep string) {
 		mod  time.Time
 	}
 	var all []ent
+	d.size = 0
 	filepath.WalkDir(d.dir, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() || p == keep {
+		if err != nil || e.IsDir() {
 			return nil
 		}
-		if info, err := e.Info(); err == nil {
+		info, err := e.Info()
+		if err != nil {
+			return nil
+		}
+		d.size += info.Size()
+		if p != keep {
 			all = append(all, ent{p, info.Size(), info.ModTime()})
 		}
 		return nil
