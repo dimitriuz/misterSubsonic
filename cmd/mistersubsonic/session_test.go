@@ -181,3 +181,127 @@ func TestServerDirIsSafe(t *testing.T) {
 		}
 	}
 }
+
+// slowStops makes every stop wait for release (or, if release is nil, d).
+func slowStops(m *sessions, release chan struct{}, d time.Duration) {
+	m.beforeStop = func(*session) {
+		if release != nil {
+			<-release
+		} else {
+			time.Sleep(d)
+		}
+	}
+}
+
+func TestCloseWaitsForASwitchInProgress(t *testing.T) {
+	a, b := pingServer(nil), pingServer(nil)
+	defer a.Close()
+	defer b.Close()
+	m, _ := testSessions(t)
+	f := &fakeUI{}
+	cfg := cfgFor(map[string]string{"a": a.URL, "b": b.URL}, "a")
+	m.connect(f, cfg)
+	f.wait(t, "connected to a", func() bool { return len(f.connected) == 1 })
+	m.mu.Lock()
+	first := m.cur
+	m.mu.Unlock()
+
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock) // a failed test must not leave stops blocked
+	slowStops(m, release, 0)
+	cfg.DefaultServer = "b"
+	m.connect(f, cfg) // its goroutine is now stuck stopping a
+	returned := make(chan struct{})
+	go func() { m.close(); close(returned) }()
+	select {
+	case <-returned:
+		t.Fatal("close returned while the old session was still stopping")
+	case <-time.After(150 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case <-returned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("close never returned")
+	}
+	select {
+	case <-first.done:
+	default:
+		t.Fatal("the old player is still running after close")
+	}
+	time.Sleep(100 * time.Millisecond)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m.cur != nil || len(f.connected) != 1 {
+		t.Fatalf("session left after close: cur %v connected %d", m.cur, len(f.connected))
+	}
+}
+
+func TestNewerConnectWaitsForTheOlderStop(t *testing.T) {
+	a, b, c := pingServer(nil), pingServer(nil), pingServer(nil)
+	defer a.Close()
+	defer b.Close()
+	defer c.Close()
+	m, _ := testSessions(t)
+	f := &fakeUI{}
+	cfg := cfgFor(map[string]string{"a": a.URL, "b": b.URL}, "a")
+	m.connect(f, cfg)
+	f.wait(t, "connected to a", func() bool { return len(f.connected) == 1 })
+	m.mu.Lock()
+	first := m.cur
+	m.mu.Unlock()
+	f.players[0].SetVolumeDB(-17)
+
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock) // a failed test must not leave stops blocked
+	slowStops(m, release, 0)
+	cfg.DefaultServer = "b"
+	m.connect(f, cfg)
+	cfg2 := config.Default()
+	cfg2.AddServer(config.Server{Name: "c", URL: c.URL, Username: "u", Password: "p"})
+	cfg2.DefaultServer = "c"
+	m.connect(f, cfg2)
+	time.Sleep(150 * time.Millisecond)
+	f.mu.Lock()
+	n := len(f.connected)
+	f.mu.Unlock()
+	if n != 1 {
+		t.Fatal("a newer connect started a player before the old one finished stopping")
+	}
+	unblock()
+	f.wait(t, "connected to c", func() bool { return len(f.connected) == 2 })
+	select {
+	case <-first.done:
+	default:
+		t.Fatal("a is still running")
+	}
+	if f.connected[1].Server.Name != "c" || f.players[1].State().VolumeDB != -17 {
+		t.Fatalf("c: %+v volume %v, want a's -17", f.connected[1].Server, f.players[1].State().VolumeDB)
+	}
+}
+
+func TestCloseWaitsForTheStopWhenNoServerIsLeft(t *testing.T) {
+	a := pingServer(nil)
+	defer a.Close()
+	m, _ := testSessions(t)
+	f := &fakeUI{}
+	m.connect(f, cfgFor(map[string]string{"a": a.URL}, "a"))
+	f.wait(t, "connected to a", func() bool { return len(f.connected) == 1 })
+	m.mu.Lock()
+	first := m.cur
+	m.mu.Unlock()
+	slowStops(m, nil, 150*time.Millisecond)
+	m.connect(f, config.Default()) // no servers: ends the session
+	m.close()
+	select {
+	case <-first.done:
+	default:
+		t.Fatal("close returned before the session was stopped")
+	}
+}

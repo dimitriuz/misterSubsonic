@@ -41,6 +41,15 @@ type sessions struct {
 	cur     *session
 	volume  float64 // start volume of the next player (the last one's, after the first)
 	closing bool
+	retired []*session // replaced, waiting to be stopped (by whoever holds swap next)
+
+	// swap serialises everything that stops or starts a player (draining
+	// retired, build and install, close), so a new player never starts
+	// before the old one has saved its queue and volume. It is never held
+	// while dialling. Lock order: swap, then mu.
+	swap sync.Mutex
+
+	beforeStop func(*session) // test hook, nil in production
 }
 
 type session struct {
@@ -59,20 +68,19 @@ func (m *sessions) connect(a sessionUI, cfg *config.Config) {
 	srv, ok := cfg.ActiveServer()
 	m.mu.Lock()
 	m.gen++
-	gen, old := m.gen, m.cur
-	m.cur = nil
+	gen := m.gen
+	if m.cur != nil {
+		m.retired = append(m.retired, m.cur)
+		m.cur = nil
+	}
 	m.mu.Unlock()
 	if !ok { // no server left: just end the current session
-		if old != nil {
-			go m.stop(old)
-		}
+		go m.drain()
 		return
 	}
 	server := *srv
 	go func() {
-		if old != nil {
-			m.stop(old)
-		}
+		m.drain() // free the engine before the (slow) dial
 		c, info, err := ui.Dial(m.ctx, server)
 		if err != nil {
 			a.Post(func() {
@@ -82,18 +90,17 @@ func (m *sessions) connect(a sessionUI, cfg *config.Config) {
 			})
 			return
 		}
+		m.swap.Lock()
+		m.drainLocked()
 		if !m.current(gen) {
+			m.swap.Unlock()
 			return // superseded or shutting down: build nothing
 		}
 		s := m.build(a, c, server, cfg.Playback, cfg.Cache)
 		m.mu.Lock()
-		if m.closing || gen != m.gen {
-			m.mu.Unlock()
-			m.stop(s) // superseded before it was shown
-			return
-		}
-		m.cur = s
+		m.cur = s // gen is current: checked above, and connect/close need mu to change it
 		m.mu.Unlock()
+		m.swap.Unlock()
 		a.Post(func() {
 			if m.current(gen) {
 				a.Connected(ui.ConnInfo{Server: server, Info: info, Auth: c.AuthMethod()}, c, s.pl, s.loader)
@@ -153,13 +160,18 @@ func (m *sessions) serverDir(name string) string {
 		safe = "_"
 	}
 	dir := filepath.Join(m.dataDir, "servers", safe)
-	os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("server data folder: %v", err)
+	}
 	return dir
 }
 
 // stop ends a session: the player saves its queue and stops the engine,
 // then the art loader closes. The session's volume carries to the next.
 func (m *sessions) stop(s *session) {
+	if m.beforeStop != nil {
+		m.beforeStop(s)
+	}
 	vol := s.pl.State().VolumeDB
 	s.cancel()
 	<-s.done
@@ -169,15 +181,42 @@ func (m *sessions) stop(s *session) {
 	m.mu.Unlock()
 }
 
+// drain stops every retired session (waiting for any swap in progress).
+func (m *sessions) drain() {
+	m.swap.Lock()
+	defer m.swap.Unlock()
+	m.drainLocked()
+}
+
+// drainLocked is drain with swap held.
+func (m *sessions) drainLocked() {
+	for {
+		m.mu.Lock()
+		if len(m.retired) == 0 {
+			m.mu.Unlock()
+			return
+		}
+		s := m.retired[0]
+		m.retired = m.retired[1:]
+		m.mu.Unlock()
+		m.stop(s)
+	}
+}
+
 // close stops the current session and any connect still in flight from
-// starting one (on exit).
+// starting one (on exit). It returns only when every stop and build in
+// progress has finished, so the engine can be closed after it.
 func (m *sessions) close() {
 	m.mu.Lock()
 	m.closing = true
-	s := m.cur
-	m.cur = nil
 	m.mu.Unlock()
-	if s != nil {
-		m.stop(s)
+	m.swap.Lock()
+	defer m.swap.Unlock()
+	m.mu.Lock()
+	if m.cur != nil {
+		m.retired = append(m.retired, m.cur)
+		m.cur = nil
 	}
+	m.mu.Unlock()
+	m.drainLocked()
 }
