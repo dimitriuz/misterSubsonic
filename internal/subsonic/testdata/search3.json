@@ -1,0 +1,4 @@
+{"subsonic-response":{"status":"ok","version":"1.16.1","searchResult3":{
+ "artist":[{"id":"ar-3","name":"Björk"}],
+ "album":[{"id":"al-20","name":"Homogenic","artist":"Björk"}],
+ "song":[{"id":"so-9","title":"Jóga","artist":"Björk","album":"Homogenic","suffix":"mp3","duration":305}]}}}
