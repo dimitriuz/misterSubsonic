@@ -238,7 +238,19 @@ func (s *FeedScreen) current() *feedRow {
 	return s.rows[i]
 }
 
+// sync drops the Resume card once the player has a queue of its own: A on it
+// would replace the live queue with the old saved one. The focus stays on the
+// same row of covers.
+func (s *FeedScreen) sync(a *App) {
+	if s.resume == nil || !a.hasQueue() {
+		return
+	}
+	s.resume = nil
+	s.row = max(s.row-1, 0)
+}
+
 func (s *FeedScreen) Handle(a *App, e input.Event) bool {
+	s.sync(a)
 	r := s.current()
 	switch e.Button {
 	case input.BtnUp, input.BtnDown:
@@ -299,6 +311,7 @@ func (s *FeedScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *FeedScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
+	s.sync(a)
 	p := a.P
 	fb := a.F.Body
 	cellW, cellH := a.coverCell()

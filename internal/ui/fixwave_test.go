@@ -5,6 +5,8 @@ import (
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/player"
+	"slices"
 	"testing"
 
 	"mistersubsonic/internal/subsonic"
@@ -327,5 +329,49 @@ func TestSearchTabLabelsFollowTheResults(t *testing.T) {
 	ta.settle(t)
 	if s.tabs.Labels[resTracks] != "stale" {
 		t.Fatal("Draw rewrote the labels")
+	}
+}
+
+// The Resume card arrives after the screen is up: what the user has focused
+// stays focused.
+func TestCRTHomeKeepsFocusWhenResumeArrives(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+	s := NewHomeScreen()
+	ta.Push(s)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnDown) // Most played, before Resume is known
+	ta.settle(t)
+	if s.resume == nil {
+		t.Fatal("no Resume row")
+	}
+	if got := s.items()[s.list.Focus].label; got != "Most played" {
+		t.Fatalf("focus moved to %q", got)
+	}
+}
+
+// Once something else is playing, the saved queue must not be offered: A on
+// it would replace the live queue.
+func TestFeedDropsResumeOnceSomethingPlays(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+	s := NewFeedScreen()
+	ta.Push(s)
+	ta.settle(t)
+	ta.press(input.BtnUp) // the Resume card
+	if s.current() != nil {
+		t.Fatal("not on the Resume card")
+	}
+	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: 0, NextIndex: -1}
+	ta.settle(t)
+	if s.resume != nil || s.count() != len(s.rows) || s.current() != s.rows[0] {
+		t.Fatalf("Resume still offered: resume %v, count %d, current %v", s.resume, s.count(), s.current())
+	}
+	ta.press(input.BtnA) // opens the focused album instead
+	if slices.Contains(ta.pl.calls, "resume") {
+		t.Fatal("A resumed the old queue over the live one")
+	}
+	if _, ok := ta.Top().(*AlbumScreen); !ok {
+		t.Fatalf("A opened %T", ta.Top())
 	}
 }

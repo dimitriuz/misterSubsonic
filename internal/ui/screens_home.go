@@ -63,6 +63,9 @@ func (s *HomeScreen) Enter(a *App) {
 	a.Load(s, func(ctx context.Context) (any, error) { return a.Player().Resumable(ctx) }, func(v any, err error) {
 		if r, ok := v.(*player.Resume); ok && err == nil && r != nil && len(a.Player().State().Queue) == 0 {
 			s.resume = r
+			if s.list.Focus > 0 {
+				s.list.Focus++ // keep the focus on the same item
+			}
 		}
 	})
 }
