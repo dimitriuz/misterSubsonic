@@ -168,7 +168,7 @@ Also still open: ReplayGain changes take effect from the track after the prefetc
 
 ## Plan 3b must handle
 
-Everything under "Plan 3 must handle" above, plus the Plan 3 items in `plan-1-followups.md`:
+Everything under "Plan 3 must handle" above, plus the Plan 3 items in `plan-1-followups.md`, except what "Resolved by Plan 3a" lists (the framebuffer panning, `/dev/mem` alignment and `smem_len` check, `config.example.toml`, and restoring `KD_TEXT`). `OpenFB` itself still has no test.
 - memory: stream rings, cover decode size
 - raw MP3 seek
 - the device guards
