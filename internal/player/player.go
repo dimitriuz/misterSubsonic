@@ -185,7 +185,7 @@ func New(o Options) *Player {
 		scrobbles: LoadScrobbleQueue(o.ScrobblePath),
 		runDone:   make(chan struct{}),
 		cursor:    -1,
-		volumeDB:  o.VolumeDB,
+		volumeDB:  math.Max(-60, math.Min(0, o.VolumeDB)), // R12: clamp the start volume
 	}
 	p.publish()
 	return p
@@ -498,6 +498,9 @@ func (p *Player) ResumeFrom(r *Resume) {
 func dbToLinear(db float64) float32 { return float32(math.Pow(10, db/20)) }
 
 func (p *Player) emit(ev Event) {
+	// I1: publish the snapshot before the event is visible to a consumer,
+	// so State() is never stale relative to an event already received.
+	p.publish()
 	select {
 	case p.events <- ev:
 	default:

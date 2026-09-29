@@ -51,6 +51,7 @@ func (e *fakeEngine) ClearNext()                 { e.mu.Lock(); e.clears++; e.mu
 func (e *fakeEngine) Stop()                      { e.mu.Lock(); e.stops++; e.posOK = false; e.mu.Unlock() }
 func (e *fakeEngine) SetPaused(p bool)           { e.mu.Lock(); e.paused = p; e.mu.Unlock() }
 func (e *fakeEngine) SetVolume(v float32)        { e.mu.Lock(); e.volume = v; e.mu.Unlock() }
+func (e *fakeEngine) getVolume() float32         { e.mu.Lock(); defer e.mu.Unlock(); return e.volume }
 func (e *fakeEngine) Events() <-chan audio.Event { return e.events }
 func (e *fakeEngine) Seek(id uint64, pos time.Duration) error {
 	e.mu.Lock()

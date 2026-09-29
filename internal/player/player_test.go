@@ -504,3 +504,57 @@ func TestSeekWhileLoadingStillAnnounces(t *testing.T) {
 		t.Fatalf("nowPlayings=%v, want [sa]", h.api.nowPlayings())
 	}
 }
+
+// I1: a consumer that receives an event must see a State() consistent with
+// it, never a stale snapshot from before the event's cause was applied.
+// mss-cli's -exit-at-end relies on this: it reads State() right after a
+// StatusChanged event and exits when it says Stopped.
+func TestStateIsCurrentWhenEventArrives(t *testing.T) {
+	const iterations = 2000
+	for i := 0; i < iterations; i++ {
+		h := newHarness(t, nil)
+		h.p.PlayNow(songs(1, 100), 0)
+		a := h.playAndStart(1)
+		drainEvents(h) // discard the startup QueueChanged/TrackChanged/StatusChanged(Loading->Playing)
+		h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
+		for {
+			ev := <-h.p.Events()
+			if ev.Kind == StatusChanged {
+				if st := h.p.State().Status; st != Stopped {
+					t.Fatalf("iteration %d: State().Status = %v right after receiving StatusChanged, want Stopped", i, st)
+				}
+				break
+			}
+		}
+		h.cancel()
+		<-h.done
+	}
+}
+
+func drainEvents(h *harness) {
+	for {
+		select {
+		case <-h.p.Events():
+		default:
+			return
+		}
+	}
+}
+
+// R12: New must clamp the start volume to -60..0 dB, same as SetVolumeDB,
+// so a bad config value can't push the real device's volume out of range.
+func TestNewClampsVolume(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.VolumeDB = 12 })
+	if got := h.p.State().VolumeDB; got != 0 {
+		t.Fatalf("VolumeDB = %v, want 0 (clamped from 12)", got)
+	}
+	h.waitFor("engine volume set", func() bool { return h.eng.getVolume() != 0 })
+	if got := h.eng.getVolume(); got < 0.999 || got > 1.001 {
+		t.Fatalf("engine.SetVolume = %v, want 1 (0 dB)", got)
+	}
+
+	h2 := newHarness(t, func(o *Options) { o.VolumeDB = -100 })
+	if got := h2.p.State().VolumeDB; got != -60 {
+		t.Fatalf("VolumeDB = %v, want -60 (clamped from -100)", got)
+	}
+}
