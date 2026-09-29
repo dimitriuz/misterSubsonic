@@ -282,9 +282,16 @@ func (a *App) switchServer(name string) {
 // one connects to the next default, or, with none left, disconnects and
 // starts the wizard.
 func (a *App) removeServer(name string) {
+	// Was it the active server? Conn() is empty while a connect is in
+	// flight and on the unreachable screen, so ask the config as well.
+	active := false
+	if srv, ok := a.cfg.ActiveServer(); ok && srv.Name == name {
+		active = true
+	}
+	info, connected := a.Conn()
+	active = active || (connected && info.Server.Name == name)
 	a.UpdateConfig(func(c *config.Config) { c.RemoveServer(name) }, false)
 	a.Toast("Removed %s", name)
-	info, connected := a.Conn()
 	switch {
 	case len(a.cfg.Servers) == 0:
 		a.Detach()
@@ -292,7 +299,7 @@ func (a *App) removeServer(name string) {
 			a.o.Connect(a, a.cfg.Clone()) // no server: the old session stops
 		}
 		a.Replace(NewWizardScreen(true, false))
-	case connected && info.Server.Name == name:
+	case active: // also supersedes a connect still in flight
 		a.Connect()
 	}
 }

@@ -187,3 +187,38 @@ func TestGoldenSettings(t *testing.T) {
 }
 
 var errUnreachable = errors.New("dial tcp 192.168.1.10:4533: connection refused")
+
+func TestRemovingTheServerBeingConnectedReconnects(t *testing.T) {
+	ta, rec := connectedApp(t) // on "home"
+	ta.Push(NewServersScreen())
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // switch to cloud: the connect is in flight, Conn() is empty
+	if len(rec.got) != 1 {
+		t.Fatalf("connects %d", len(rec.got))
+	}
+	ta.Push(NewServersScreen()) // Settings stays reachable while connecting
+	ta.press(input.BtnDown)
+	ta.press(input.BtnX)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Remove
+	ta.press(input.BtnA) // confirm
+	if names := serverNames(ta.cfg); !slices.Equal(names, []string{"home"}) || len(rec.got) != 2 || rec.got[1].DefaultServer != "home" {
+		t.Fatalf("servers %v, connects %d", names, len(rec.got))
+	}
+}
+
+func TestRemovingTheUnreachableServerReconnects(t *testing.T) {
+	ta, rec := sessionApp(t, twoServers())
+	ta.ConnectFailed(ta.cfg.Servers[0], errUnreachable)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Settings
+	ta.press(input.BtnA) // Servers
+	ta.press(input.BtnX) // home, the failing default
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Remove
+	ta.press(input.BtnA) // confirm
+	if names := serverNames(ta.cfg); !slices.Equal(names, []string{"cloud"}) || len(rec.got) != 1 || rec.got[0].DefaultServer != "cloud" {
+		t.Fatalf("servers %v, connects %v", names, rec.got)
+	}
+}
