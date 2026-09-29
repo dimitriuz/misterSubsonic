@@ -222,3 +222,24 @@ func TestRemovingTheUnreachableServerReconnects(t *testing.T) {
 		t.Fatalf("servers %v, connects %v", names, rec.got)
 	}
 }
+
+// A volume changed while disconnected reaches the next player; a connect
+// without such a change leaves the player's volume alone.
+func TestVolumeChangedWhileDisconnectedReachesTheNextPlayer(t *testing.T) {
+	ta, _ := sessionApp(t, twoServers())
+	ta.Detach()
+	ta.setVolume(-20)
+	pl := newFakePlayer()
+	pl.st.VolumeDB = -5
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl, fakeArt{})
+	if pl.st.VolumeDB != -20 {
+		t.Fatalf("new player at %v dB, want -20", pl.st.VolumeDB)
+	}
+	// The flag is spent: a later volume path that skips the config is kept.
+	pl2 := newFakePlayer()
+	pl2.st.VolumeDB = -7
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl2, fakeArt{})
+	if pl2.st.VolumeDB != -7 {
+		t.Fatalf("player without a detached change moved to %v dB", pl2.st.VolumeDB)
+	}
+}

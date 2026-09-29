@@ -43,10 +43,11 @@ type WizardScreen struct {
 	step     wizardStep
 	fields   [wizardFields][]rune
 	kb       Keyboard
-	show     bool   // the password is shown
-	problem  string // why Next didn't advance
-	firstRun bool   // the app's first screen: B on the first step has nowhere to go
-	backup   bool   // the config file is invalid: move it aside when saving
+	show     bool     // the password is shown
+	problem  string   // why Next didn't advance
+	firstRun bool     // the app's first screen: B on the first step has nowhere to go
+	backup   bool     // the config file is invalid: move it aside when saving
+	kbArea   gfx.Rect // where the keyboard was last drawn
 
 	// The test step.
 	insecure, plaintext bool   // the user allowed these after an error...
@@ -211,7 +212,7 @@ func normalizeURL(raw string) (string, error) {
 		raw = "http://" + raw
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return "", errors.New("That doesn't look like http://host:port or https://host")
 	}
 	u.User = nil
@@ -365,19 +366,23 @@ func (s *WizardScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		return
 	}
 	line(fb, fmt.Sprintf("%d of %d · %s", s.step+1, wizardFields, stepText[s.step].prompt), colText)
-	line(fs, stepText[s.step].help, colDim)
+	if s.problem != "" {
+		line(fs, s.problem, colError) // instead of the help, so the keyboard keeps its room
+	} else {
+		line(fs, stepText[s.step].help, colDim)
+	}
 	y += p.Margin / 4
 	field := gfx.R(x, y, w, fb.Height()+p.Margin/2)
 	masked := s.step == stepPassword && !s.show
 	a.drawTextField(c, field, s.fields[s.step], "", masked)
-	y = field.Bottom() + p.Margin/4
-	if s.problem != "" {
-		line(fs, s.problem, colError)
-	}
-	y += p.Margin / 4
+	y = field.Bottom() + p.Margin/2
 	keyH := p.RowH
+	if rows := s.kb.Height(1); rows > 0 && y+s.kb.Height(keyH) > area.Bottom() {
+		keyH = max((area.Bottom()-y)/rows, 1) // shrink the keys to what is left
+	}
 	kw := min(w, 12*p.RowH)
-	s.kb.Draw(a, c, gfx.R(x, y, kw, s.kb.Height(keyH)), keyH, true)
+	s.kbArea = gfx.R(x, y, kw, s.kb.Height(keyH))
+	s.kb.Draw(a, c, s.kbArea, keyH, true)
 }
 
 func (s *WizardScreen) drawTest(a *App, c *gfx.Canvas, area gfx.Rect, line func(*gfx.Font, string, gfx.Color), y *int) {

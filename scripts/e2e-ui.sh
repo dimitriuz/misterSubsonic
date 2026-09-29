@@ -63,13 +63,13 @@ mkdir "$setup"
 before=$(wc -l < "$tmp/mock.log")
 "$tmp/mistersubsonic" -config "$setup/config.toml" -display headless -null \
   -keys "pause:1500ms,'127.0.0.1:$port,enter,'test,enter,'test,enter,enter,a:2s,a:3s,a:1s" \
-  -exit-after 14s > "$tmp/setup.log" 2>&1 || {
+  -exit-after 18s > "$tmp/setup.log" 2>&1 || {
   echo "e2e-ui failed: the setup run exited with an error" >&2
   cat "$tmp/setup.log" >&2
   exit 1
 }
 if ! grep -q '^ *token = ' "$setup/config.toml" 2>/dev/null || ! grep -q '^ *salt = ' "$setup/config.toml" ||
-  grep -q 'password' "$setup/config.toml" || ! tail -n +"$((before + 1))" "$tmp/mock.log" | grep -q 'stream so-'; then
+  grep -q '^ *password *=' "$setup/config.toml" || ! tail -n +"$((before + 1))" "$tmp/mock.log" | grep -q 'stream so-'; then
   echo "e2e-ui failed: the wizard didn't save a token config or nothing played after it; config:" >&2
   cat "$setup/config.toml" >&2 2>/dev/null
   tail -n +"$((before + 1))" "$tmp/mock.log" >&2

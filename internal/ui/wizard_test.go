@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"mistersubsonic/internal/config"
+	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/subsonic"
 )
@@ -238,6 +239,10 @@ func TestGoldenWizard(t *testing.T) {
 		ta.Push(w)
 		typeKeys(ta, "http://192.168.1.10:4533")
 		golden(t, "wizard-url-"+p.Name, ta.settle(t))
+		w.fields[stepURL] = []rune("ftp://x")
+		w.next(ta.App)
+		golden(t, "wizard-url-problem-"+p.Name, ta.settle(t))
+		w.problem = ""
 		w.fields[stepURL] = []rune("https://music.example.com")
 		w.step, w.err = stepTest, x509.UnknownAuthorityError{}
 		w.actions = w.resultActions()
@@ -261,7 +266,7 @@ func TestNormalizeURL(t *testing.T) {
 			t.Errorf("normalizeURL(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"", "ftp://x", "http://", "://x"} {
+	for _, bad := range []string{"", "ftp://x", "http://", "://x", ":4533", "http://:4533"} {
 		if _, err := normalizeURL(bad); err == nil {
 			t.Errorf("normalizeURL(%q) accepted", bad)
 		}
@@ -364,5 +369,36 @@ func TestWizardPlaintextConsentDoesNotCarryToAnotherHost(t *testing.T) {
 	ta.settle(t)
 	if subsonic.Classify(w.err) != subsonic.KindPlaintextRefused || w.server().AllowPlaintextPassword {
 		t.Fatalf("another host: err %v plaintext %v", w.err, w.server().AllowPlaintextPassword)
+	}
+}
+
+// The keyboard stays inside the title-safe area, with or without a problem line.
+func TestWizardKeyboardFitsTheScreen(t *testing.T) {
+	crt288 := ProfileCRT240
+	crt288.H = 288
+	for _, p := range []Profile{ProfileHDMI, ProfileCRT240, crt288} {
+		for name, setup := range map[string]func(w *WizardScreen){
+			"url":         func(w *WizardScreen) {},
+			"url problem": func(w *WizardScreen) { w.fields[stepURL] = []rune("ftp://x"); w.next(nil) },
+			"password":    func(w *WizardScreen) { w.setStep(stepPassword) },
+			"password problem": func(w *WizardScreen) {
+				w.setStep(stepPassword)
+				w.problem = "Enter a password (step 3) or an API key"
+			},
+		} {
+			ta := newTestApp(t, p)
+			w := NewWizardScreen(true, false)
+			ta.Push(w)
+			setup(w)
+			if strings.Contains(name, "problem") && w.problem == "" {
+				t.Fatalf("%s %d: no problem shown", p.Name, p.H)
+			}
+			ta.settle(t)
+			body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY)
+			kb := w.kbArea
+			if kb.H == 0 || kb.Bottom() > body.Bottom() || kb.Y < body.Y || kb.Right() > body.Right() {
+				t.Errorf("%s %d %s: keyboard %+v outside %+v", p.Name, p.H, name, kb, body)
+			}
+		}
 	}
 }

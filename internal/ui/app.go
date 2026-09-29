@@ -147,16 +147,17 @@ const (
 // App owns the screen stack and the event loop. All methods except Post
 // must be called on the UI goroutine.
 type App struct {
-	o       Options
-	P       Profile
-	F       Fonts
-	canvas  *gfx.Canvas
-	scaler  *gfx.Scaler
-	stack   []screenEntry
-	toasts  []toast
-	timers  []timer
-	mq      marquee
-	animate bool // something on screen moves (marquee): redraw soon
+	volumePending bool // the volume changed with no player: apply it on the next Connected
+	o             Options
+	P             Profile
+	F             Fonts
+	canvas        *gfx.Canvas
+	scaler        *gfx.Scaler
+	stack         []screenEntry
+	toasts        []toast
+	timers        []timer
+	mq            marquee
+	animate       bool // something on screen moves (marquee): redraw soon
 	// mqWake is when a focused long title starts to scroll (zero if none
 	// waits): the one wake needed during the pre-scroll delay.
 	mqWake time.Time

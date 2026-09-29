@@ -46,4 +46,4 @@ pending — MiSTer unavailable. Still to do:
 
 ## Plan 2c on the MiSTer
 
-pending — MiSTer unavailable. Still to do: run the setup wizard on the TV with the controller and a USB keyboard; Settings → Servers switch; check the screensaver on HDMI and CRT; confirm the config lands in /media/fat/mistersubsonic with mode 0600.
+pending — MiSTer unavailable. Still to do: run the setup wizard on the TV with the controller and a USB keyboard; Settings → Servers switch; check the screensaver on HDMI and CRT; confirm the config lands in /media/fat/mistersubsonic (exFAT can't store the 0600 mode; it only protects on the desktop).

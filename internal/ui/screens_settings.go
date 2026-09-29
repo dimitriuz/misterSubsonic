@@ -140,6 +140,8 @@ func (a *App) setVolume(db float64) {
 	db = math.Max(-60, math.Min(0, math.Round(db)))
 	if pl := a.Player(); pl != nil {
 		pl.SetVolumeDB(db)
+	} else {
+		a.volumePending = true // the next player starts at this level
 	}
 	a.UpdateConfig(func(c *config.Config) { c.Playback.VolumeDB = db }, true)
 }

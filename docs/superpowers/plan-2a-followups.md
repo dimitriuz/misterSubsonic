@@ -122,5 +122,8 @@ Still open from the lists above: the Plan 3 items, the input nits, the art and c
 - Starred reloads when shown again after a Pop.
 - A star request survives leaving its screen, and a double press is ignored while one is in flight.
 - `config.Save` no longer names the missing `config.example.toml`.
+- `startSession` ignoring `ActiveServer`'s ok: the new session manager checks it.
 
 Still open: the Plan 3 items, the marquee and tab-row nit, the input and UX nits, and the test gaps listed above.
+
+Also still open: ReplayGain changes take effect from the track after the prefetched one (the next track is queued with the old gain); Plan 3 could re-queue it.
