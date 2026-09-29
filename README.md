@@ -41,6 +41,10 @@ username = "alice"
 password = "…"   # or token + salt, or api_key
 ```
 
+The layout follows the framebuffer: `display.profile` is `auto` (default), `hdmi` or `crt`.
+A 480i/576i CRT can't be told apart from a 480p/576p HDMI framebuffer, so `auto` picks HDMI;
+on interlaced CRT modes set `profile = "crt"` under `[display]`.
+
 ## License
 
 GPL-3.0. Bundles miniaudio (public domain / MIT-0), the speexdsp resampler (BSD, see

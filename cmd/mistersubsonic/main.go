@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -53,7 +54,7 @@ func main() {
 	flag.BoolVar(&f.null, "null", false, "use the null audio device (silent)")
 	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
-	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 with -display viewer")
+	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
 	flag.Parse()
 	if err := run(f); err != nil {
 		fmt.Fprintln(os.Stderr, "mistersubsonic:", err)
@@ -67,6 +68,19 @@ func defaultDisplay() string {
 		return "fbdev"
 	}
 	return "viewer"
+}
+
+// startVolume picks the start volume in dB. Anywhere but the MiSTer
+// (linux/arm), whatever the display, it starts at -30 dB unless -volume is
+// given or the audio is null; quiet reports that the default was applied.
+func startVolume(cfgDB, flagDB float64, null bool, goos, goarch string) (db float64, quiet bool) {
+	switch {
+	case !math.IsNaN(flagDB):
+		return flagDB, false
+	case !(goos == "linux" && goarch == "arm") && !null && cfgDB > -30:
+		return -30, true
+	}
+	return cfgDB, false
 }
 
 func run(f flags) error {
@@ -139,20 +153,24 @@ func run(f flags) error {
 	prof := ui.PickProfile(pw, ph, profileName)
 
 	// Volume: sound safety on desktop runs (start quiet unless asked).
-	vol := cfg.Playback.VolumeDB
-	switch {
-	case !math.IsNaN(f.volume):
-		vol = f.volume
-	case f.display == "viewer" && !f.null && vol > -30:
-		vol = -30
+	vol, quiet := startVolume(cfg.Playback.VolumeDB, f.volume, f.null, runtime.GOOS, runtime.GOARCH)
+	if quiet {
 		fmt.Println("starting at -30 dB (use -volume to change)")
 	}
 
-	// The player and art loader are created once the server connects.
+	// The player and art loader are built by the connect goroutine (disk I/O
+	// stays off the UI goroutine); sess is guarded by smu, and closing stops
+	// a connect that outlives the app from building anything.
+	type session struct {
+		pl      *player.Player
+		loader  *art.Loader
+		started bool // pl.Run launched and app attached
+	}
 	var (
-		pl     *player.Player
-		loader *art.Loader
-		app    *ui.App
+		smu     sync.Mutex
+		sess    *session
+		closing bool
+		app     *ui.App
 	)
 
 	dev := cfg.Playback.ALSADevice
@@ -170,12 +188,16 @@ func run(f flags) error {
 	pctx, cancelPlayer := context.WithCancel(context.Background())
 	playerDone := make(chan struct{})
 	defer func() {
+		smu.Lock()
+		closing = true
+		s := sess
+		smu.Unlock()
 		cancelPlayer()
-		if pl != nil {
-			<-playerDone
-		}
-		if loader != nil {
-			loader.Close()
+		if s != nil {
+			if s.started { // only then is pl.Run running to close playerDone
+				<-playerDone
+			}
+			s.loader.Close()
 		}
 	}()
 
@@ -198,25 +220,52 @@ func run(f flags) error {
 		}
 		return c, nil
 	}
-	// startPlayer runs on the UI goroutine after a successful connect.
-	startPlayer := func(a *ui.App, c *subsonic.Client) {
+	// buildSession runs on the connect goroutine: cache.Open and player.New
+	// touch the disk. It returns nil if the app is already shutting down.
+	buildSession := func(a *ui.App, c *subsonic.Client) *session {
+		smu.Lock()
+		s, down := sess, closing
+		smu.Unlock()
+		if down || s != nil {
+			return s
+		}
 		disk, err := cache.Open(filepath.Join(dataDir, "cache", "art"), int64(cfg.Cache.CoverArtMB)<<20)
 		if err != nil {
 			log.Printf("art cache disabled: %v", err)
 			disk = nil
 		}
-		loader = art.New(art.Options{Fetch: art.HTTPFetcher(c), Disk: disk, Ready: a.ArtReady})
-		pl = player.New(player.Options{
-			Engine: eng, API: c,
-			Open: player.NewOpener(c, player.StreamSettings{
-				TranscodeFormat: cfg.Playback.TranscodeFormat, TranscodeBitrate: cfg.Playback.TranscodeBitrate,
-				WindowBytes: int64(cfg.Playback.BufferMB) << 20,
+		s = &session{
+			loader: art.New(art.Options{Fetch: art.HTTPFetcher(c), Disk: disk, Ready: a.ArtReady}),
+			pl: player.New(player.Options{
+				Engine: eng, API: c,
+				Open: player.NewOpener(c, player.StreamSettings{
+					TranscodeFormat: cfg.Playback.TranscodeFormat, TranscodeBitrate: cfg.Playback.TranscodeBitrate,
+					WindowBytes: int64(cfg.Playback.BufferMB) << 20,
+				}),
+				ReplayGain: cfg.Playback.ReplayGain, Scrobble: cfg.Playback.Scrobble, VolumeDB: vol,
+				ResumePath: filepath.Join(dataDir, "state.json"), ScrobblePath: filepath.Join(dataDir, "cache", "scrobbles.json"),
 			}),
-			ReplayGain: cfg.Playback.ReplayGain, Scrobble: cfg.Playback.Scrobble, VolumeDB: vol,
-			ResumePath: filepath.Join(dataDir, "state.json"), ScrobblePath: filepath.Join(dataDir, "cache", "scrobbles.json"),
-		})
-		go func() { pl.Run(pctx); close(playerDone) }()
-		a.Attach(c, pl, loader)
+		}
+		smu.Lock()
+		if closing {
+			smu.Unlock()
+			s.loader.Close()
+			return nil
+		}
+		sess = s
+		smu.Unlock()
+		return s
+	}
+	// startSession runs on the UI goroutine and only does the cheap part.
+	startSession := func(a *ui.App, c *subsonic.Client, s *session) {
+		smu.Lock()
+		defer smu.Unlock()
+		if closing || s.started {
+			return
+		}
+		s.started = true
+		go func() { s.pl.Run(pctx); close(playerDone) }()
+		a.Attach(c, s.pl, s.loader)
 	}
 
 	app, err := ui.New(ui.Options{
@@ -240,6 +289,10 @@ func run(f flags) error {
 				a.Replace(ui.NewMessageScreen("Connecting…", "Connecting to the server…", nil))
 				go func() {
 					c, err := connectServer()
+					var s *session
+					if err == nil {
+						s = buildSession(a, c)
+					}
 					a.Post(func() {
 						if err != nil {
 							srv, _ := cfg.ActiveServer()
@@ -247,9 +300,10 @@ func run(f flags) error {
 								fmt.Sprintf("%s: %s.\n%s", displayURL(srv.URL), subsonic.Classify(err), hint(err)), connect))
 							return
 						}
-						if pl == nil { // first successful connect
-							startPlayer(a, c)
+						if s == nil { // shutting down
+							return
 						}
+						startSession(a, c, s)
 						a.Replace(ui.NewHomeScreen())
 					})
 				}()
@@ -260,7 +314,9 @@ func run(f flags) error {
 	if err != nil {
 		return err
 	}
-	return app.Run(ctx)
+	err = app.Run(ctx)
+	stop() // a second Ctrl-C now kills the process instead of waiting out the shutdown below
+	return err
 }
 
 // displayURL is raw without credentials, safe to show on screen or log.
@@ -275,7 +331,7 @@ func displayURL(raw string) string {
 
 func configMessage(path string, err error) string {
 	if errors.Is(err, config.ErrNotFound) {
-		return "No config file yet. Create " + path + " with your server (see config.example.toml), then restart."
+		return "No config file yet. Create " + path + " with a [[server]] section (name, url, username, password), then restart."
 	}
 	return "The config file has a problem:\n" + err.Error()
 }
