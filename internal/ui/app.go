@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"mistersubsonic/internal/art"
+	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/player"
@@ -85,11 +87,23 @@ type Options struct {
 	Player  Player
 	Art     ArtSource
 	Inputs  []<-chan input.Event
-	// Start runs on the UI goroutine before the first frame; it pushes the
-	// first screen (main uses it for the connect-or-error flow).
+	// Start, if set, pushes the first screen instead of the built-in flow
+	// (a problem to explain, or connecting with Config).
 	Start         func(a *App)
 	FallbackFonts string
 	Now           func() time.Time
+
+	// ConfigPath is where the configuration is saved. Config is the loaded
+	// one (nil if missing or invalid: ConfigErr says why); the UI owns it.
+	ConfigPath string
+	Config     *config.Config
+	ConfigErr  error
+	AudioErr   error  // the sound device couldn't be opened
+	Version    string // shown in Settings → About
+	// Connect starts a connection to cfg's active server, off the UI
+	// goroutine, replacing any previous one; it answers with
+	// a.Connected or a.ConnectFailed (through a.Post).
+	Connect func(a *App, cfg *config.Config)
 }
 
 // Fonts used by the screens.
@@ -157,6 +171,12 @@ type App struct {
 	stars     map[starKey]bool       // star changes made in this session
 	starGen   int                    // bumped by every successful star change
 	artists   []subsonic.ArtistIndex // getArtists, fetched once per connection
+	cfg       *config.Config
+	conn      ConnInfo
+	saveAt    time.Time  // a debounced config save is due (zero: none)
+	saving    bool       // a save is being written
+	saveAgain bool       // the config changed during that write
+	saveMu    sync.Mutex // one writer of the config file at a time
 	rep       input.Repeater
 	in        chan input.Event
 	post      chan func()
@@ -172,7 +192,7 @@ func New(o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
-		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}}
+		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}, cfg: o.Config}
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err
@@ -354,10 +374,14 @@ func (a *App) Toast(format string, args ...any) {
 	a.dirty = true
 }
 
-// Run drives the UI until ctx ends or the user exits.
+// Run drives the UI until ctx ends or the user exits. A pending
+// configuration change is saved before it returns.
 func (a *App) Run(ctx context.Context) error {
+	defer a.flushConfig()
 	if a.o.Start != nil {
 		a.o.Start(a)
+	} else {
+		a.start()
 	}
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
@@ -407,6 +431,7 @@ func (a *App) untilWake() time.Duration {
 		consider(now.Add(marqueeFrame))
 	}
 	consider(a.mqWake)
+	consider(a.saveAt)
 	if !a.bDown.IsZero() {
 		consider(a.bDown.Add(exitHold))
 	}
@@ -448,6 +473,10 @@ func (a *App) onWake() {
 			t.f()
 			a.dirty = true
 		}
+	}
+	if !a.saveAt.IsZero() && !now.Before(a.saveAt) {
+		a.saveAt = time.Time{}
+		a.saveConfig()
 	}
 	if a.animate || (!a.mqWake.IsZero() && !now.Before(a.mqWake)) {
 		a.dirty = true

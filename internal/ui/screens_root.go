@@ -197,7 +197,8 @@ func (s *FeedScreen) Enter(a *App) {
 	if a.Player() == nil {
 		return
 	}
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Player().Resumable(ctx) }, func(v any, err error) {
+	pl := a.Player() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return pl.Resumable(ctx) }, func(v any, err error) {
 		if r, ok := v.(*player.Resume); ok && err == nil && r != nil && len(a.Player().State().Queue) == 0 {
 			s.resume = r
 			s.row++ // keep the focus on the same row of covers
@@ -207,8 +208,9 @@ func (s *FeedScreen) Enter(a *App) {
 
 func (s *FeedScreen) load(a *App, r *feedRow) {
 	r.err = nil
+	lib, q := a.Library(), subsonic.AlbumListQuery{Type: r.listType, Size: feedPage} // read on the UI goroutine
 	a.Load(s, func(ctx context.Context) (any, error) {
-		return a.Library().GetAlbumList2(ctx, subsonic.AlbumListQuery{Type: r.listType, Size: feedPage})
+		return lib.GetAlbumList2(ctx, q)
 	}, func(v any, err error) {
 		if err != nil {
 			r.err = err

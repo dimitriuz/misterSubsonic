@@ -60,7 +60,8 @@ func (s *HomeScreen) Enter(a *App) {
 	if a.Player() == nil {
 		return
 	}
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Player().Resumable(ctx) }, func(v any, err error) {
+	pl := a.Player() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return pl.Resumable(ctx) }, func(v any, err error) {
 		if r, ok := v.(*player.Resume); ok && err == nil && r != nil && len(a.Player().State().Queue) == 0 {
 			s.resume = r
 			if s.list.Focus > 0 {
@@ -143,8 +144,9 @@ func (s *AlbumListScreen) loadMore(a *App) {
 	s.loading, s.err = true, nil
 	q := s.q
 	q.Size, q.Offset = albumPage, len(s.view.albums)
+	lib := a.Library() // read on the UI goroutine; the load runs off it
 	a.Load(s, func(ctx context.Context) (any, error) {
-		return a.Library().GetAlbumList2(ctx, q)
+		return lib.GetAlbumList2(ctx, q)
 	}, func(v any, err error) {
 		s.loading = false
 		if err != nil {
@@ -222,7 +224,8 @@ func (s *GenresScreen) Title() string { return "Genres" }
 
 func (s *GenresScreen) Enter(a *App) {
 	s.err = nil
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetGenres(ctx) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetGenres(ctx) }, func(v any, err error) {
 		if err != nil {
 			s.err = err
 			return

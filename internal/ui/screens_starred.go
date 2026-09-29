@@ -32,7 +32,8 @@ func (d *starredData) load(a *App, s Screen) {
 		return
 	}
 	d.loading, d.err, d.gen = true, nil, a.starGen
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetStarred2(ctx) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetStarred2(ctx) }, func(v any, err error) {
 		d.loading = false
 		if err != nil {
 			d.err = err

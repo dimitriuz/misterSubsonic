@@ -23,7 +23,8 @@ func (s *PlaylistsScreen) Title() string { return "Playlists" }
 
 func (s *PlaylistsScreen) Enter(a *App) {
 	s.err = nil
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetPlaylists(ctx) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetPlaylists(ctx) }, func(v any, err error) {
 		if err != nil {
 			s.err = err
 			return
@@ -110,7 +111,8 @@ func (s *PlaylistScreen) Title() string { return "Playlist" }
 
 func (s *PlaylistScreen) Enter(a *App) {
 	s.err = nil
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetPlaylist(ctx, s.stub.ID) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetPlaylist(ctx, s.stub.ID) }, func(v any, err error) {
 		if err != nil {
 			s.err = err
 			return

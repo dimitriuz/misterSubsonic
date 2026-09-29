@@ -111,8 +111,9 @@ func (s *SearchScreen) search(a *App) {
 	q := strings.TrimSpace(string(s.query))
 	gen := s.gen
 	s.searching, s.err = true, nil
+	lib := a.Library() // read on the UI goroutine; the load runs off it
 	s.cancel = a.LoadCancel(s, func(ctx context.Context) (any, error) {
-		return a.Library().Search3(ctx, q, subsonic.SearchQuery{ArtistCount: searchPage, AlbumCount: searchPage, SongCount: searchPage})
+		return lib.Search3(ctx, q, subsonic.SearchQuery{ArtistCount: searchPage, AlbumCount: searchPage, SongCount: searchPage})
 	}, func(v any, err error) {
 		if gen != s.gen {
 			return
@@ -177,7 +178,8 @@ func (s *SearchScreen) loadMore(a *App) {
 	default:
 		sq.SongCount, sq.SongOffset = searchPage, len(s.songs.songs)
 	}
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().Search3(ctx, q, sq) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.Search3(ctx, q, sq) }, func(v any, err error) {
 		if shown != s.shown { // the results this page belongs to are gone
 			return
 		}

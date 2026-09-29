@@ -54,7 +54,8 @@ func (s *ArtistsScreen) Enter(a *App) {
 
 func (s *ArtistsScreen) load(a *App) {
 	s.err = nil
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetArtists(ctx) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetArtists(ctx) }, func(v any, err error) {
 		if err != nil {
 			s.err = err
 			return
@@ -137,7 +138,8 @@ func (s *ArtistScreen) Enter(a *App) { s.load(a) }
 
 func (s *ArtistScreen) load(a *App) {
 	s.err = nil
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetArtist(ctx, s.artist.ID) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetArtist(ctx, s.artist.ID) }, func(v any, err error) {
 		if err != nil {
 			s.err = err
 			return

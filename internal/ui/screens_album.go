@@ -30,7 +30,8 @@ func (s *AlbumScreen) Enter(a *App) { s.load(a) }
 
 func (s *AlbumScreen) load(a *App) {
 	s.err = nil
-	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetAlbum(ctx, s.stub.ID) }, func(v any, err error) {
+	lib := a.Library() // read on the UI goroutine; the load runs off it
+	a.Load(s, func(ctx context.Context) (any, error) { return lib.GetAlbum(ctx, s.stub.ID) }, func(v any, err error) {
 		if err != nil {
 			s.err = err
 			return
