@@ -49,10 +49,20 @@ var playModes = []struct {
 
 // Release flushes a seek target the throttle held back.
 func (s *NowPlayingScreen) Release(a *App, b input.Button) {
-	if (b == input.BtnLeft || b == input.BtnRight) && s.unsent {
+	if (b == input.BtnLeft || b == input.BtnRight) && s.unsent && s.song == s.curID(a.Player().State()) {
 		s.send(a.Player(), a.o.Now())
 		a.dirty = true
 	}
+}
+
+// settle ends a seek gesture: any unsent target goes to the player (before
+// the button's own action, so it applies to the track it was aimed at) and
+// the pending target is forgotten, so it can't outlive the hold.
+func (s *NowPlayingScreen) settle(a *App, st player.State) {
+	if s.unsent && s.song == s.curID(st) {
+		s.send(a.Player(), a.o.Now())
+	}
+	s.unsent, s.song = false, ""
 }
 
 func (s *NowPlayingScreen) curID(st player.State) subsonic.ID {
@@ -102,6 +112,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		}
 		return true
 	}
+	s.settle(a, st)
 	if e.Kind != input.Press {
 		return false
 	}

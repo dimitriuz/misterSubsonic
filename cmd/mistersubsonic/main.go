@@ -71,13 +71,13 @@ func defaultDisplay() string {
 }
 
 // startVolume picks the start volume in dB. Anywhere but the MiSTer
-// (linux/arm), whatever the display, it starts at -30 dB unless -volume is
+// (linux/arm with the fbdev display), it starts at -30 dB unless -volume is
 // given or the audio is null; quiet reports that the default was applied.
-func startVolume(cfgDB, flagDB float64, null bool, goos, goarch string) (db float64, quiet bool) {
+func startVolume(cfgDB, flagDB float64, null bool, display, goos, goarch string) (db float64, quiet bool) {
 	switch {
 	case !math.IsNaN(flagDB):
 		return flagDB, false
-	case !(goos == "linux" && goarch == "arm") && !null && cfgDB > -30:
+	case !(goos == "linux" && goarch == "arm" && display == "fbdev") && !null && cfgDB > -30:
 		return -30, true
 	}
 	return cfgDB, false
@@ -153,7 +153,7 @@ func run(f flags) error {
 	prof := ui.PickProfile(pw, ph, profileName)
 
 	// Volume: sound safety on desktop runs (start quiet unless asked).
-	vol, quiet := startVolume(cfg.Playback.VolumeDB, f.volume, f.null, runtime.GOOS, runtime.GOARCH)
+	vol, quiet := startVolume(cfg.Playback.VolumeDB, f.volume, f.null, f.display, runtime.GOOS, runtime.GOARCH)
 	if quiet {
 		fmt.Println("starting at -30 dB (use -volume to change)")
 	}
@@ -247,10 +247,11 @@ func run(f flags) error {
 			}),
 		}
 		smu.Lock()
-		if closing {
+		if closing || sess != nil {
+			existing := sess
 			smu.Unlock()
 			s.loader.Close()
-			return nil
+			return existing
 		}
 		sess = s
 		smu.Unlock()

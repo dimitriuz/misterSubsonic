@@ -524,3 +524,51 @@ func TestNowPlayingHoldClampsAtEnd(t *testing.T) {
 		t.Fatalf("seek %v, want 0", ta.pl.seekPos)
 	}
 }
+
+func TestNowPlayingPendingSeekDoesNotOutliveDetour(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	np := NewNowPlayingScreen()
+	ta.Push(np)
+	// Hold Right; a seek is sent, then Y opens the queue while still held.
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press})
+	ta.now = ta.now.Add(50 * time.Millisecond)
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Repeat}) // unsent
+	ta.onInput(input.Event{Button: input.BtnY, Kind: input.Press})
+	if _, ok := ta.Top().(*QueueScreen); !ok {
+		t.Fatalf("Y should open the queue, got %T", ta.Top())
+	}
+	if ta.pl.seekPos != 115*time.Second { // 75+10+30 flushed by the Y press
+		t.Fatalf("unsent target lost on Y: last seek %v", ta.pl.seekPos)
+	}
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Release}) // goes to the queue
+	ta.press(input.BtnB)
+	if ta.Top() != Screen(np) {
+		t.Fatalf("B should return to Now Playing, got %T", ta.Top())
+	}
+	ta.now = ta.now.Add(30 * time.Second)
+	ta.pl.st.Position = 120 * time.Second
+	if got := np.position(ta.App, ta.pl.st, ta.now); got != 120*time.Second {
+		t.Fatalf("position %v, want the player's 2m0s", got)
+	}
+	ta.press(input.BtnRight)
+	if ta.pl.seekPos != 130*time.Second {
+		t.Fatalf("next tap sought %v, want 2m10s (player position + 10s)", ta.pl.seekPos)
+	}
+}
+
+func TestNowPlayingNextWhileSeekHeldDropsStaleRelease(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewNowPlayingScreen())
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press})
+	ta.now = ta.now.Add(50 * time.Millisecond)
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Repeat}) // unsent
+	ta.onInput(input.Event{Button: input.BtnR, Kind: input.Press})
+	ta.pl.st.Index = 1 // the player moved to the next track
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Release})
+	last := ta.pl.calls[len(ta.pl.calls)-1]
+	if last != "next" {
+		t.Fatalf("calls %v: nothing may be sent after Next", ta.pl.calls)
+	}
+}

@@ -54,20 +54,23 @@ func TestStartVolume(t *testing.T) {
 		name         string
 		cfg, flag    float64
 		null         bool
+		display      string
 		goos, goarch string
 		want         float64
 		quiet        bool
 	}{
-		{"desktop default", -6, nan, false, "linux", "amd64", -30, true},
-		{"desktop, any display", 0, nan, false, "darwin", "arm64", -30, true},
-		{"desktop already quieter", -40, nan, false, "linux", "amd64", -40, false},
-		{"desktop explicit flag wins", -6, -10, false, "linux", "amd64", -10, false},
-		{"desktop null device", -6, nan, true, "linux", "amd64", -6, false},
-		{"mister keeps config", -6, nan, false, "linux", "arm", -6, false},
-		{"mister flag wins", -6, -12, false, "linux", "arm", -12, false},
+		{"desktop default", -6, nan, false, "viewer", "linux", "amd64", -30, true},
+		{"desktop, any display", 0, nan, false, "fbdev", "darwin", "arm64", -30, true},
+		{"desktop already quieter", -40, nan, false, "viewer", "linux", "amd64", -40, false},
+		{"desktop explicit flag wins", -6, -10, false, "viewer", "linux", "amd64", -10, false},
+		{"desktop null device", -6, nan, true, "viewer", "linux", "amd64", -6, false},
+		{"mister fbdev keeps config", -6, nan, false, "fbdev", "linux", "arm", -6, false},
+		{"mister fbdev flag wins", -6, -12, false, "fbdev", "linux", "arm", -12, false},
+		{"arm viewer is quiet", -6, nan, false, "viewer", "linux", "arm", -30, true},
+		{"arm headless is quiet", -6, nan, false, "headless", "linux", "arm", -30, true},
 	}
 	for _, c := range cases {
-		got, quiet := startVolume(c.cfg, c.flag, c.null, c.goos, c.goarch)
+		got, quiet := startVolume(c.cfg, c.flag, c.null, c.display, c.goos, c.goarch)
 		if got != c.want || quiet != c.quiet {
 			t.Errorf("%s: got %v,%v want %v,%v", c.name, got, quiet, c.want, c.quiet)
 		}
