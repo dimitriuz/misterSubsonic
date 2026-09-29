@@ -403,7 +403,12 @@ func (e *Engine) decodeChunk() {
 }
 
 func (e *Engine) emit(samples []float32, v *voice) {
-	if v.gain != 1 {
+	switch {
+	case v.gain > 1:
+		for i, s := range samples {
+			samples[i] = softClip(s * v.gain)
+		}
+	case v.gain != 1:
 		for i := range samples {
 			samples[i] *= v.gain
 		}
@@ -417,6 +422,27 @@ func (e *Engine) emit(samples []float32, v *voice) {
 	} else {
 		e.pending = append(e.pending, samples...)
 	}
+}
+
+// clipKnee is where softClip starts bending: below it samples pass exactly.
+const clipKnee = 0.9
+
+// softClip (spec §6) keeps a boosted sample inside (-1, 1) without the harsh
+// edge of a hard clip. Above the knee it follows knee + (1-knee)·u/(1+u),
+// u = (|s|-knee)/(1-knee): continuous with slope 1 at the knee, strictly
+// increasing, and approaching but never reaching full scale. A rational
+// curve instead of tanh, as it is cheap on the A9. Used only for gain > 1,
+// so unity and attenuating gains stay bit-exact.
+func softClip(s float32) float32 {
+	switch {
+	case s > clipKnee:
+		u := (s - clipKnee) / (1 - clipKnee)
+		return clipKnee + (1-clipKnee)*u/(1+u)
+	case s < -clipKnee:
+		u := (-s - clipKnee) / (1 - clipKnee)
+		return -(clipKnee + (1-clipKnee)*u/(1+u))
+	}
+	return s
 }
 
 func (e *Engine) finishCur() {

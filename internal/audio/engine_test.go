@@ -523,3 +523,42 @@ func TestEngineBoundsWaitForLateSuccessorOpen(t *testing.T) {
 		t.Fatal("the stuck successor's source was not closed")
 	}
 }
+
+// Spec §6 / R14: a boosting gain (> 1) is soft-clipped, so samples pushed
+// past full scale stay within [-1, 1] and keep their order (no fold-back).
+func TestEngineSoftClipsBoostedSamples(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	const n = 1000
+	pcm := make([]float32, n*2)
+	for i := 0; i < n; i++ {
+		v := 0.9 * float32(i) / (n - 1)
+		pcm[2*i], pcm[2*i+1] = v, -v
+	}
+	e.Play(Track{ID: 1, Source: newFakeSource(pcm, OutputRate), Gain: 2})
+	expectEvent(t, e, EventStarted, 1)
+	playOut(t, out, n)
+	expectEvent(t, e, EventEnded, 1)
+
+	got := out.written()
+	if len(got) != len(pcm) {
+		t.Fatalf("wrote %d samples, want %d", len(got), len(pcm))
+	}
+	for i := 0; i < n; i++ {
+		l, r := got[2*i], got[2*i+1]
+		if l > 1 || l < -1 || r > 1 || r < -1 {
+			t.Fatalf("frame %d = (%v, %v), outside [-1, 1]", i, l, r)
+		}
+		if i > 0 && (l < got[2*i-2] || r > got[2*i-1]) {
+			t.Fatalf("frame %d = (%v, %v) after (%v, %v): not monotonic", i, l, r, got[2*i-2], got[2*i-1])
+		}
+		if want := pcm[2*i] * 2; want <= 0.5 && l != want {
+			t.Fatalf("frame %d = %v, want %v: quiet samples must only be scaled", i, l, want)
+		}
+	}
+	if peak := got[2*(n-1)]; peak < 0.95 {
+		t.Fatalf("peak %v: the loud end was squashed, not clipped", peak)
+	}
+}
