@@ -2,8 +2,10 @@ package audio
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -724,4 +726,70 @@ func TestEngineSeekOfGaplessSuccessorAnnounces(t *testing.T) {
 			return
 		}
 	}
+}
+
+// loggedSeekDecoder blocks its first seek (if gate is set) and records which
+// decoder instance (gen) was sought to which frame.
+type loggedSeekDecoder struct {
+	fakeDecoder
+	gen  int
+	gate chan struct{}
+	mu   *sync.Mutex
+	log  *[]string
+}
+
+func (d *loggedSeekDecoder) SeekFrame(f uint64) error {
+	if d.gate != nil {
+		<-d.gate
+	}
+	d.mu.Lock()
+	*d.log = append(*d.log, fmt.Sprintf("gen%d@%d", d.gen, f))
+	d.mu.Unlock()
+	return d.fakeDecoder.SeekFrame(f)
+}
+
+// A seek queued before Play(id) must not absorb a seek issued after Play of
+// the same id (the player's resume path): that one has to run on the new
+// decoder, behind the Play.
+func TestEngineSeekAfterPlayOfSameTrackQueuesBehindPlay(t *testing.T) {
+	out := newFakeOutput(1000)
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	var log []string
+	gen := 0
+	open := func(src io.ReadSeeker, f Format) (Decoder, error) {
+		d, err := fakeOpen(src, f)
+		if err != nil {
+			return nil, err
+		}
+		gen++
+		var g chan struct{}
+		if gen == 1 {
+			g = gate
+		}
+		return &loggedSeekDecoder{fakeDecoder: *d.(*fakeDecoder), gen: gen, gate: g, mu: &mu, log: &log}, nil
+	}
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: open, ChunkFrames: 256, Poll: time.Millisecond})
+	defer e.Close()
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(480000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+
+	e.Seek(1, time.Second) // runs on gen 1 and blocks
+	time.Sleep(20 * time.Millisecond)
+	e.Seek(1, 2*time.Second) // queued behind it
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(480000, 0), OutputRate)})
+	e.Seek(1, 3*time.Second) // must run after the Play, on gen 2
+	close(gate)
+
+	want := fmt.Sprintf("gen2@%d", 3*OutputRate)
+	waitFor(t, "resume seek on the new decoder", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, s := range log {
+			if s == want {
+				return true
+			}
+		}
+		return false
+	})
 }

@@ -154,6 +154,7 @@ func (e *Engine) Events() <-chan Event { return e.events }
 
 // Play stops whatever is playing and starts t immediately.
 func (e *Engine) Play(t Track) {
+	e.dropSeekReq()
 	e.send(func() { e.doPlay(t) })
 	e.interrupt(t.Source)
 }
@@ -170,8 +171,17 @@ func (e *Engine) ClearNext() { e.send(e.cancelNext) }
 
 // Stop halts playback and discards everything buffered.
 func (e *Engine) Stop() {
+	e.dropSeekReq()
 	e.send(e.doStop)
 	e.interrupt(nil)
+}
+
+// dropSeekReq ends seek coalescing: a seek issued after Play or Stop must
+// queue its own command behind it, not overwrite one queued before it.
+func (e *Engine) dropSeekReq() {
+	e.mu.Lock()
+	e.seekReq = nil
+	e.mu.Unlock()
 }
 
 // seekReq is a requested seek that has not started yet.
@@ -186,7 +196,8 @@ type seekReq struct {
 // Seeks coalesce per track: if a seek for the same track is still waiting to
 // run, this one replaces its position (latest wins), so a burst of seeks
 // behind a slow HTTP restart never fills the command queue. A seek for a
-// different track always queues its own command, behind any Play before it.
+// different track, or after a Play or Stop, always queues its own command,
+// behind that Play or Stop.
 func (e *Engine) Seek(id uint64, pos time.Duration) {
 	e.mu.Lock()
 	if r := e.seekReq; r != nil && r.id == id {
