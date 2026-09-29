@@ -39,6 +39,8 @@ type Player interface {
 	Enqueue(songs []subsonic.Song)
 	Clear()
 	SetVolumeDB(db float64)
+	SetReplayGain(mode string)
+	SetScrobble(on bool)
 	TogglePause()
 	Next()
 	Prev()

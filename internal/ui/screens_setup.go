@@ -29,6 +29,7 @@ func (s *UnreachableScreen) Enter(a *App) {
 	if cfg := a.Config(); cfg != nil && len(cfg.Servers) > 1 {
 		s.actions = append(s.actions, menuEntry{"Switch server", func(a *App) { a.openMenu("Switch to", switchEntries(a, s.srv.Name)) }})
 	}
+	s.actions = append(s.actions, menuEntry{"Settings", func(a *App) { a.Push(NewSettingsScreen()) }})
 }
 
 // switchEntries connects to one of the other servers, making it the default.

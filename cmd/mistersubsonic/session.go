@@ -57,15 +57,18 @@ func newSessions(ctx context.Context, eng *audio.Engine, dataDir string, volume 
 // connect is ui.Options.Connect.
 func (m *sessions) connect(a sessionUI, cfg *config.Config) {
 	srv, ok := cfg.ActiveServer()
-	if !ok {
-		return
-	}
-	server := *srv
 	m.mu.Lock()
 	m.gen++
 	gen, old := m.gen, m.cur
 	m.cur = nil
 	m.mu.Unlock()
+	if !ok { // no server left: just end the current session
+		if old != nil {
+			go m.stop(old)
+		}
+		return
+	}
+	server := *srv
 	go func() {
 		if old != nil {
 			m.stop(old)

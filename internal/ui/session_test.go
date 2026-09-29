@@ -111,7 +111,7 @@ func TestUnreachableOffersRetryAndSwitch(t *testing.T) {
 	ta, rec := sessionApp(t, twoServers())
 	ta.ConnectFailed(ta.cfg.Servers[0], errors.New("dial tcp: refused"))
 	s, ok := ta.Top().(*UnreachableScreen)
-	if !ok || len(s.actions) != 2 {
+	if !ok || len(s.actions) != 3 { // Try again, Switch server, Settings
 		t.Fatalf("top %T with %d actions", ta.Top(), len(s.actions))
 	}
 	ta.press(input.BtnA) // Try again
@@ -137,7 +137,7 @@ func TestUnreachableWithOneServerOnlyRetries(t *testing.T) {
 	c.AddServer(config.Server{Name: "home", URL: "http://h:4533", Username: "a", Password: "p"})
 	ta, _ := sessionApp(t, c)
 	ta.ConnectFailed(c.Servers[0], errors.New("x"))
-	if s := ta.Top().(*UnreachableScreen); len(s.actions) != 1 {
+	if s := ta.Top().(*UnreachableScreen); len(s.actions) != 2 { // Try again, Settings
 		t.Fatalf("%d actions", len(s.actions))
 	}
 }

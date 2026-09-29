@@ -122,7 +122,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		if e.Button == input.BtnDown {
 			step = -step
 		}
-		pl.SetVolumeDB(st.VolumeDB + step)
+		a.setVolume(st.VolumeDB + step) // and saved to the config
 		return true
 	}
 	if e.Kind != input.Press {

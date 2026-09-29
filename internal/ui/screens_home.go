@@ -34,6 +34,7 @@ var sections = []homeItem{
 	{label: "Playlists", open: func() Screen { return NewPlaylistsScreen() }},
 	{label: "Starred", open: func() Screen { return NewStarredScreen() }},
 	{label: "Search", open: func() Screen { return NewSearchScreen() }},
+	{label: "Settings", open: func() Screen { return NewSettingsScreen() }},
 }
 
 // NewRootScreen is the first screen after connecting: the sidebar and home

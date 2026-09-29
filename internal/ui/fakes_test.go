@@ -238,7 +238,15 @@ func (p *fakePlayer) Clear() {
 	p.call("clear")
 	p.st.Queue, p.st.Index, p.st.Status = nil, -1, player.Stopped
 }
-func (p *fakePlayer) SetVolumeDB(db float64) { p.st.VolumeDB = max(-60, min(0, db)) }
+func (p *fakePlayer) SetVolumeDB(db float64)    { p.st.VolumeDB = max(-60, min(0, db)) }
+func (p *fakePlayer) SetReplayGain(mode string) { p.call("replaygain " + mode) }
+func (p *fakePlayer) SetScrobble(on bool) {
+	if on {
+		p.call("scrobble on")
+	} else {
+		p.call("scrobble off")
+	}
+}
 func (p *fakePlayer) PlayNow(songs []subsonic.Song, start int) {
 	p.call("playnow")
 	p.played, p.start = songs, start
