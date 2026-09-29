@@ -203,12 +203,19 @@ type fakeOpener struct {
 	mu    sync.Mutex
 	calls []openCall
 	fail  map[subsonic.ID]bool
+	gate  chan struct{} // if set, open blocks (after recording the call) until it is closed
 }
 
 func (o *fakeOpener) open(_ context.Context, s subsonic.Song, offset time.Duration, prefetch bool) (Opened, error) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
+	gate := o.gate
 	o.calls = append(o.calls, openCall{s.ID, offset, prefetch})
+	o.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	if o.fail[s.ID] {
 		return Opened{}, errors.New("cannot open " + string(s.ID))
 	}

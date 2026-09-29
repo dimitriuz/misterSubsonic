@@ -751,3 +751,28 @@ func TestSeekingAnMP3ReopensNearTheTarget(t *testing.T) {
 		t.Fatalf("an MP3 without a size: seeks = %v, want the engine's", seeks)
 	}
 }
+
+// A seek that lands while a sized MP3 is still opening reopens it at the
+// target: the open's stream starts at its own offset, so the engine can't
+// seek it (a seek to 0 would even be dropped).
+func TestSeekWhileASizedMP3OpensReopensAtTheTarget(t *testing.T) {
+	for _, target := range []time.Duration{50 * time.Second, 0} {
+		h := newHarness(t, nil)
+		gate := make(chan struct{})
+		h.opener.gate = gate
+		q := songs(1, 300)
+		q[0].Suffix, q[0].Size = "mp3", 9_600_000
+		h.p.PlayNow(q, 0)
+		h.waitFor("first open", func() bool { return len(h.opener.callList()) == 1 })
+		h.p.Seek(target)
+		close(gate)
+		h.waitFor("reopen", func() bool { return len(h.opener.callList()) == 2 })
+		if last := h.opener.callList()[1]; last.offset != target {
+			t.Fatalf("target %v: reopen call = %+v", target, last)
+		}
+		h.playAndStart(1)
+		if seeks := h.eng.seekList(); len(seeks) != 0 {
+			t.Fatalf("target %v: engine seeks %v, want none", target, seeks)
+		}
+	}
+}

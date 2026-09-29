@@ -801,7 +801,7 @@ func (p *Player) onOpened(r openResult) {
 	}
 	if p.hasOpenSeek {
 		p.hasOpenSeek = false
-		if r.opened.Transcoded {
+		if seeksByReopening(r.opened, r.song) {
 			closeOpened(r.opened) // opened at the old offset
 			p.reopenAt(p.openSeek)
 			return
