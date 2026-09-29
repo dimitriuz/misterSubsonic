@@ -23,9 +23,10 @@ const (
 	BtnSelect
 	BtnStart
 	BtnQueue // keyboard only (Q): open the queue
+	BtnMute  // keyboard only (M): mute or unmute
 )
 
-var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start", "queue"}
+var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start", "queue", "mute"}
 
 func (b Button) String() string {
 	if int(b) < len(buttonNames) {

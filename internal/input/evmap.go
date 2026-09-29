@@ -25,6 +25,7 @@ const (
 	keyEnter     = 28
 	keyLShift    = 42
 	keyN         = 49
+	keyM         = 50
 	keyRShift    = 54
 	keySpace     = 57
 	keyPageUp    = 104
@@ -55,7 +56,7 @@ var DefaultKeys = map[uint16]Button{
 	keyUp: BtnUp, keyDown: BtnDown, keyLeft: BtnLeft, keyRight: BtnRight,
 	keyEnter: BtnA, keyKPEnter: BtnA, keyEsc: BtnB, keyBackspace: BtnB,
 	keyTab: BtnX, keySpace: BtnStart, keyPageUp: BtnL, keyPageDown: BtnR,
-	keyN: BtnY, keyQ: BtnQueue,
+	keyN: BtnY, keyQ: BtnQueue, keyM: BtnMute,
 
 	btnEast: BtnA, btnSouth: BtnB, btnNorth: BtnX, btnWest: BtnY,
 	btnTL: BtnL, btnTR: BtnR, btnSelect: BtnSelect, btnStart: BtnStart,

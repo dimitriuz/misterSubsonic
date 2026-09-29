@@ -41,8 +41,9 @@ applies per server (each server's cache gets that much).
 | Start | play/pause | play/pause |
 | Select | shuffle-play the list | shuffle / repeat modes |
 
-Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, PgUp/PgDn = L/R,
-Space = Start. In Search, letters type.
+Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute,
+PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, mute is in
+Settings → Playback; changing the volume turns the sound back on.
 
 ## Developing
 

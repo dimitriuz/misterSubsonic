@@ -252,6 +252,7 @@ func TestTextKeys(t *testing.T) {
 		"t=%D0%B6&down=1":  {Kind: input.Press, Rune: 'ж'},
 		"b=b&t=%08&down=1": {Button: input.BtnB, Kind: input.Press, Rune: '\b'},
 		"b=queue&down=1":   {Button: input.BtnQueue, Kind: input.Press},
+		"b=mute&down=1":    {Button: input.BtnMute, Kind: input.Press},
 	} {
 		if c := post(q); c != http.StatusNoContent {
 			t.Fatalf("%s: status %d", q, c)

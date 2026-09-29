@@ -41,6 +41,7 @@ func TestPlaybackSettingsApplyAndSave(t *testing.T) {
 	ta.pl.st.VolumeDB = -10
 	ta.Push(newSettingsList("Playback", playbackSettings))
 	ta.press(input.BtnRight) // volume +1
+	ta.press(input.BtnDown)  // past Mute
 	ta.press(input.BtnDown)
 	ta.press(input.BtnRight) // ReplayGain off -> track
 	ta.press(input.BtnDown)

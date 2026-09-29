@@ -137,6 +137,9 @@ func (a *App) volumeDB() float64 {
 // setVolume changes the volume now and saves it (after a pause, so a held
 // key is one write).
 func (a *App) setVolume(db float64) {
+	if a.muted {
+		a.setMuted(false) // changing the volume brings the sound back
+	}
 	db = math.Max(-60, math.Min(0, math.Round(db)))
 	if pl := a.Player(); pl != nil {
 		pl.SetVolumeDB(db)
@@ -144,6 +147,32 @@ func (a *App) setVolume(db float64) {
 		a.volumePending = true // the next player starts at this level
 	}
 	a.UpdateConfig(func(c *config.Config) { c.Playback.VolumeDB = db }, true)
+}
+
+// setMuted turns the sound off or back on (spec §6). It isn't saved, so the
+// app always starts with the sound on.
+func (a *App) setMuted(on bool) {
+	a.muted, a.dirty = on, true
+	if pl := a.Player(); pl != nil {
+		pl.SetMuted(on)
+	}
+}
+
+func (a *App) toggleMute() {
+	a.setMuted(!a.muted)
+	if a.muted {
+		a.Toast("Muted")
+	} else {
+		a.Toast("Sound on")
+	}
+}
+
+// volumeText is the volume as shown: "Muted" while the sound is off.
+func (a *App) volumeText(db float64) string {
+	if a.muted {
+		return "Muted"
+	}
+	return volumeLabel(db)
 }
 
 func playbackSettings(a *App) []setting {
@@ -154,8 +183,10 @@ func playbackSettings(a *App) []setting {
 		return a.cfg.Playback
 	}
 	return []setting{
-		{"Volume", func(a *App) string { return volumeLabel(a.volumeDB()) },
+		{"Volume", func(a *App) string { return a.volumeText(a.volumeDB()) },
 			func(a *App, dir int) { a.setVolume(a.volumeDB() + float64(dir)) }},
+		{"Mute", func(a *App) string { return onOff(a.muted) },
+			func(a *App, dir int) { a.toggleMute() }},
 		{"ReplayGain", func(a *App) string { return pb().ReplayGain },
 			func(a *App, dir int) {
 				mode := cycle([]string{"off", "track", "album"}, pb().ReplayGain, dir)

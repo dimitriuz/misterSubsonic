@@ -82,6 +82,9 @@ func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 		pl.SetVolumeDB(a.cfg.Playback.VolumeDB) // changed while disconnected
 	}
 	a.volumePending = false
+	if a.muted && pl != nil {
+		pl.SetMuted(true) // a new server's player starts muted too
+	}
 	a.conn = info
 	a.SetInsecure(info.Server.InsecureSkipVerify)
 	a.artists, a.stars, a.starBusy, a.starGen = nil, map[starKey]bool{}, map[starKey]bool{}, 0

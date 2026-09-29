@@ -68,6 +68,7 @@ type State struct {
 	Shuffle    bool
 	Repeat     Repeat
 	VolumeDB   float64
+	Muted      bool // the output is silenced; VolumeDB is kept for unmuting
 	Transcoded bool
 	// NextIndex is the queue index that plays after the current song
 	// (honouring shuffle and repeat), or -1.
@@ -150,6 +151,7 @@ type Player struct {
 	shuffle    bool
 	repeat     Repeat
 	volumeDB   float64
+	muted      bool
 	seq        uint64
 	curID      uint64
 	curSrc     Opened
@@ -217,7 +219,7 @@ func (p *Player) Run(ctx context.Context) {
 		defer t.Stop()
 		tick = t.C
 	}
-	p.o.Engine.SetVolume(dbToLinear(p.volumeDB))
+	p.applyVolume()
 	go p.scrobbles.Flush(ctx, p.o.API)
 	for {
 		select {
@@ -503,8 +505,25 @@ func (p *Player) SetRepeat(r Repeat) {
 func (p *Player) SetVolumeDB(db float64) {
 	p.do(func() {
 		p.volumeDB = math.Max(-60, math.Min(0, db))
-		p.o.Engine.SetVolume(dbToLinear(p.volumeDB))
+		p.applyVolume()
 	})
+}
+
+// SetMuted silences the output or brings it back at the volume set.
+func (p *Player) SetMuted(on bool) {
+	p.do(func() {
+		p.muted = on
+		p.applyVolume()
+	})
+}
+
+// applyVolume hands the engine the gain for the volume and mute state.
+func (p *Player) applyVolume() {
+	g := dbToLinear(p.volumeDB)
+	if p.muted {
+		g = 0
+	}
+	p.o.Engine.SetVolume(g)
 }
 
 // SetReplayGain sets the ReplayGain mode (off, track or album) for the
@@ -565,7 +584,7 @@ func (p *Player) emit(ev Event) {
 
 func (p *Player) publish() {
 	s := State{Queue: p.queue, Index: p.currentIndex(), Status: p.status, Position: p.position,
-		Shuffle: p.shuffle, Repeat: p.repeat, VolumeDB: p.volumeDB, Transcoded: p.curSrc.Transcoded, NextIndex: -1}
+		Shuffle: p.shuffle, Repeat: p.repeat, VolumeDB: p.volumeDB, Muted: p.muted, Transcoded: p.curSrc.Transcoded, NextIndex: -1}
 	if c := p.followingCursor(true); c >= 0 {
 		s.NextIndex = p.order[c]
 	}

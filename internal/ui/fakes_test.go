@@ -239,6 +239,7 @@ func (p *fakePlayer) Clear() {
 	p.st.Queue, p.st.Index, p.st.Status = nil, -1, player.Stopped
 }
 func (p *fakePlayer) SetVolumeDB(db float64)    { p.st.VolumeDB = max(-60, min(0, db)) }
+func (p *fakePlayer) SetMuted(on bool)          { p.st.Muted = on }
 func (p *fakePlayer) SetReplayGain(mode string) { p.call("replaygain " + mode) }
 func (p *fakePlayer) SetScrobble(on bool) {
 	if on {

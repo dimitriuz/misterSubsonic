@@ -12,7 +12,7 @@ var keyNames = map[string]input.Button{
 	"up": input.BtnUp, "down": input.BtnDown, "left": input.BtnLeft, "right": input.BtnRight,
 	"a": input.BtnA, "b": input.BtnB, "x": input.BtnX, "y": input.BtnY,
 	"l": input.BtnL, "r": input.BtnR, "select": input.BtnSelect, "start": input.BtnStart,
-	"queue": input.BtnQueue,
+	"queue": input.BtnQueue, "mute": input.BtnMute,
 }
 
 type scripted struct {

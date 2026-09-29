@@ -694,3 +694,20 @@ func TestUserActionResetsFailureCount(t *testing.T) {
 		return false
 	})
 }
+
+func TestMuteKeepsTheVolume(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.SetVolumeDB(-6)
+	h.p.SetMuted(true)
+	if st := h.p.State(); !st.Muted || st.VolumeDB != -6 || h.eng.volume != 0 {
+		t.Fatalf("muted %v at %v dB, engine gain %v", st.Muted, st.VolumeDB, h.eng.volume)
+	}
+	h.p.SetVolumeDB(-10) // the volume can change while muted; the sound stays off
+	if h.eng.volume != 0 || h.p.State().VolumeDB != -10 {
+		t.Fatalf("engine gain %v at %v dB while muted", h.eng.volume, h.p.State().VolumeDB)
+	}
+	h.p.SetMuted(false)
+	if v := h.eng.volume; v < 0.31 || v > 0.32 { // -10 dB
+		t.Fatalf("unmuted gain %v, want the -10 dB volume", v)
+	}
+}

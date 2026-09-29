@@ -39,6 +39,7 @@ type Player interface {
 	Enqueue(songs []subsonic.Song)
 	Clear()
 	SetVolumeDB(db float64)
+	SetMuted(on bool)
 	SetReplayGain(mode string)
 	SetScrobble(on bool)
 	TogglePause()
@@ -190,6 +191,7 @@ type App struct {
 	bDown      time.Time // when B went down on the root screen (zero if not held)
 	confirm    bool      // exit confirmation shown
 
+	muted       bool      // the sound is off (not saved: the app starts with sound)
 	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten bool      // the last check found the screen drawn over
 }
@@ -596,6 +598,8 @@ func (a *App) dispatch(e input.Event) {
 		if !a.popTo(func(s Screen) bool { _, ok := s.(*NowPlayingScreen); return ok }) {
 			a.Push(NewNowPlayingScreen())
 		}
+	case input.BtnMute:
+		a.toggleMute()
 	case input.BtnQueue:
 		if !a.hasQueue() {
 			break

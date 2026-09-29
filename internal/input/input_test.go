@@ -160,6 +160,9 @@ func TestTranslatorTypesText(t *testing.T) {
 	if got := tr.handle(evKey, keyQ, 1); got[0] != (Event{Button: BtnQueue, Kind: Press, Rune: 'q'}) {
 		t.Fatalf("q = %v", got)
 	}
+	if got := tr.handle(evKey, keyM, 1); got[0] != (Event{Button: BtnMute, Kind: Press, Rune: 'm'}) {
+		t.Fatalf("m = %v", got)
+	}
 	if got := tr.handle(evKey, keySpace, 1); got[0] != (Event{Button: BtnStart, Kind: Press, Rune: ' '}) {
 		t.Fatalf("space = %v", got)
 	}
