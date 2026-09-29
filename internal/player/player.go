@@ -760,8 +760,10 @@ func (p *Player) onEngine(ev audio.Event) {
 	case audio.EventError:
 		switch ev.TrackID {
 		case p.nextID:
+			// The engine dropped the successor (failed or timed out opening;
+			// it closed the source). Ended(cur) then falls back to startAt.
 			song := p.queue[p.order[p.nextCursor]]
-			p.nextID = 0
+			p.nextID, p.nextSrc = 0, Opened{}
 			p.emit(Event{Kind: Error, Song: song, Err: ev.Err})
 		case p.curID:
 			song, _ := p.currentSong()

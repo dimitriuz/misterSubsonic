@@ -76,6 +76,33 @@ func TestEndBeforePrefetchOpenedFallsBackToPlay(t *testing.T) {
 	}
 }
 
+// C2: when the engine gives up on a queued successor that never finished
+// opening, it reports Error(B) and then Ended(A). The player must not hand
+// over to B (which will never start) but open it afresh with Play.
+func TestSuccessorOpenTimeoutFallsBackToPlay(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(2, 100), 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 81*time.Second)
+	h.waitFor("QueueNext", func() bool { return h.eng.queueCount() == 1 })
+	b := h.eng.queued[0]
+
+	h.eng.events <- audio.Event{Kind: audio.EventError, TrackID: b.ID, Err: audio.ErrOpenTimeout}
+	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
+	h.waitFor("second song played", func() bool { return h.eng.playCount() == 2 })
+	if h.p.State().Index != 1 {
+		t.Fatalf("index = %d, want 1", h.p.State().Index)
+	}
+	if tr := h.eng.lastPlayed(); tr.ID == b.ID || tr.Source == b.Source {
+		t.Fatal("Play reused the abandoned successor instead of reopening it")
+	}
+	var nextSrc Opened
+	h.p.do(func() { nextSrc = h.p.nextSrc })
+	if nextSrc.Source != nil {
+		t.Fatal("abandoned successor's source is still held as nextSrc")
+	}
+}
+
 func TestRepeatAllWrapsAndRepeatOneReplays(t *testing.T) {
 	h := newHarness(t, nil)
 	h.p.PlayNow(songs(2, 100), 1)

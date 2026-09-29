@@ -42,12 +42,20 @@ type Event struct {
 // ErrNotCurrent is returned by Seek when the track is not the one being decoded.
 var ErrNotCurrent = errors.New("audio: track is not the one being decoded")
 
+// ErrOpenTimeout is the EventError for a queued track that was still opening
+// when it was needed, openWait after the previous track finished decoding.
+var ErrOpenTimeout = errors.New("audio: next track took too long to open")
+
 type EngineOptions struct {
 	Output          Output
 	OpenDecoder     OpenDecoderFunc // default OpenDecoder
 	ResampleQuality int             // default DefaultResampleQuality
 	ChunkFrames     int             // default 2048
 	Poll            time.Duration   // default 5 ms
+
+	// openWait bounds how long the end of a track waits for its queued
+	// successor to finish opening; default 10 s. Unexported: tests only.
+	openWait time.Duration
 }
 
 type voice struct {
@@ -95,6 +103,7 @@ type Engine struct {
 	ended    bool // decoding reached the end of the queue naturally (not Stop)
 	next     *voice
 	opening  *Track
+	openedAt time.Time // when opening was queued
 	gen      int
 	stops    int // incremented at top of doStop to detect Stop during finishCur's wait
 	rs       *Resampler
@@ -117,6 +126,9 @@ func NewEngine(o EngineOptions) *Engine {
 	}
 	if o.Poll == 0 {
 		o.Poll = 5 * time.Millisecond
+	}
+	if o.openWait == 0 {
+		o.openWait = 10 * time.Second
 	}
 	e := &Engine{
 		o:       o,
@@ -144,7 +156,8 @@ func (e *Engine) Play(t Track) {
 // QueueNext sets the track to continue with, gaplessly, after the current
 // one. It replaces any previously queued track. If the current track has
 // already finished decoding (or finished playing), the queued track starts
-// as soon as it is open.
+// as soon as it is open. A track still opening 10 s after it is needed is
+// dropped with EventError (ErrOpenTimeout) and the queue ends.
 func (e *Engine) QueueNext(t Track) { e.send(func() { e.doQueueNext(t) }) }
 
 // ClearNext drops the queued track.
@@ -251,6 +264,9 @@ func (e *Engine) run() {
 	for {
 		if !e.poll() {
 			return
+		}
+		if e.ended && e.opening != nil && time.Since(e.openedAt) >= e.o.openWait {
+			e.abandonOpening() // queued after the end; nothing else would give up on it
 		}
 		switch {
 		case len(e.pending) > 0:
@@ -406,7 +422,14 @@ func (e *Engine) finishCur() {
 	e.cur = nil
 	e.setBusy(nil)
 	stops := e.stops
+	deadline := time.Now().Add(e.o.openWait)
 	for e.next == nil && e.opening != nil && e.cur == nil {
+		if !time.Now().Before(deadline) {
+			// Don't sit at the end of this track forever: drop the successor
+			// and end the queue, so the player sees Ended and opens it anew.
+			e.abandonOpening()
+			break
+		}
 		if !e.wait(e.o.Poll) {
 			return
 		}
@@ -514,6 +537,7 @@ func (e *Engine) doQueueNext(t Track) {
 	e.cancelNext()
 	e.gen++
 	e.opening = &t
+	e.openedAt = time.Now()
 	gen := e.gen
 	go func() {
 		v, err := e.openVoice(t)
@@ -531,6 +555,13 @@ func (e *Engine) cancelNext() {
 		e.opening = nil
 		e.gen++
 	}
+}
+
+// abandonOpening cancels the successor that is still opening and reports it.
+func (e *Engine) abandonOpening() {
+	id := e.opening.ID
+	e.cancelNext()
+	e.queueEvent(Event{Kind: EventError, TrackID: id, Err: ErrOpenTimeout})
 }
 
 func (e *Engine) onOpened(r openResult) {

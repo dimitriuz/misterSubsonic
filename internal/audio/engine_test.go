@@ -417,3 +417,74 @@ func TestEngineEventsFlowWhileDecodeBlocked(t *testing.T) {
 	playOut(t, out, 600)
 	expectEvent(t, e, EventEnded, 2)
 }
+
+// C2: if the successor never finishes opening, the engine must not sit at
+// the end of the current track forever. After openWait it drops the
+// successor (EventError for it) and ends the queue, so the player gets
+// Ended(A) and can start B itself.
+func TestEngineBoundsWaitForSuccessorOpen(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond, openWait: 100 * time.Millisecond})
+	defer e.Close()
+
+	b := newFakeSource(ramp(300, 300), OutputRate)
+	b.openBlock = make(chan struct{}) // never released
+	a := newFakeSource(ramp(300, 0), OutputRate)
+	a.block = make(chan struct{}) // hold A's first read so QueueNext lands before A ends
+	e.Play(Track{ID: 1, Source: a})
+	e.QueueNext(Track{ID: 2, Source: b})
+	expectEvent(t, e, EventStarted, 1)
+	close(a.block)
+
+	var sawErr, sawEnded bool
+	deadline := time.After(time.Second)
+	for !sawErr || !sawEnded {
+		out.consume(1 << 30)
+		select {
+		case ev := <-e.Events():
+			switch {
+			case ev.Kind == EventError && ev.TrackID == 2:
+				sawErr = true
+			case ev.Kind == EventEnded && ev.TrackID == 1:
+				sawEnded = true
+			default:
+				t.Fatalf("unexpected event %+v", ev)
+			}
+		case <-time.After(time.Millisecond):
+		case <-deadline:
+			t.Fatalf("after 1 s: Error(2)=%v Ended(1)=%v; the engine is stuck waiting for B to open", sawErr, sawEnded)
+		}
+	}
+	if !b.isClosed() {
+		t.Fatal("the stuck successor's source was not closed")
+	}
+	noEvent(t, e, 30*time.Millisecond)
+}
+
+// C2: same, when the successor is queued only after the current track has
+// finished decoding (the player may already have handed over to it).
+func TestEngineBoundsWaitForLateSuccessorOpen(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := NewEngine(EngineOptions{Output: out, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond, openWait: 100 * time.Millisecond})
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(300, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	playOut(t, out, 300)
+	expectEvent(t, e, EventEnded, 1)
+
+	b := newFakeSource(ramp(300, 300), OutputRate)
+	b.openBlock = make(chan struct{}) // never released
+	e.QueueNext(Track{ID: 2, Source: b})
+	select {
+	case ev := <-e.Events():
+		if ev.Kind != EventError || ev.TrackID != 2 {
+			t.Fatalf("event = %+v, want EventError for track 2", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no EventError for a successor stuck opening after the queue ended")
+	}
+	if !b.isClosed() {
+		t.Fatal("the stuck successor's source was not closed")
+	}
+}
