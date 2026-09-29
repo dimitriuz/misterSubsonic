@@ -1,0 +1,65 @@
+package gfx
+
+// Display shows frames. Implementations: fbdev (/dev/fb0), headless (tests),
+// devview (browser viewer).
+type Display interface {
+	// Size is the physical pixel size.
+	Size() (w, h int)
+	// Present shows a full frame of the physical size.
+	Present(c *Canvas) error
+	Close() error
+}
+
+// Scaler maps the logical UI canvas onto the physical framebuffer.
+// Framebuffers of 288 lines or fewer are CRT modes: the image fills the
+// screen and pixels may be non-square by design (a 320x240 UI on a 640x240
+// framebuffer). Taller framebuffers get a uniform nearest-neighbour scale,
+// centred with black bars.
+type Scaler struct {
+	dst        *Canvas
+	area       Rect
+	xmap, ymap []int
+}
+
+// CRTMaxLines is the tallest framebuffer treated as a CRT mode.
+const CRTMaxLines = 288
+
+func NewScaler(lw, lh, pw, ph int) *Scaler {
+	s := &Scaler{dst: NewCanvas(pw, ph)}
+	w, h := pw, ph
+	if ph > CRTMaxLines {
+		scale := min(float64(pw)/float64(lw), float64(ph)/float64(lh))
+		w, h = max(int(float64(lw)*scale), 1), max(int(float64(lh)*scale), 1)
+	}
+	s.area = Rect{(pw - w) / 2, (ph - h) / 2, w, h}
+	s.xmap = make([]int, w)
+	for i := range s.xmap {
+		s.xmap[i] = i * lw / w
+	}
+	s.ymap = make([]int, h)
+	for i := range s.ymap {
+		s.ymap[i] = i * lh / h
+	}
+	return s
+}
+
+// Area is where the logical image lands on the physical canvas.
+func (s *Scaler) Area() Rect { return s.area }
+
+// Scale renders src (logical) into the physical canvas and returns it.
+func (s *Scaler) Scale(src *Canvas) *Canvas {
+	d := s.dst
+	for y, sy := range s.ymap {
+		srow := src.Pix[sy*src.W : (sy+1)*src.W]
+		drow := d.Pix[(s.area.Y+y)*d.W+s.area.X:]
+		if y > 0 && s.ymap[y-1] == sy {
+			prev := d.Pix[(s.area.Y+y-1)*d.W+s.area.X:]
+			copy(drow[:len(s.xmap)], prev[:len(s.xmap)])
+			continue
+		}
+		for x, sx := range s.xmap {
+			drow[x] = srow[sx]
+		}
+	}
+	return d
+}
