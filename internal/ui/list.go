@@ -13,7 +13,8 @@ type List struct {
 }
 
 // Handle moves the focus: Up/Down by one, L/R by a page. It reports whether
-// the event was used.
+// the event was used; Up on the first row and Down on the last aren't, so a
+// neighbour (tabs above, a keyboard) can take the focus.
 func (l *List) Handle(e input.Event, n int) bool {
 	if n == 0 {
 		return false
@@ -21,8 +22,14 @@ func (l *List) Handle(e input.Event, n int) bool {
 	page := max(l.rows-1, 1)
 	switch e.Button {
 	case input.BtnUp:
+		if l.Focus <= 0 {
+			return false
+		}
 		l.Focus--
 	case input.BtnDown:
+		if l.Focus >= n-1 {
+			return false
+		}
 		l.Focus++
 	case input.BtnL:
 		l.Focus -= page

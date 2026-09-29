@@ -1,0 +1,83 @@
+package ui
+
+import (
+	"mistersubsonic/internal/gfx"
+	"mistersubsonic/internal/input"
+)
+
+// Grid is a focusable grid of equal cells that scrolls by rows (HDMI cover
+// grids). Like List, it returns false for moves it can't make, so a
+// neighbour can take the focus: Left in the first column (the sidebar), Up
+// in the first row (tabs).
+type Grid struct {
+	Focus int
+	top   int // first visible row
+	cols  int // at the last Draw
+	rows  int
+}
+
+func (g *Grid) columns() int { return max(g.cols, 1) }
+
+// Handle moves the focus: arrows by one cell, L/R by a page.
+func (g *Grid) Handle(e input.Event, n int) bool {
+	if n == 0 {
+		return false
+	}
+	cols := g.columns()
+	f := g.Focus
+	switch e.Button {
+	case input.BtnUp:
+		if f < cols {
+			return false
+		}
+		f -= cols
+	case input.BtnDown:
+		if f/cols == (n-1)/cols {
+			return false
+		}
+		f = min(f+cols, n-1) // into a shorter last row: its last cell
+	case input.BtnLeft:
+		if f%cols == 0 {
+			return false
+		}
+		f--
+	case input.BtnRight:
+		if f%cols == cols-1 || f == n-1 {
+			return false
+		}
+		f++
+	case input.BtnL:
+		f = max(f-cols*max(g.rows, 1), f%cols)
+	case input.BtnR:
+		f = min(f+cols*max(g.rows, 1), n-1)
+	default:
+		return false
+	}
+	g.Focus = f
+	return true
+}
+
+// Draw lays out n cells of cellW×cellH in area (centred horizontally),
+// keeping the focused row visible, and calls cell for each visible one.
+func (g *Grid) Draw(c *gfx.Canvas, area gfx.Rect, n, cellW, cellH int, cell func(i int, r gfx.Rect, focused bool)) {
+	g.cols = max(area.W/cellW, 1)
+	g.rows = max(area.H/cellH, 1)
+	g.Focus = min(max(g.Focus, 0), max(n-1, 0))
+	row := g.Focus / g.cols
+	if row < g.top {
+		g.top = row
+	}
+	if row >= g.top+g.rows {
+		g.top = row - g.rows + 1
+	}
+	x0 := area.X + (area.W-g.cols*cellW)/2
+	for i := g.top * g.cols; i < n && i < (g.top+g.rows)*g.cols; i++ {
+		r := gfx.R(x0+i%g.cols*cellW, area.Y+(i/g.cols-g.top)*cellH, cellW, cellH)
+		cell(i, r, i == g.Focus)
+	}
+}
+
+// NearEnd reports whether the focus is within a page of the end (to load more).
+func (g *Grid) NearEnd(n int) bool {
+	return n > 0 && g.Focus >= n-g.columns()*max(g.rows, 1)
+}

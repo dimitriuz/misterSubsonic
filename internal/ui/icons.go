@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"math"
+	"sort"
+
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/player"
 )
@@ -12,6 +15,7 @@ const (
 	iconPause
 	iconStop
 	iconBusy
+	iconStar
 )
 
 // drawIcon draws a simple vector icon filling the square r. Icons are drawn
@@ -38,6 +42,47 @@ func drawIcon(c *gfx.Canvas, ic icon, r gfx.Rect, col gfx.Color) {
 		d := max(r.W/5, 1)
 		for i := 0; i < 3; i++ {
 			c.Fill(gfx.R(r.X+i*2*d, r.Y+(r.H-d)/2, d, d), col)
+		}
+	case iconStar:
+		fillPolygon(c, starPoints(r), col)
+	}
+}
+
+// starPoints is a five-pointed star in r: ten vertices, outer and inner.
+func starPoints(r gfx.Rect) [][2]float64 {
+	cx, cy := float64(r.X)+float64(r.W)/2, float64(r.Y)+float64(r.H)/2
+	outer := float64(min(r.W, r.H)) / 2
+	pts := make([][2]float64, 10)
+	for i := range pts {
+		rad := outer
+		if i%2 == 1 {
+			rad *= 0.4
+		}
+		a := -math.Pi/2 + float64(i)*math.Pi/5
+		pts[i] = [2]float64{cx + rad*math.Cos(a), cy + rad*math.Sin(a)}
+	}
+	return pts
+}
+
+// fillPolygon fills the pixels whose centres are inside pts (even-odd rule).
+func fillPolygon(c *gfx.Canvas, pts [][2]float64, col gfx.Color) {
+	minY, maxY := pts[0][1], pts[0][1]
+	for _, p := range pts {
+		minY, maxY = math.Min(minY, p[1]), math.Max(maxY, p[1])
+	}
+	for y := int(minY); y <= int(maxY); y++ {
+		py := float64(y) + 0.5
+		var xs []float64
+		for i := range pts {
+			a, b := pts[i], pts[(i+1)%len(pts)]
+			if (a[1] <= py) != (b[1] <= py) {
+				xs = append(xs, a[0]+(py-a[1])*(b[0]-a[0])/(b[1]-a[1]))
+			}
+		}
+		sort.Float64s(xs)
+		for i := 0; i+1 < len(xs); i += 2 {
+			x0, x1 := int(math.Round(xs[i])), int(math.Round(xs[i+1]))
+			c.Fill(gfx.R(x0, y, x1-x0, 1), col)
 		}
 	}
 }
