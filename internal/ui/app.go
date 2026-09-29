@@ -165,25 +165,28 @@ type App struct {
 	dim bool
 	// swallowed holds buttons whose press was typed into a text field, so
 	// their releases are dropped too.
-	swallowed map[input.Button]bool
-	insecure  bool
-	stars     map[starKey]bool       // star changes made in this session
-	starGen   int                    // bumped by every successful star change
-	artists   []subsonic.ArtistIndex // getArtists, fetched once per connection
-	cfg       *config.Config
-	conn      ConnInfo
-	saveAt    time.Time  // a debounced config save is due (zero: none)
-	saving    bool       // a save is being written
-	saveAgain bool       // the config changed during that write
-	saveMu    sync.Mutex // one writer of the config file at a time
-	rep       input.Repeater
-	in        chan input.Event
-	post      chan func()
-	loads     int
-	dirty     bool
-	quit      bool
-	bDown     time.Time // when B went down on the root screen (zero if not held)
-	confirm   bool      // exit confirmation shown
+	swallowed  map[input.Button]bool
+	insecure   bool
+	stars      map[starKey]bool       // star changes made in this session
+	starGen    int                    // bumped by every successful star change
+	artists    []subsonic.ArtistIndex // getArtists, fetched once per connection
+	cfg        *config.Config
+	conn       ConnInfo
+	saveAt     time.Time  // a debounced config save is due (zero: none)
+	saving     bool       // a save is being written
+	saveAgain  bool       // the config changed during that write
+	saveMu     sync.Mutex // one writer of the config file at a time
+	lastInput  time.Time  // for the screensaver
+	saver      bool       // the screensaver is on
+	saverSince time.Time
+	rep        input.Repeater
+	in         chan input.Event
+	post       chan func()
+	loads      int
+	dirty      bool
+	quit       bool
+	bDown      time.Time // when B went down on the root screen (zero if not held)
+	confirm    bool      // exit confirmation shown
 }
 
 func New(o Options) (*App, error) {
@@ -191,7 +194,7 @@ func New(o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
-		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}, cfg: o.Config}
+		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now()}
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err
@@ -427,10 +430,14 @@ func (a *App) untilWake() time.Duration {
 	}
 	consider(a.mqWake)
 	consider(a.saveAt)
+	consider(a.saverDue())
+	if a.saver {
+		consider(now.Add(saverStep)) // the drift; nothing else moves
+	}
 	if !a.bDown.IsZero() {
 		consider(a.bDown.Add(exitHold))
 	}
-	if a.o.Player != nil && a.o.Player.State().Status == player.Playing {
+	if a.o.Player != nil && a.o.Player.State().Status == player.Playing && !a.saver {
 		consider(now.Add(progressTick))
 	}
 	if d := next.Sub(now); d > 0 {
@@ -469,6 +476,12 @@ func (a *App) onWake() {
 			a.dirty = true
 		}
 	}
+	if due := a.saverDue(); !due.IsZero() && !now.Before(due) {
+		a.saver, a.saverSince, a.dirty = true, now, true
+	}
+	if a.saver {
+		a.dirty = true // the drift
+	}
 	if !a.saveAt.IsZero() && !now.Before(a.saveAt) {
 		a.saveAt = time.Time{}
 		a.saveConfig()
@@ -499,6 +512,10 @@ func (a *App) onPlayer(ev player.Event) {
 
 func (a *App) onInput(e input.Event) {
 	now := a.o.Now()
+	a.lastInput = now
+	if a.wake() && e.Kind == input.Press {
+		return // the press that wakes the screensaver does nothing else
+	}
 	if e.Rune != 0 && !a.confirm {
 		if e.Kind == input.Press {
 			if t, ok := a.Top().(TextInput); ok && t.Text(a, e.Rune) {
@@ -593,6 +610,13 @@ func (a *App) hasCurrent() bool {
 
 func (a *App) render() error {
 	a.dirty = false
+	if _, np := a.Top().(*NowPlayingScreen); !np {
+		a.saver = false
+	}
+	if a.saver {
+		a.drawSaver(a.canvas)
+		return a.o.Display.Present(a.scaler.Scale(a.canvas))
+	}
 	a.animate, a.mq.seen, a.mqWake, a.dim = false, false, time.Time{}, false
 	c := a.canvas
 	c.Clear(colBg)
