@@ -58,3 +58,40 @@ func TestOverwriteAndOversizeAndDisabled(t *testing.T) {
 		t.Fatal("disabled cache stored data")
 	}
 }
+
+func TestEvictionUsesLowWaterMark(t *testing.T) {
+	d, err := Open(t.TempDir(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Unix(1000, 0)
+	d.now = func() time.Time { clock = clock.Add(time.Second); return clock }
+	for i := 0; i < 10; i++ {
+		d.Put(string(rune('a'+i)), bytes.Repeat([]byte{1}, 10))
+	}
+	before := evictions
+	d.Put("k", bytes.Repeat([]byte{1}, 10))
+	if d.Size() > 90 {
+		t.Fatalf("size after eviction = %d, want <= 90", d.Size())
+	}
+	if evictions != before+1 {
+		t.Fatalf("evictions = %d, want %d", evictions, before+1)
+	}
+	d.Put("l", bytes.Repeat([]byte{1}, 10))
+	if evictions != before+1 {
+		t.Fatal("second Put walked the directory again")
+	}
+}
+
+func TestDeleteAdjustsSize(t *testing.T) {
+	d, _ := Open(t.TempDir(), 100)
+	d.Put("a", bytes.Repeat([]byte{1}, 10))
+	d.Delete("a")
+	d.Delete("missing")
+	if d.Size() != 0 {
+		t.Fatalf("size = %d", d.Size())
+	}
+	if _, ok := d.Get("a"); ok {
+		t.Fatal("a still present")
+	}
+}

@@ -61,6 +61,9 @@ type Options struct {
 	Now        func() time.Time
 }
 
+// maxPending bounds the request stack; the oldest requests are dropped.
+const maxPending = 64
+
 type entry struct {
 	key   Key
 	img   *gfx.Image
@@ -78,7 +81,8 @@ type Loader struct {
 	lru      *list.List // front = most recent
 	items    map[Key]*list.Element
 	memBytes int64
-	pending  []Key // stack: newest last
+	pending  []Key // stack: newest last, at most maxPending
+	queued   map[Key]bool
 	inflight map[Key]bool
 	failed   map[Key]time.Time
 	closed   bool
@@ -97,7 +101,7 @@ func New(o Options) *Loader {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	l := &Loader{o: o, lru: list.New(), items: map[Key]*list.Element{}, inflight: map[Key]bool{}, failed: map[Key]time.Time{}}
+	l := &Loader{o: o, lru: list.New(), items: map[Key]*list.Element{}, inflight: map[Key]bool{}, queued: map[Key]bool{}, failed: map[Key]time.Time{}}
 	l.cond = sync.NewCond(&l.mu)
 	l.ctx, l.cancel = context.WithCancel(context.Background())
 	for i := 0; i < o.Workers; i++ {
@@ -125,13 +129,27 @@ func (l *Loader) Get(k Key) (*gfx.Image, bool) {
 	if t, ok := l.failed[k]; ok && l.o.Now().Sub(t) < l.o.RetryAfter {
 		return nil, false
 	}
-	for i, p := range l.pending {
-		if p == k { // already queued: move to the top of the stack
-			l.pending = append(append(l.pending[:i:i], l.pending[i+1:]...), k)
+	if l.queued[k] {
+		n := len(l.pending)
+		if l.pending[n-1] == k {
 			return nil, false
 		}
+		for i := n - 2; i >= 0; i-- { // move to the top in place
+			if l.pending[i] == k {
+				copy(l.pending[i:], l.pending[i+1:])
+				l.pending[n-1] = k
+				break
+			}
+		}
+		return nil, false
+	}
+	if len(l.pending) >= maxPending {
+		delete(l.queued, l.pending[0])
+		copy(l.pending, l.pending[1:])
+		l.pending = l.pending[:len(l.pending)-1]
 	}
 	l.pending = append(l.pending, k)
+	l.queued[k] = true
 	l.cond.Signal()
 	return nil, false
 }
@@ -159,6 +177,7 @@ func (l *Loader) worker() {
 		}
 		k := l.pending[len(l.pending)-1]
 		l.pending = l.pending[:len(l.pending)-1]
+		delete(l.queued, k)
 		l.inflight[k] = true
 		l.mu.Unlock()
 
@@ -180,23 +199,25 @@ func (l *Loader) worker() {
 }
 
 func (l *Loader) load(k Key) (*gfx.Image, error) {
-	data, ok := []byte(nil), false
 	if l.o.Disk != nil {
-		data, ok = l.o.Disk.Get(k.String())
-	}
-	if !ok {
-		ctx, cancel := context.WithTimeout(l.ctx, 15*time.Second)
-		defer cancel()
-		var err error
-		if data, err = l.o.Fetch(ctx, k); err != nil {
-			return nil, err
+		if data, ok := l.o.Disk.Get(k.String()); ok {
+			if img, err := gfx.DecodeImage(data, k.Size, k.Size); err == nil {
+				return img, nil
+			}
+			l.o.Disk.Delete(k.String()) // corrupt entry: drop it and refetch once
 		}
+	}
+	ctx, cancel := context.WithTimeout(l.ctx, 15*time.Second)
+	defer cancel()
+	data, err := l.o.Fetch(ctx, k)
+	if err != nil {
+		return nil, err
 	}
 	img, err := gfx.DecodeImage(data, k.Size, k.Size)
 	if err != nil {
 		return nil, err
 	}
-	if !ok && l.o.Disk != nil {
+	if l.o.Disk != nil {
 		l.o.Disk.Put(k.String(), data)
 	}
 	return img, nil

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -149,5 +152,100 @@ func TestHTTPFetcherRejectsNonImages(t *testing.T) {
 	}
 	if bytes.Contains([]byte(err.Error()), []byte("t=")) {
 		t.Fatalf("error leaks the URL: %v", err)
+	}
+}
+
+func TestPendingIsBoundedNewestFirst(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	order := make(chan Key, 300)
+	var once sync.Once
+	l := New(Options{Workers: 1, Fetch: func(_ context.Context, k Key) ([]byte, error) {
+		once.Do(func() { close(started); <-release })
+		order <- k
+		return nil, errors.New("skip")
+	}})
+	defer l.Close()
+	l.Get(Key{"k0", 10})
+	<-started
+	for i := 1; i < 200; i++ {
+		l.Get(Key{subsonic.ID(fmt.Sprintf("k%d", i)), 10})
+	}
+	l.mu.Lock()
+	n := len(l.pending)
+	l.mu.Unlock()
+	if n > maxPending {
+		t.Fatalf("pending = %d, want <= %d", n, maxPending)
+	}
+	close(release)
+	<-order // k0
+	select {
+	case k := <-order:
+		if k.ID != "k199" {
+			t.Fatalf("next fetched %s, want k199", k.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("nothing fetched")
+	}
+}
+
+func TestGetOfQueuedKeyDoesNotAllocate(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	l := New(Options{Workers: 1, Fetch: func(_ context.Context, k Key) ([]byte, error) {
+		once.Do(func() { close(started); <-release })
+		return nil, errors.New("skip")
+	}})
+	defer l.Close()
+	defer close(release)
+	l.Get(Key{"busy", 10})
+	<-started
+	a, b := Key{"a", 10}, Key{"b", 10}
+	l.Get(a)
+	l.Get(b)
+	if n := testing.AllocsPerRun(100, func() { l.Get(b) }); n != 0 {
+		t.Fatalf("Get of top queued key allocs = %v", n)
+	}
+	if n := testing.AllocsPerRun(100, func() { l.Get(a); l.Get(b) }); n != 0 {
+		t.Fatalf("Get moving a queued key allocs = %v", n)
+	}
+}
+
+func TestCorruptDiskEntryIsRefetched(t *testing.T) {
+	disk, _ := cache.Open(t.TempDir(), 1<<20)
+	k := Key{"al-1", 20}
+	disk.Put(k.String(), []byte("garbage"))
+	h := newHarness(t, func(Key) ([]byte, error) { return pngBytes(40, 40), nil }, Options{Disk: disk})
+	h.l.Get(k)
+	h.waitReady(t)
+	if _, ok := h.l.Get(k); !ok {
+		t.Fatal("image not loaded after refetch")
+	}
+	if h.calls.Load() != 1 {
+		t.Fatalf("fetched %d times, want 1", h.calls.Load())
+	}
+	b, ok := disk.Get(k.String())
+	if !ok || !bytes.Equal(b, pngBytes(40, 40)) {
+		t.Fatal("disk entry not repaired")
+	}
+}
+
+func TestHTTPFetcherErrorsDoNotLeakCredentials(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	c, _ := subsonic.New(subsonic.Options{BaseURL: "http://" + addr, Credentials: subsonic.Credentials{Username: "u", Password: "secret-pw"}})
+	_, ferr := HTTPFetcher(c)(context.Background(), Key{"x", 2})
+	if ferr == nil {
+		t.Fatal("expected an error")
+	}
+	for _, bad := range []string{"secret-pw", "t=", "s="} {
+		if strings.Contains(ferr.Error(), bad) {
+			t.Fatalf("error leaks %q: %v", bad, ferr)
+		}
 	}
 }

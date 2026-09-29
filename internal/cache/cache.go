@@ -92,7 +92,29 @@ func (d *Disk) Put(key string, data []byte) error {
 // Size is the bytes currently cached.
 func (d *Disk) Size() int64 { d.mu.Lock(); defer d.mu.Unlock(); return d.size }
 
+// Delete removes key's entry, if any.
+func (d *Disk) Delete(key string) {
+	if d.max <= 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	p := d.path(key)
+	if info, err := os.Stat(p); err == nil {
+		if os.Remove(p) == nil {
+			d.size -= info.Size()
+		}
+	}
+}
+
+// evictions counts directory walks (test hook).
+var evictions int
+
+// evictLocked removes the oldest entries down to a low-water mark of 90% of
+// the budget, so the directory walk happens once per ~10% of new data.
 func (d *Disk) evictLocked(keep string) {
+	evictions++
+	target := d.max * 9 / 10
 	type ent struct {
 		path string
 		size int64
@@ -110,7 +132,7 @@ func (d *Disk) evictLocked(keep string) {
 	})
 	sort.Slice(all, func(i, j int) bool { return all[i].mod.Before(all[j].mod) })
 	for _, e := range all {
-		if d.size <= d.max {
+		if d.size <= target {
 			return
 		}
 		if err := os.Remove(e.path); err == nil || errors.Is(err, fs.ErrNotExist) {
