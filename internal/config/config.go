@@ -202,6 +202,10 @@ func Save(path string, cfg *Config) error {
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
+		var le *os.LinkError // report it as a PathError: callers show its reason
+		if errors.As(err, &le) {
+			err = &fs.PathError{Op: le.Op, Path: path, Err: le.Err}
+		}
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil

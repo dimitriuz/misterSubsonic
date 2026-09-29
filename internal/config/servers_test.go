@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,5 +62,25 @@ func TestSaveHeaderPointsAtTheREADME(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	if !strings.HasPrefix(string(b), "# MiSTer Subsonic configuration") || strings.Contains(string(b), "config.example.toml") {
 		t.Fatalf("header: %q", strings.SplitN(string(b), "\n", 2)[0])
+	}
+}
+
+func TestSaveRenameFailureIsAPathError(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.Mkdir(p, 0o755); err != nil { // a directory in the way: the rename fails
+		t.Fatal(err)
+	}
+	c := Default()
+	c.AddServer(Server{Name: "home", URL: "http://h:4533", Username: "a", Password: "secretpw"})
+	err := Save(p, c)
+	var pe *fs.PathError
+	if err == nil || !errors.As(err, &pe) {
+		t.Fatalf("err %v (%T), want a *fs.PathError", err, err)
+	}
+	if strings.Contains(err.Error(), "secretpw") {
+		t.Fatalf("error leaks the password: %v", err)
+	}
+	if _, serr := os.Stat(p + ".tmp"); serr == nil {
+		t.Fatal("temp file left behind")
 	}
 }

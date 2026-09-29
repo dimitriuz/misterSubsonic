@@ -53,6 +53,9 @@ func (a *App) start() {
 // Connect drops the current connection and asks for one to the config's
 // active server. Call on the UI goroutine.
 func (a *App) Connect() {
+	if a.cfg == nil {
+		return
+	}
 	srv, ok := a.cfg.ActiveServer()
 	if !ok || a.o.Connect == nil {
 		return
@@ -163,6 +166,14 @@ func (a *App) flushConfig() {
 	}
 	if a.o.ConfigPath == "" || a.cfg == nil {
 		return
+	}
+	// A write in progress holds an older copy: let it (and the save it
+	// queues for a change made meanwhile) finish, or it would land after ours.
+	for a.saving {
+		(<-a.post)()
+	}
+	if a.saveAt.IsZero() {
+		return // those writes already saved the latest change
 	}
 	a.saveMu.Lock()
 	defer a.saveMu.Unlock()

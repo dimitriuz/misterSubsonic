@@ -197,3 +197,16 @@ func TestDisplayURLHidesCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestFlushWaitsForASaveInFlight(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		ta, _ := sessionApp(t, twoServers())
+		ta.UpdateConfig(func(c *config.Config) { c.Playback.VolumeDB = -1 }, false) // save goroutine starts with -1
+		ta.UpdateConfig(func(c *config.Config) { c.Playback.VolumeDB = -9 }, true)  // a newer change is pending
+		ta.flushConfig()
+		b, _ := os.ReadFile(ta.o.ConfigPath)
+		if !strings.Contains(string(b), "volume_db = -9.0") {
+			t.Fatalf("round %d: an older save overtook the flush: %s", i, b)
+		}
+	}
+}
