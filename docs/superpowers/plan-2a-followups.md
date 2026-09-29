@@ -111,3 +111,16 @@ Still open from the lists above: the Plan 3 items, the input nits, the art and c
   - The e2e awk check and timing are loose.
   - The README controls are terser than the plan's table.
 - **Plan 3:** `drawField` trims by rune.
+
+## Resolved by Plan 2c
+
+- CRT Home drops its Resume row once something plays.
+- Server switching:
+  - Loads capture the library and player on the UI goroutine.
+  - The artist and star caches reset on every connection.
+  - The session manager replaces sessions safely: the newest request wins, and old players are stopped with their queue saved.
+- Starred reloads when shown again after a Pop.
+- A star request survives leaving its screen, and a double press is ignored while one is in flight.
+- `config.Save` no longer names the missing `config.example.toml`.
+
+Still open: the Plan 3 items, the marquee and tab-row nit, the input and UX nits, and the test gaps listed above.

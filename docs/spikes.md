@@ -43,3 +43,7 @@ pending — MiSTer unavailable. Still to do:
 - Run `ui.test -test.bench Repaint` on the device. The new cases are feed-hdmi-1080p and search-hdmi-1080p.
 - Tune the CRT title-safe margins on a real CRT.
 - Have the user try the sidebar, grids and search with the controller and a USB keyboard.
+
+## Plan 2c on the MiSTer
+
+pending — MiSTer unavailable. Still to do: run the setup wizard on the TV with the controller and a USB keyboard; Settings → Servers switch; check the screensaver on HDMI and CRT; confirm the config lands in /media/fat/mistersubsonic with mode 0600.
