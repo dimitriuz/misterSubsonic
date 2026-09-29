@@ -50,8 +50,13 @@ func (s *TabbedScreen) enter(a *App) {
 	if !s.entered[s.tabs.Sel] {
 		s.entered[s.tabs.Sel] = true
 		s.children[s.tabs.Sel].Enter(a)
+	} else if sh, ok := s.children[s.tabs.Sel].(shower); ok {
+		sh.Shown(a)
 	}
 }
+
+// Shown runs when the screen is visible again (a sidebar section reopened).
+func (s *TabbedScreen) Shown(a *App) { s.enter(a) }
 
 func (s *TabbedScreen) Handle(a *App, e input.Event) bool {
 	if s.onTabs {

@@ -19,15 +19,19 @@ func NewStarredScreen() *TabbedScreen {
 // starredData is the getStarred2 result the three tabs share.
 type starredData struct {
 	res     *subsonic.Starred
+	gen     int // App.starGen when res was requested
 	loading bool
 	err     error
 }
 
+// load fetches the list unless it is loading or current: a star change since
+// the last request makes it stale. The old list stays up until the new one
+// arrives.
 func (d *starredData) load(a *App, s Screen) {
-	if d.res != nil || d.loading {
+	if d.loading || (d.res != nil && d.err == nil && d.gen == a.starGen) {
 		return
 	}
-	d.loading, d.err = true, nil
+	d.loading, d.err, d.gen = true, nil, a.starGen
 	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().GetStarred2(ctx) }, func(v any, err error) {
 		d.loading = false
 		if err != nil {
@@ -49,6 +53,9 @@ type starredTab struct {
 
 func (s *starredTab) Title() string { return "Starred" }
 func (s *starredTab) Enter(a *App)  { s.d.load(a, s) }
+
+// Shown reloads the list if a star changed while another screen was up.
+func (s *starredTab) Shown(a *App) { s.d.load(a, s) }
 
 // sync copies the shared result into this tab's view.
 func (s *starredTab) sync() int {

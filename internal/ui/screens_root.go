@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
@@ -13,14 +14,22 @@ import (
 // SidebarRoot is the HDMI root: a sidebar of sections on the left and the
 // selected section on the right. Left from a section's first column, or B,
 // moves the focus to the sidebar; Right or A goes back into the section.
-// Sections are created and entered the first time they are shown, and keep
-// their state while the user switches.
+// Sections are created and entered the first time they are opened (Right or
+// A, or the selection resting on them for sidebarDwell, so scrolling past a
+// section doesn't load it), and keep their state while the user switches.
 type SidebarRoot struct {
 	labels    []string
 	makers    []func() Screen
 	children  []Screen
 	sel       int
 	inSidebar bool
+	dwelling  int // bumped by every selection change; an older dwell timer is stale
+}
+
+// shower is a screen that wants to know when it becomes visible again
+// (a tab or a sidebar section that was entered earlier).
+type shower interface {
+	Shown(a *App)
 }
 
 func newSidebarRoot() *SidebarRoot {
@@ -55,20 +64,28 @@ func (s *SidebarRoot) Owns(x Screen) bool {
 	return false
 }
 
-func (s *SidebarRoot) Enter(a *App) { s.show(a) }
+func (s *SidebarRoot) Enter(a *App) { s.open(a) }
 
-// show creates and enters the selected section on first use.
-func (s *SidebarRoot) show(a *App) Screen {
-	if s.children[s.sel] == nil {
-		s.children[s.sel] = s.makers[s.sel]()
-		s.children[s.sel].Enter(a)
+// open makes the selected section the visible one: it is created and
+// entered on first use, told it is shown again otherwise.
+func (s *SidebarRoot) open(a *App) Screen {
+	if c := s.children[s.sel]; c != nil {
+		if sh, ok := c.(shower); ok {
+			sh.Shown(a)
+		}
+		return c
 	}
+	s.children[s.sel] = s.makers[s.sel]()
+	s.children[s.sel].Enter(a)
 	return s.children[s.sel]
 }
 
+// current is the selected section, nil while it hasn't been opened yet.
+func (s *SidebarRoot) current() Screen { return s.children[s.sel] }
+
 // Text forwards typing to the section (Search) when it has the focus.
 func (s *SidebarRoot) Text(a *App, r rune) bool {
-	if t, ok := s.show(a).(TextInput); ok && !s.inSidebar {
+	if t, ok := s.current().(TextInput); ok && !s.inSidebar {
 		return t.Text(a, r)
 	}
 	return false
@@ -86,17 +103,25 @@ func (s *SidebarRoot) Handle(a *App, e input.Event) bool {
 			} else {
 				s.sel = min(s.sel+1, len(s.labels)-1)
 			}
-			s.show(a)
+			s.dwelling++
+			n := s.dwelling
+			a.After(s, sidebarDwell, func() {
+				if n == s.dwelling {
+					s.open(a)
+				}
+			})
 			return true
 		case input.BtnRight, input.BtnA:
 			if e.Kind == input.Press {
 				s.inSidebar = false
+				s.dwelling++
+				s.open(a)
 				return true
 			}
 		}
 		return false
 	}
-	if s.show(a).Handle(a, e) {
+	if c := s.current(); c != nil && c.Handle(a, e) {
 		return true
 	}
 	if e.Kind == input.Release {
@@ -126,7 +151,12 @@ func (s *SidebarRoot) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		}
 		f.Draw(c, r.X+p.Margin, r.Y+(r.H+f.Ascent()-f.Descent())/2, l, col, r)
 	}
-	a.drawDimmed(s.inSidebar, func() { s.show(a).Draw(a, c, gfx.R(side.Right(), area.Y, area.W-side.W, area.H)) })
+	content := gfx.R(side.Right(), area.Y, area.W-side.W, area.H)
+	if child := s.current(); child != nil {
+		a.drawDimmed(s.inSidebar, func() { child.Draw(a, c, content) })
+	} else {
+		a.drawCentered(c, content, "…", colDim)
+	}
 }
 
 // FeedScreen is the HDMI home: a Resume card when a saved queue exists,
@@ -349,3 +379,5 @@ func (s *FeedScreen) drawStrip(a *App, c *gfx.Canvas, r *feedRow, strip gfx.Rect
 		a.drawCoverCell(c, cell, al.CoverArt, al.Name, al.Artist, focused && i == r.focus, a.isStarred(albumStar(al)))
 	}
 }
+
+const sidebarDwell = 400 * time.Millisecond // a sidebar selection opens its section after resting this long

@@ -142,3 +142,107 @@ func TestMarqueeOnlyWhereFocused(t *testing.T) {
 		}
 	})
 }
+
+// dwell lets the sidebar selection rest long enough to open its section.
+func dwell(ta *testApp) {
+	ta.now = ta.now.Add(sidebarDwell)
+	ta.onWake()
+}
+
+func TestSidebarOnlyOpensWhereItRests(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	root := newSidebarRoot()
+	ta.Push(root)
+	ta.settle(t)
+	ta.lib.calls = nil
+	ta.press(input.BtnLeft) // the sidebar
+	for range 5 {           // Artists, Albums, Playlists, Starred, Search
+		ta.press(input.BtnDown)
+	}
+	ta.settle(t)
+	for i := 1; i <= 4; i++ {
+		if root.children[i] != nil {
+			t.Fatalf("section %d was opened on the way past", i)
+		}
+	}
+	if ta.lib.starCalls != 0 || len(ta.lib.calls) != 0 {
+		t.Fatalf("loads on the way past: starred %d, albums %v", ta.lib.starCalls, ta.lib.calls)
+	}
+	ta.settle(t) // the placeholder frame
+	dwell(ta)
+	ta.settle(t)
+	if _, ok := root.children[5].(*SearchScreen); !ok {
+		t.Fatalf("Search not opened after the dwell: %T", root.children[5])
+	}
+	ta.press(input.BtnUp) // Starred, entered at once by Right
+	ta.press(input.BtnRight)
+	if root.children[4] == nil || root.inSidebar {
+		t.Fatalf("Right did not open the section: %v", root.children[4])
+	}
+	ta.settle(t)
+	if ta.lib.starCalls != 1 {
+		t.Fatalf("getStarred2 called %d times", ta.lib.starCalls)
+	}
+}
+
+func TestStarredRefreshesAfterAStarChange(t *testing.T) {
+	newRoot := func(t *testing.T) (*testApp, *SidebarRoot) {
+		ta := newTestApp(t, ProfileHDMI)
+		root := newSidebarRoot()
+		ta.Push(root)
+		ta.settle(t)
+		ta.press(input.BtnLeft)
+		for range 4 {
+			ta.press(input.BtnDown)
+		}
+		ta.press(input.BtnRight) // Starred
+		ta.settle(t)
+		if ta.lib.starCalls != 1 {
+			t.Fatalf("getStarred2 called %d times", ta.lib.starCalls)
+		}
+		return ta, root
+	}
+	star := func(t *testing.T, ta *testApp, owner Screen) {
+		ta.lib.starred.Albums = append(ta.lib.starred.Albums, ta.lib.albums[0]) // the server's view
+		ta.toggleStar(owner, albumStar(ta.lib.albums[0]))
+		ta.settle(t)
+	}
+	t.Run("sidebar", func(t *testing.T) {
+		ta, root := newRoot(t)
+		star(t, ta, root)
+		ta.press(input.BtnB)
+		ta.press(input.BtnDown) // Search
+		ta.press(input.BtnUp)   // and back
+		dwell(ta)
+		ta.settle(t)
+		tab := root.children[4].(*TabbedScreen).children[0].(*starredTab)
+		if ta.lib.starCalls != 2 || tab.sync() != 2 {
+			t.Fatalf("getStarred2 called %d times, %d albums listed", ta.lib.starCalls, tab.sync())
+		}
+	})
+	t.Run("nothing changed", func(t *testing.T) {
+		ta, _ := newRoot(t)
+		ta.press(input.BtnB)
+		ta.press(input.BtnDown)
+		ta.press(input.BtnUp)
+		dwell(ta)
+		ta.settle(t)
+		if ta.lib.starCalls != 1 {
+			t.Fatalf("reloaded without a star change: %d calls", ta.lib.starCalls)
+		}
+	})
+	t.Run("tabs", func(t *testing.T) {
+		ta := newTestApp(t, ProfileHDMI)
+		ta.Push(NewHomeScreen())
+		s := NewStarredScreen()
+		ta.Push(s)
+		ta.settle(t)
+		star(t, ta, s)
+		ta.press(input.BtnUp)
+		ta.press(input.BtnRight) // the Artists tab
+		ta.settle(t)
+		if ta.lib.starCalls != 2 || s.children[0].(*starredTab).sync() != 2 {
+			t.Fatalf("getStarred2 called %d times", ta.lib.starCalls)
+		}
+	})
+}

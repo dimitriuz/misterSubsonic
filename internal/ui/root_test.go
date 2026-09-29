@@ -31,7 +31,8 @@ func TestSidebarSwitchesSections(t *testing.T) {
 	if !root.inSidebar {
 		t.Fatal("Left on the first cover did not reach the sidebar")
 	}
-	ta.press(input.BtnDown) // Artists: created and loaded now
+	ta.press(input.BtnDown) // Artists: opens once the selection rests
+	dwell(ta)
 	ta.settle(t)
 	artists, ok := root.children[1].(*ArtistsScreen)
 	if !ok || len(artists.view.artists) != 3 || root.Title() != "Artists · B" {
@@ -122,6 +123,7 @@ func TestGoldenRoot(t *testing.T) {
 	ta.press(input.BtnLeft)
 	ta.press(input.BtnDown)
 	ta.press(input.BtnDown)
+	dwell(ta)
 	ta.settle(t)
 	golden(t, "root-albums-hdmi", ta.settle(t))
 }
