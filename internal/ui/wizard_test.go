@@ -300,3 +300,69 @@ func TestWizardPasswordIsKeptExactly(t *testing.T) {
 		t.Fatalf("saved token doesn't match the typed password: %+v", s)
 	}
 }
+
+// Consent to skip the certificate check or to send the password in plain
+// text is for one address; another host must ask again.
+func TestWizardInsecureConsentDoesNotCarryToAnotherHost(t *testing.T) {
+	a, b := fakeServer("ok", true), fakeServer("ok", true)
+	defer a.Close()
+	defer b.Close()
+	ta, _, w := wizardApp(t)
+	fill(t, ta, a.URL, "alice", "pw", "")
+	ta.press(input.BtnA) // allow insecure
+	ta.settle(t)
+	if w.err != nil {
+		t.Fatalf("insecure retry: %v", w.err)
+	}
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Back -> API key step
+	if w.step != stepAPIKey {
+		t.Fatalf("step %d", w.step)
+	}
+	ta.press(input.BtnB)
+	ta.press(input.BtnB)
+	ta.press(input.BtnB)
+	if w.step != stepURL {
+		t.Fatalf("step %d", w.step)
+	}
+	for range len(w.fields[stepURL]) {
+		typeKeys(ta, "\b")
+	}
+	typeKeys(ta, b.URL+"\n\n\n\n")
+	ta.settle(t)
+	if subsonic.Classify(w.err) != subsonic.KindTLS || !strings.Contains(w.actions[0].label, "insecure") {
+		t.Fatalf("another host: err %v actions %v", w.err, w.actions)
+	}
+	if w.server().InsecureSkipVerify {
+		t.Fatal("insecure consent carried to another host")
+	}
+	if _, err := os.Stat(ta.o.ConfigPath); err == nil {
+		t.Fatal("saved")
+	}
+}
+
+func TestWizardPlaintextConsentDoesNotCarryToAnotherHost(t *testing.T) {
+	a, b := fakeServer("token41", false), fakeServer("token41", false)
+	defer a.Close()
+	defer b.Close()
+	ta, _, w := wizardApp(t)
+	fill(t, ta, a.URL, "u", "pw", "")
+	ta.press(input.BtnA) // allow plaintext
+	ta.settle(t)
+	if w.err != nil || !w.server().AllowPlaintextPassword {
+		t.Fatalf("after allowing: %v", w.err)
+	}
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Back
+	for range 4 {
+		ta.press(input.BtnB)
+	}
+	for range len(w.fields[stepURL]) {
+		typeKeys(ta, "\b")
+	}
+	typeKeys(ta, b.URL+"\n\n\n\n")
+	ta.settle(t)
+	if subsonic.Classify(w.err) != subsonic.KindPlaintextRefused || w.server().AllowPlaintextPassword {
+		t.Fatalf("another host: err %v plaintext %v", w.err, w.server().AllowPlaintextPassword)
+	}
+}

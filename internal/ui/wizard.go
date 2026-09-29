@@ -33,7 +33,7 @@ const (
 var stepText = [wizardFields]struct{ prompt, help string }{
 	{"Server address", "Like http://192.168.1.10:4533 or https://music.example.com"},
 	{"Username", "Leave it empty if you log in with an API key"},
-	{"Password", "It is not stored: the app keeps a token instead"},
+	{"Password", "Saved as a token when the server allows it"},
 	{"API key (optional)", "Only for servers that give out API keys; leave it empty otherwise"},
 }
 
@@ -49,7 +49,8 @@ type WizardScreen struct {
 	backup   bool   // the config file is invalid: move it aside when saving
 
 	// The test step.
-	insecure, plaintext bool // the user allowed these after an error
+	insecure, plaintext bool   // the user allowed these after an error...
+	consentURL          string // ...for this address only
 	testing             bool
 	err                 error
 	info                *subsonic.ServerInfo
@@ -179,6 +180,9 @@ func (s *WizardScreen) next(a *App) {
 			s.problem = err.Error()
 			return
 		}
+		if u != s.consentURL {
+			s.insecure, s.plaintext = false, false // consent was for another address
+		}
 		s.fields[stepURL] = []rune(u)
 	case stepAPIKey:
 		pw, key := string(s.fields[stepPassword]), strings.TrimSpace(string(s.fields[stepAPIKey]))
@@ -226,8 +230,8 @@ func (s *WizardScreen) server() config.Server {
 		Password: string(s.fields[stepPassword]),
 		APIKey:   strings.TrimSpace(string(s.fields[stepAPIKey])),
 
-		InsecureSkipVerify:     s.insecure,
-		AllowPlaintextPassword: s.plaintext,
+		InsecureSkipVerify:     s.insecure && s.consentURL == string(s.fields[stepURL]),
+		AllowPlaintextPassword: s.plaintext && s.consentURL == string(s.fields[stepURL]),
 	}
 }
 
@@ -279,10 +283,10 @@ func (s *WizardScreen) resultActions() []menuEntry {
 	switch subsonic.Classify(s.err) {
 	case subsonic.KindTLS:
 		if !s.insecure {
-			out = append(out, menuEntry{"Connect without checking the certificate (insecure)", func(a *App) { s.insecure = true; s.test(a) }})
+			out = append(out, menuEntry{"Connect without checking the certificate (insecure)", func(a *App) { s.insecure, s.consentURL = true, string(s.fields[stepURL]); s.test(a) }})
 		}
 	case subsonic.KindPlaintextRefused:
-		out = append(out, menuEntry{"Allow sending the password in plain text", func(a *App) { s.plaintext = true; s.test(a) }})
+		out = append(out, menuEntry{"Allow sending the password in plain text", func(a *App) { s.plaintext, s.consentURL = true, string(s.fields[stepURL]); s.test(a) }})
 	case subsonic.KindAuth:
 		out = append(out, menuEntry{"Change the username or password", func(a *App) { s.setStep(stepUser) }})
 	}
@@ -314,6 +318,7 @@ func (s *WizardScreen) save(a *App) {
 	}
 	if !s.backup {
 		finish()
+		s.saving = false
 		return
 	}
 	path := a.o.ConfigPath
