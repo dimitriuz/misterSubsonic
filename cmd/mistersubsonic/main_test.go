@@ -8,26 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"mistersubsonic/internal/audio"
-	"mistersubsonic/internal/config"
 )
-
-func TestDisplayURLHidesCredentials(t *testing.T) {
-	got := displayURL("http://alice:s3cret@host:4533/nav")
-	if strings.Contains(got, "s3cret") || strings.Contains(got, "alice") || !strings.Contains(got, "host:4533") {
-		t.Fatalf("displayURL leaked or lost host: %q", got)
-	}
-	if got := displayURL("http://host:4533/nav"); got != "http://host:4533/nav" {
-		t.Fatalf("plain URL changed: %q", got)
-	}
-	if got := displayURL("http://[bad"); got != "<server>" {
-		t.Fatalf("garbage: %q", got)
-	}
-}
 
 func TestNoAudioDeviceShowsMessage(t *testing.T) {
 	old := openDevice
@@ -77,13 +62,6 @@ func TestStartVolume(t *testing.T) {
 	}
 }
 
-func TestConfigMessageNamesNoMissingFile(t *testing.T) {
-	msg := configMessage("/x/config.toml", config.ErrNotFound)
-	if strings.Contains(msg, "config.example.toml") || !strings.Contains(msg, "/x/config.toml") {
-		t.Fatalf("message %q", msg)
-	}
-}
-
 func nullDevice(t *testing.T) {
 	t.Helper()
 	old := openDevice
@@ -129,7 +107,7 @@ func TestConnectBuildsSessionAndExitsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "cache", "art")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "servers", "x", "cache", "art")); err != nil {
 		t.Fatalf("art cache not created after connect: %v", err)
 	}
 }
@@ -148,7 +126,7 @@ func TestExitDuringConnectBuildsNothing(t *testing.T) {
 	}
 	close(gate)
 	time.Sleep(200 * time.Millisecond)
-	if _, err := os.Stat(filepath.Join(dir, "cache", "art")); err == nil {
-		t.Fatal("art cache built after the app exited")
+	if _, err := os.Stat(filepath.Join(dir, "servers")); err == nil {
+		t.Fatal("a session was built after the app exited")
 	}
 }

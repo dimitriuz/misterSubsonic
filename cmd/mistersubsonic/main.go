@@ -7,34 +7,30 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"math"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"syscall"
 	"time"
 
-	"mistersubsonic/internal/art"
 	"mistersubsonic/internal/audio"
-	"mistersubsonic/internal/cache"
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/devview"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
-	"mistersubsonic/internal/player"
-	"mistersubsonic/internal/subsonic"
 	"mistersubsonic/internal/ui"
 )
 
 // openDevice is replaceable so tests never touch a sound card.
 var openDevice = audio.OpenDevice
+
+// version is set by the release build (-ldflags "-X main.version=v1.0.0").
+var version = "dev"
 
 type flags struct {
 	config, display, viewerAddr, frames, profile, fbdev, keys string
@@ -161,21 +157,6 @@ func run(f flags) error {
 		fmt.Println("starting at -30 dB (use -volume to change)")
 	}
 
-	// The player and art loader are built by the connect goroutine (disk I/O
-	// stays off the UI goroutine); sess is guarded by smu, and closing stops
-	// a connect that outlives the app from building anything.
-	type session struct {
-		pl      *player.Player
-		loader  *art.Loader
-		started bool // pl.Run launched and app attached
-	}
-	var (
-		smu     sync.Mutex
-		sess    *session
-		closing bool
-		app     *ui.App
-	)
-
 	dev := cfg.Playback.ALSADevice
 	if dev == "default" {
 		dev = ""
@@ -188,134 +169,21 @@ func run(f flags) error {
 		defer eng.Close()
 	}
 
-	pctx, cancelPlayer := context.WithCancel(context.Background())
-	playerDone := make(chan struct{})
-	defer func() {
-		smu.Lock()
-		closing = true
-		s := sess
-		smu.Unlock()
-		cancelPlayer()
-		if s != nil {
-			if s.started { // only then is pl.Run running to close playerDone
-				<-playerDone
-			}
-			s.loader.Close()
-		}
-	}()
+	// Sessions (client, player, art) are built off the UI goroutine and
+	// replaced on a server switch; the last one is stopped before the
+	// engine and device close (defers run last-in first-out).
+	sess := newSessions(ctx, eng, dataDir, vol)
+	defer sess.close()
 
-	// connectServer runs off the UI goroutine; the caller attaches the result.
-	connectServer := func() (*subsonic.Client, error) {
-		srv, _ := cfg.ActiveServer()
-		c, err := subsonic.New(subsonic.Options{
-			BaseURL: srv.URL,
-			Credentials: subsonic.Credentials{Username: srv.Username, Password: srv.Password, Token: srv.Token,
-				Salt: srv.Salt, APIKey: srv.APIKey, AllowPlaintext: srv.AllowPlaintextPassword},
-			CAFile: srv.CAFile, InsecureSkipVerify: srv.InsecureSkipVerify,
-		})
-		if err != nil {
-			return nil, err
-		}
-		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if _, err := c.Connect(cctx); err != nil {
-			return nil, err
-		}
-		return c, nil
+	var loaded *config.Config
+	if cfgErr == nil {
+		loaded = cfg
 	}
-	// buildSession runs on the connect goroutine: cache.Open and player.New
-	// touch the disk. It returns nil if the app is already shutting down.
-	buildSession := func(a *ui.App, c *subsonic.Client) *session {
-		smu.Lock()
-		s, down := sess, closing
-		smu.Unlock()
-		if down || s != nil {
-			return s
-		}
-		disk, err := cache.Open(filepath.Join(dataDir, "cache", "art"), int64(cfg.Cache.CoverArtMB)<<20)
-		if err != nil {
-			log.Printf("art cache disabled: %v", err)
-			disk = nil
-		}
-		s = &session{
-			loader: art.New(art.Options{Fetch: art.HTTPFetcher(c), Disk: disk, Ready: a.ArtReady}),
-			pl: player.New(player.Options{
-				Engine: eng, API: c,
-				Open: player.NewOpener(c, player.StreamSettings{
-					TranscodeFormat: cfg.Playback.TranscodeFormat, TranscodeBitrate: cfg.Playback.TranscodeBitrate,
-					WindowBytes: int64(cfg.Playback.BufferMB) << 20,
-				}),
-				ReplayGain: cfg.Playback.ReplayGain, Scrobble: cfg.Playback.Scrobble, VolumeDB: vol,
-				ResumePath: filepath.Join(dataDir, "state.json"), ScrobblePath: filepath.Join(dataDir, "cache", "scrobbles.json"),
-			}),
-		}
-		smu.Lock()
-		if closing || sess != nil {
-			existing := sess
-			smu.Unlock()
-			s.loader.Close()
-			return existing
-		}
-		sess = s
-		smu.Unlock()
-		return s
-	}
-	// startSession runs on the UI goroutine and only does the cheap part.
-	startSession := func(a *ui.App, c *subsonic.Client, s *session) {
-		smu.Lock()
-		defer smu.Unlock()
-		if closing || s.started {
-			return
-		}
-		s.started = true
-		go func() { s.pl.Run(pctx); close(playerDone) }()
-		a.Attach(c, s.pl, s.loader)
-		srv, _ := cfg.ActiveServer()
-		a.SetInsecure(srv.InsecureSkipVerify)
-	}
-
 	app, err := ui.New(ui.Options{
 		Display: disp, Profile: prof, Inputs: inputs,
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
-		Start: func(a *ui.App) {
-			var connect func()
-			connect = func() {
-				if audioErr != nil {
-					a.Replace(ui.NewMessageScreen("No audio device", fmt.Sprintf("Couldn't open the audio device (%v).\nCheck alsa_device in %s, or that nothing else is using the sound card.", audioErr, f.config), nil))
-					return
-				}
-				if cfgErr != nil {
-					a.Replace(ui.NewMessageScreen("Setup needed", configMessage(f.config, cfgErr), nil))
-					return
-				}
-				if _, ok := cfg.ActiveServer(); !ok {
-					a.Replace(ui.NewMessageScreen("Setup needed", "Add a [[server]] to "+f.config+".", nil))
-					return
-				}
-				a.Replace(ui.NewMessageScreen("Connecting…", "Connecting to the server…", nil))
-				go func() {
-					c, err := connectServer()
-					var s *session
-					if err == nil {
-						s = buildSession(a, c)
-					}
-					a.Post(func() {
-						if err != nil {
-							srv, _ := cfg.ActiveServer()
-							a.Replace(ui.NewMessageScreen("Can't reach the server",
-								fmt.Sprintf("%s: %s.\n%s", displayURL(srv.URL), subsonic.Classify(err), hint(err)), connect))
-							return
-						}
-						if s == nil { // shutting down
-							return
-						}
-						startSession(a, c, s)
-						a.Replace(ui.NewRootScreen(a.P))
-					})
-				}()
-			}
-			connect()
-		},
+		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
+		Connect: func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})
 	if err != nil {
 		return err
@@ -323,35 +191,4 @@ func run(f flags) error {
 	err = app.Run(ctx)
 	stop() // a second Ctrl-C now kills the process instead of waiting out the shutdown below
 	return err
-}
-
-// displayURL is raw without credentials, safe to show on screen or log.
-func displayURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "<server>"
-	}
-	u.User = nil
-	return u.String()
-}
-
-func configMessage(path string, err error) string {
-	if errors.Is(err, config.ErrNotFound) {
-		return "No config file yet. Create " + path + " with a [[server]] section (name, url, username, password), then restart."
-	}
-	return "The config file has a problem:\n" + err.Error()
-}
-
-func hint(err error) string {
-	switch subsonic.Classify(err) {
-	case subsonic.KindTLS:
-		return "For a self-signed certificate set ca_file (or insecure_skip_verify) in the config."
-	case subsonic.KindAuth:
-		return "Check the username and password in the config."
-	case subsonic.KindPlaintextRefused:
-		return "This server needs the plain password: use https, or set allow_plaintext_password."
-	case subsonic.KindUnreachable, subsonic.KindTimeout:
-		return "Check that the server is running and the URL is right."
-	}
-	return ""
 }

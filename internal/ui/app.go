@@ -81,15 +81,12 @@ type owner interface {
 }
 
 type Options struct {
-	Display gfx.Display
-	Profile Profile
-	Library Library
-	Player  Player
-	Art     ArtSource
-	Inputs  []<-chan input.Event
-	// Start, if set, pushes the first screen instead of the built-in flow
-	// (a problem to explain, or connecting with Config).
-	Start         func(a *App)
+	Display       gfx.Display
+	Profile       Profile
+	Library       Library
+	Player        Player
+	Art           ArtSource
+	Inputs        []<-chan input.Event
 	FallbackFonts string
 	Now           func() time.Time
 
@@ -378,11 +375,7 @@ func (a *App) Toast(format string, args ...any) {
 // configuration change is saved before it returns.
 func (a *App) Run(ctx context.Context) error {
 	defer a.flushConfig()
-	if a.o.Start != nil {
-		a.o.Start(a)
-	} else {
-		a.start()
-	}
+	a.start()
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
 	for !a.quit {
