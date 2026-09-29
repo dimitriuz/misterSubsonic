@@ -180,9 +180,6 @@ func TestMarqueeScrollsFocusedLongText(t *testing.T) {
 		a.drawFit(c, f, area.X, area.Y+f.Ascent(), 100, long, colText, area, focused)
 	}})
 	first := ta.settle(t).ToRGBA()
-	if d := ta.untilWake(); d > marqueeFrame {
-		t.Fatalf("next wake in %v while a marquee runs", d)
-	}
 	ta.now = ta.now.Add(marqueeDelay / 2)
 	if !samePixels(first, ta.settle(t).ToRGBA()) {
 		t.Fatal("marquee moved before its delay")
@@ -190,6 +187,9 @@ func TestMarqueeScrollsFocusedLongText(t *testing.T) {
 	ta.now = ta.now.Add(2 * time.Second)
 	if samePixels(first, ta.settle(t).ToRGBA()) {
 		t.Fatal("focused long text did not scroll")
+	}
+	if d := ta.untilWake(); d > marqueeFrame {
+		t.Fatalf("next wake in %v while a marquee runs", d)
 	}
 	focused = false
 	ta.settle(t)

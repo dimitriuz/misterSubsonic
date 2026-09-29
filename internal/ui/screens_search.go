@@ -321,14 +321,16 @@ func (s *SearchScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	}
 	s.tabs.Draw(a, c, gfx.R(results.X, results.Y, results.W, h), s.inResults && s.onTabs)
 	view := gfx.R(results.X, results.Y+h, results.W, results.H-h)
-	switch s.tabs.Sel {
-	case resArtists:
-		s.artists.Draw(a, c, view)
-	case resAlbums:
-		s.albums.Draw(a, c, view)
-	default:
-		s.songs.Draw(a, c, view)
-	}
+	a.drawDimmed(!s.inResults, func() {
+		switch s.tabs.Sel {
+		case resArtists:
+			s.artists.Draw(a, c, view)
+		case resAlbums:
+			s.albums.Draw(a, c, view)
+		default:
+			s.songs.Draw(a, c, view)
+		}
+	})
 	if !s.inResults { // the focus is on the keyboard: dim the results
 		c.Fill(view, colBg.WithAlpha(0x60))
 	}

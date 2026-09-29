@@ -19,12 +19,20 @@ func BenchmarkRepaint(b *testing.B) {
 		fbW    int
 		fbH    int
 		screen func(ta *testApp) Screen
+		after  func(ta *testApp) // runs once the screen has loaded
 	}{
-		{"albums-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }},
-		{"nowplaying-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() }},
-		{"feed-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { return newSidebarRoot() }},
-		{"search-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { return NewSearchScreen() }},
-		{"albums-crt-240p", ProfileCRT240, 640, 240, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }},
+		{"albums-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
+		{"nowplaying-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() }, nil},
+		{"feed-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
+		{"search-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen { return NewSearchScreen() }, nil},
+		// A focused title that overflows, past its pre-scroll delay: every frame scrolls.
+		{"marquee-hdmi-1080p", ProfileHDMI, 1920, 1080, func(ta *testApp) Screen {
+			ta.lib.albums[0].Name = "A Rather Long Album Title That Will Need Truncating Somewhere"
+			return NewAlbumListScreen("Recently added", "newest")
+		}, func(ta *testApp) {
+			ta.now = ta.now.Add(2 * marqueeDelay)
+		}},
+		{"albums-crt-240p", ProfileCRT240, 640, 240, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
 	}
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
@@ -39,6 +47,12 @@ func BenchmarkRepaint(b *testing.B) {
 			ta.Push(NewHomeScreen())
 			ta.Push(c.screen(ta))
 			ta.settle(t)
+			if c.after != nil {
+				c.after(ta)
+				if ta.settle(t); !ta.animate {
+					b.Fatal("the marquee case does not scroll")
+				}
+			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				ta.dirty = true

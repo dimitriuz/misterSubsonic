@@ -126,7 +126,7 @@ func (s *SidebarRoot) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		}
 		f.Draw(c, r.X+p.Margin, r.Y+(r.H+f.Ascent()-f.Descent())/2, l, col, r)
 	}
-	s.show(a).Draw(a, c, gfx.R(side.Right(), area.Y, area.W-side.W, area.H))
+	a.drawDimmed(s.inSidebar, func() { s.show(a).Draw(a, c, gfx.R(side.Right(), area.Y, area.W-side.W, area.H)) })
 }
 
 // FeedScreen is the HDMI home: a Resume card when a saved queue exists,

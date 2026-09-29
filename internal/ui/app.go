@@ -127,7 +127,7 @@ const (
 	exitHold     = 2 * time.Second
 	progressTick = 500 * time.Millisecond
 	marqueeDelay = 1200 * time.Millisecond // before a focused long title starts to scroll
-	marqueeFrame = 50 * time.Millisecond
+	marqueeFrame = 100 * time.Millisecond
 	marqueeGap   = "     "
 )
 
@@ -144,6 +144,12 @@ type App struct {
 	timers  []timer
 	mq      marquee
 	animate bool // something on screen moves (marquee): redraw soon
+	// mqWake is when a focused long title starts to scroll (zero if none
+	// waits): the one wake needed during the pre-scroll delay.
+	mqWake time.Time
+	// dim is set while drawing what doesn't have the focus (behind a menu,
+	// the sidebar's neighbour, dimmed search results): nothing scrolls there.
+	dim bool
 	// swallowed holds buttons whose press was typed into a text field, so
 	// their releases are dropped too.
 	swallowed map[input.Button]bool
@@ -400,6 +406,7 @@ func (a *App) untilWake() time.Duration {
 	if a.animate {
 		consider(now.Add(marqueeFrame))
 	}
+	consider(a.mqWake)
 	if !a.bDown.IsZero() {
 		consider(a.bDown.Add(exitHold))
 	}
@@ -442,7 +449,7 @@ func (a *App) onWake() {
 			a.dirty = true
 		}
 	}
-	if a.animate {
+	if a.animate || (!a.mqWake.IsZero() && !now.Before(a.mqWake)) {
 		a.dirty = true
 	}
 	if !a.bDown.IsZero() && len(a.stack) == 1 && !now.Before(a.bDown.Add(exitHold)) {
@@ -562,7 +569,7 @@ func (a *App) hasCurrent() bool {
 
 func (a *App) render() error {
 	a.dirty = false
-	a.animate, a.mq.seen = false, false
+	a.animate, a.mq.seen, a.mqWake, a.dim = false, false, time.Time{}, false
 	c := a.canvas
 	c.Clear(colBg)
 	top := a.Top()
@@ -608,10 +615,18 @@ func (a *App) drawHeader(c *gfx.Canvas, title string) {
 	f.Draw(c, p.Margin, y, f.Truncate(title, w), colText, c.Bounds())
 }
 
+// drawDimmed runs draw for content that doesn't have the focus.
+func (a *App) drawDimmed(dim bool, draw func()) {
+	prev := a.dim
+	a.dim = prev || dim
+	draw()
+	a.dim = prev
+}
+
 // drawFit draws s at (x, baseline y) within w pixels: cut with "…" when it
 // doesn't fit, or, when focused, scrolling after a short pause (marquee).
 func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx.Color, clip gfx.Rect, focused bool) {
-	if !focused || f.Measure(s) <= w {
+	if !focused || a.dim || f.Measure(s) <= w {
 		f.Draw(c, x, y, f.Truncate(s, w), col, clip)
 		return
 	}
@@ -619,11 +634,14 @@ func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx
 	if a.mq.text != s {
 		a.mq = marquee{text: s, since: now}
 	}
-	a.mq.seen, a.animate = true, true
+	a.mq.seen = true
 	off := 0
-	if run := now.Sub(a.mq.since) - marqueeDelay; run > 0 {
+	if run := now.Sub(a.mq.since) - marqueeDelay; run >= 0 {
+		a.animate = true
 		off = int(int64(run) * int64(a.P.MarqueeSpeed) / int64(time.Second))
 		off %= f.Measure(s + marqueeGap)
+	} else if wake := a.mq.since.Add(marqueeDelay); a.mqWake.IsZero() || wake.Before(a.mqWake) {
+		a.mqWake = wake // identical frames until then: sleep to the end of the delay
 	}
 	vis, dx := f.Marquee(s, off)
 	area := gfx.R(x, y-f.Ascent(), w, f.Height()).Intersect(clip)

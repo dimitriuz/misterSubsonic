@@ -49,7 +49,7 @@ func (s *MenuScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *MenuScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
-	s.parent.Draw(a, c, area)
+	a.drawDimmed(true, func() { s.parent.Draw(a, c, area) })
 	c.Fill(area, colOverlay)
 	p := a.P
 	fs := a.F.Small
