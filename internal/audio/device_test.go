@@ -62,3 +62,28 @@ func TestFlushAfterDeviceStopped(t *testing.T) {
 		t.Fatalf("after Flush Consumed = %d, want 4800 (everything written)", got)
 	}
 }
+
+// After Close, the device calls are harmless no-ops (a late Flush or Write
+// from a shutting-down engine must not touch the freed ring).
+func TestDeviceCallsAfterCloseAreSafe(t *testing.T) {
+	out, err := OpenDevice(DeviceOptions{Null: true, RingFrames: 4800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Close()
+	if n := out.Write(make([]float32, 100*2)); n != 0 {
+		t.Fatalf("Write after Close took %d frames", n)
+	}
+	out.Flush()
+	out.SetPaused(true)
+	out.SetVolume(0.5)
+	out.Close()
+	stopDeviceForTest()
+	again, err := OpenDevice(DeviceOptions{Null: true, RingFrames: 4800})
+	if err != nil {
+		t.Fatal("the device can't be opened again:", err)
+	}
+	again.SetPaused(false)
+	again.SetVolume(1)
+	again.Close()
+}

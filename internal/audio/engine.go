@@ -115,7 +115,8 @@ type Engine struct {
 	chainOut uint64
 	chainIn  uint64
 	written  uint64
-	pending  []float32
+	pending  []float32 // resampled output not yet taken by the device
+	pendBuf  []float32 // pending's backing array, reused so decoding doesn't allocate
 	scratch  []float32
 }
 
@@ -308,9 +309,7 @@ func (e *Engine) run() {
 		}
 		switch {
 		case len(e.pending) > 0:
-			n := e.o.Output.Write(e.pending)
-			e.written += uint64(n)
-			e.pending = e.pending[n*2:]
+			e.writePending()
 			if len(e.pending) > 0 && !e.wait(e.o.Poll) {
 				return
 			}
@@ -438,6 +437,13 @@ func (e *Engine) decodeChunk() {
 	e.finishCur()
 }
 
+// writePending hands the device as much of pending as it takes.
+func (e *Engine) writePending() {
+	n := e.o.Output.Write(e.pending)
+	e.written += uint64(n)
+	e.pending = e.pending[n*2:]
+}
+
 func (e *Engine) emit(samples []float32, v *voice) {
 	switch {
 	case v.gain > 1:
@@ -450,13 +456,16 @@ func (e *Engine) emit(samples []float32, v *voice) {
 		}
 	}
 	if len(e.pending) == 0 {
-		e.pending = e.pending[:0:0]
+		e.pending = e.pendBuf[:0] // start over at the front of the buffer
 	}
 	if e.rs != nil {
 		e.pending = e.rs.Process(samples, e.pending)
 		e.chainIn += uint64(len(samples) / 2)
 	} else {
 		e.pending = append(e.pending, samples...)
+	}
+	if cap(e.pending) > cap(e.pendBuf) {
+		e.pendBuf = e.pending[:0] // it grew: keep the bigger buffer
 	}
 }
 
@@ -494,6 +503,7 @@ func (e *Engine) finishCur() {
 			e.abandonOpening()
 			break
 		}
+		e.writePending() // the end of this track still plays while the next one opens
 		if !e.wait(e.o.Poll) {
 			return
 		}

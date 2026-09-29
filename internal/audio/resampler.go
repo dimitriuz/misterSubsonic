@@ -20,6 +20,9 @@ type Resampler struct {
 	r       *C.mss_resampler
 	inRate  int
 	outRate int
+	// The frame counts passed to C by pointer live here, so a Process call
+	// doesn't move two locals to the heap.
+	cin, cout C.uint32_t
 }
 
 func NewResampler(inRate, outRate, quality int) (*Resampler, error) {
@@ -44,12 +47,11 @@ func (r *Resampler) Process(in []float32, out []float32) []float32 {
 			out = grown
 		}
 		dst := out[len(out):cap(out)]
-		cin := C.uint32_t(inFrames)
-		cout := C.uint32_t(len(dst) / 2)
-		C.mss_resampler_process(r.r, (*C.float)(unsafe.Pointer(&in[0])), &cin, (*C.float)(unsafe.Pointer(&dst[0])), &cout)
-		out = out[:len(out)+int(cout)*2]
-		in = in[int(cin)*2:]
-		if cin == 0 && cout == 0 {
+		r.cin, r.cout = C.uint32_t(inFrames), C.uint32_t(len(dst)/2)
+		C.mss_resampler_process(r.r, (*C.float)(unsafe.Pointer(&in[0])), &r.cin, (*C.float)(unsafe.Pointer(&dst[0])), &r.cout)
+		out = out[:len(out)+int(r.cout)*2]
+		in = in[int(r.cin)*2:]
+		if r.cin == 0 && r.cout == 0 {
 			break
 		}
 	}

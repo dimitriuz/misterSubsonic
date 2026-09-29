@@ -133,7 +133,13 @@ void mss_device_close(void) {
     g_open = 0;
 }
 
+/* After mss_device_close the ring and device are gone: every call below is
+   a no-op then (write takes nothing, flush does nothing). */
+
 uint32_t mss_device_write(const float* frames, uint32_t frame_count) {
+    if (!g_open) {
+        return 0;
+    }
     uint32_t done = 0;
     while (done < frame_count) {
         ma_uint32 n = frame_count - done;
@@ -149,6 +155,9 @@ uint32_t mss_device_write(const float* frames, uint32_t frame_count) {
 }
 
 uint32_t mss_device_space(void) {
+    if (!g_open) {
+        return 0;
+    }
     return ma_pcm_rb_available_write(&g_ring);
 }
 
@@ -171,6 +180,9 @@ static int device_stopped(void) {
 }
 
 void mss_device_flush(void) {
+    if (!g_open) {
+        return;
+    }
     if (device_stopped()) {
         drain_ring();
         return;
@@ -192,5 +204,7 @@ void mss_device_flush(void) {
 
 /* Test hook: stops the device callback as a failed or unplugged device would. */
 void mss_device_stop_for_test(void) {
-    ma_device_stop(&g_device);
+    if (g_open) {
+        ma_device_stop(&g_device);
+    }
 }

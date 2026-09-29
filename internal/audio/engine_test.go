@@ -793,3 +793,50 @@ func TestEngineSeekAfterPlayOfSameTrackQueuesBehindPlay(t *testing.T) {
 		return false
 	})
 }
+
+// While the next track is still opening, the end of the current one keeps
+// going to the device; it isn't held back until the successor arrives.
+func TestEngineKeepsFeedingTheTailWhileTheNextTrackOpens(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+	a := newFakeSource(ramp(300, 0), OutputRate)
+	a.eofWithData = true // 256 frames, then the last 44 with the EOF
+	b := newFakeSource(ramp(100, 300), OutputRate)
+	b.openBlock = make(chan struct{})
+	defer close(b.openBlock)
+	e.Play(Track{ID: 1, Source: a})
+	e.QueueNext(Track{ID: 2, Source: b})
+	expectEvent(t, e, EventStarted, 1)
+	waitFor(t, "all of track 1 written while track 2 opens", func() bool {
+		out.consume(1 << 30)
+		return len(out.written())/2 == 300
+	})
+}
+
+// Steady-state decoding doesn't allocate: the pending buffer is reused.
+func TestEmitDoesNotAllocate(t *testing.T) {
+	for _, rate := range []int{OutputRate, 44100} {
+		e := &Engine{}
+		if rate != OutputRate {
+			rs, err := NewResampler(rate, OutputRate, DefaultResampleQuality)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rs.Close()
+			e.rs = rs
+		}
+		v := &voice{gain: 0.5}
+		chunk := ramp(2048, 0)
+		samples := make([]float32, len(chunk))
+		run := func() {
+			copy(samples, chunk)
+			e.emit(samples, v)
+			e.pending = e.pending[len(e.pending):] // the device took it all
+		}
+		run() // the first chunk sizes the buffer
+		if n := testing.AllocsPerRun(50, run); n != 0 {
+			t.Errorf("%d Hz: %v allocations per chunk", rate, n)
+		}
+	}
+}

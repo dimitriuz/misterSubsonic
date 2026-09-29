@@ -69,6 +69,7 @@ type fakeSource struct {
 	openStarted     chan struct{} // closed when fakeOpen begins
 	openStartedOnce sync.Once     // protects closing openStarted
 	seekBlock       chan struct{} // blocks SeekFrame if set, until closed
+	eofWithData     bool          // the last Read returns its frames together with io.EOF
 	once            sync.Once
 	closed          chan struct{}
 }
@@ -144,6 +145,9 @@ func (d *fakeDecoder) Read(dst []float32) (int, error) {
 	}
 	n := copy(dst, d.src.pcm[d.pos:])
 	d.pos += n
+	if d.src.eofWithData && d.pos >= len(d.src.pcm) {
+		return n / 2, io.EOF // as a stream error arrives with the last frames
+	}
 	return n / 2, nil
 }
 
