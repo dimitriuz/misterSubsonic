@@ -144,12 +144,7 @@ func (v *artistsView) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	})
 }
 
-func albumCount(n int) string {
-	if n == 1 {
-		return "1 album"
-	}
-	return fmt.Sprintf("%d albums", n)
-}
+func albumCount(n int) string { return plural(n, "album") }
 
 // songsView is a track list: A plays the whole list from the focused song.
 type songsView struct {

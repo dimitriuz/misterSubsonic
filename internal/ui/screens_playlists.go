@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"mistersubsonic/internal/gfx"
@@ -81,12 +80,7 @@ func (s *PlaylistsScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	})
 }
 
-func trackCount(n int) string {
-	if n == 1 {
-		return "1 track"
-	}
-	return fmt.Sprintf("%d tracks", n)
-}
+func trackCount(n int) string { return plural(n, "track") }
 
 // playlistSummary is "12 tracks · 48:10 · by alice".
 func playlistSummary(pl subsonic.Playlist) string {
