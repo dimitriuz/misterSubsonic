@@ -19,12 +19,13 @@ make mister      # ARMv7 binaries in bin/arm/ (checks glibc <= 2.31)
 make deploy-dev MISTER=mister.local   # copy dev tools to /media/fat/mistersubsonic/dev
 ```
 
-Try it against a server (sound goes to your default device; start quiet):
+Try it against a server (sound goes to your default device, starting at
+-30 dB unless you pass `-volume`; `-null` plays silently):
 
 ```sh
 go build -o bin/ ./cmd/mss-cli
 bin/mss-cli -config config.toml ping
-bin/mss-cli -config config.toml -volume -30 play-album <album-id>
+bin/mss-cli -config config.toml play-album <album-id>
 ```
 
 `config.toml` needs at least one server:

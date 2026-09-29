@@ -33,7 +33,7 @@ func main() {
 	cfgPath := flag.String("config", config.DefaultPath, "config file")
 	null := flag.Bool("null", false, "use the null audio device (no sound; for testing)")
 	quitAtEnd := flag.Bool("exit-at-end", false, "exit when the queue finishes")
-	volume := flag.Float64("volume", math.NaN(), "start volume in dB (-60..0), overriding the config; use -30 for a quiet first listen")
+	volume := flag.Float64("volume", math.NaN(), "start volume in dB (-60..0), overriding the config; default on a real device is -30")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: mss-cli [flags] ping | albums | search <query> | play-album <id> | play-song <id>...")
 		flag.PrintDefaults()
@@ -57,8 +57,10 @@ func run(cfgPath string, null, quitAtEnd bool, volume float64, args []string) er
 	for _, w := range warns {
 		log.Printf("config: %s", w)
 	}
-	if !math.IsNaN(volume) {
-		cfg.Playback.VolumeDB = volume
+	v, msg := startVolume(volume, null, cfg.Playback.VolumeDB)
+	cfg.Playback.VolumeDB = v
+	if msg != "" {
+		fmt.Println(msg)
 	}
 	srv, ok := cfg.ActiveServer()
 	if !ok {
@@ -214,6 +216,23 @@ func run(cfgPath string, null, quitAtEnd bool, volume float64, args []string) er
 			}
 		}
 	}
+}
+
+// quietStartDB is the start volume on a real device when -volume isn't given.
+const quietStartDB = -30
+
+// startVolume picks the start volume. An explicit -volume (flag, NaN when
+// absent) wins. Otherwise a real device starts at -30 dB, or quieter if the
+// config says so, and msg tells the user; the null device keeps the config.
+func startVolume(flag float64, null bool, cfg float64) (db float64, msg string) {
+	switch {
+	case !math.IsNaN(flag):
+		return flag, ""
+	case null:
+		return cfg, ""
+	}
+	db = math.Min(cfg, quietStartDB)
+	return db, fmt.Sprintf("starting at %.0f dB (use -volume to change)", db)
 }
 
 func quality(s subsonic.Song) string {
