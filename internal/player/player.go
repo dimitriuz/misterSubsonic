@@ -507,6 +507,17 @@ func (p *Player) SetVolumeDB(db float64) {
 	})
 }
 
+// SetReplayGain sets the ReplayGain mode (off, track or album) for the
+// tracks opened from now on.
+func (p *Player) SetReplayGain(mode string) {
+	p.do(func() { p.o.ReplayGain = mode })
+}
+
+// SetScrobble turns now-playing and scrobble reports on or off.
+func (p *Player) SetScrobble(on bool) {
+	p.do(func() { p.o.Scrobble = on })
+}
+
 // Resumable finds a saved queue: the server's first, then the local file.
 func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
 	if pq, err := p.o.API.GetPlayQueue(ctx); err == nil && pq != nil {

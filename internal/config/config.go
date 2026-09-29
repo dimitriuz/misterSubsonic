@@ -189,7 +189,7 @@ func Save(path string, cfg *Config) error {
 		return fmt.Errorf("config: refusing to save invalid config: %w", err)
 	}
 	var buf bytes.Buffer
-	buf.WriteString("# MiSTer Subsonic configuration. See config.example.toml for every option.\n")
+	buf.WriteString("# MiSTer Subsonic configuration, saved by the app (the setup wizard or Settings).\n# Every option is described in the README.\n")
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return fmt.Errorf("config: encode: %w", err)
 	}
