@@ -10,9 +10,10 @@ import (
 )
 
 // MaxDecodeBytes bounds the memory a cover may take while it is decoded,
-// before it is scaled down: a 4096×4096 JPEG fits, a 4096×4096 RGBA PNG
-// doesn't. It guards against decompression bombs and keeps two art workers
-// within about 100 MB on the MiSTer.
+// before it is scaled down: a 4096×4096 baseline JPEG fits, a 4096×4096 RGBA
+// PNG doesn't, and progressive or CMYK JPEGs are refused sooner because their
+// decode costs more (see jpegDecodeBytes). It guards against decompression
+// bombs and keeps two art workers within about 100 MB on the MiSTer.
 const MaxDecodeBytes = 48 << 20
 
 // decodedBytes estimates what the decoder allocates for an image of cfg.
@@ -35,16 +36,88 @@ func decodedBytes(cfg image.Config) int64 {
 	return 4 * px // RGBA, NRGBA, CMYK
 }
 
+// jpegDecodeBytes estimates Go's JPEG decoder memory from the frame header
+// alone: the sample planes, four more bytes per sample for a progressive
+// frame's DCT coefficients, and an RGBA copy when the decoder converts to one
+// (CMYK, or RGB-labelled components). It reports false if no frame header is
+// found before the scan data.
+func jpegDecodeBytes(data []byte) (int64, bool) {
+	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+		return 0, false
+	}
+	i := 2
+	for i+1 < len(data) {
+		if data[i] != 0xFF {
+			return 0, false
+		}
+		m := data[i+1]
+		if m == 0xFF { // fill byte
+			i++
+			continue
+		}
+		if m == 0xD8 || m == 0x01 || m >= 0xD0 && m <= 0xD7 || m == 0 { // no length
+			i += 2
+			continue
+		}
+		if m == 0xD9 || m == 0xDA {
+			return 0, false
+		}
+		if i+4 > len(data) {
+			return 0, false
+		}
+		n := int(data[i+2])<<8 | int(data[i+3])
+		if m < 0xC0 || m > 0xCF || m == 0xC4 || m == 0xC8 || m == 0xCC {
+			i += 2 + n
+			continue
+		}
+		seg := data[i+4:]
+		if n < 8 || len(seg) < n-2 || len(seg) < 6 {
+			return 0, false
+		}
+		h, w, nc := int64(seg[1])<<8|int64(seg[2]), int64(seg[3])<<8|int64(seg[4]), int(seg[5])
+		if nc == 0 || n < 8+3*nc || len(seg) < 6+3*nc {
+			return 0, false
+		}
+		var sum, hmax, vmax int64
+		for c := 0; c < nc; c++ {
+			hv := seg[7+3*c]
+			ch, cv := int64(hv>>4), int64(hv&15)
+			if ch == 0 || cv == 0 {
+				return 0, false
+			}
+			sum += ch * cv
+			hmax, vmax = max(hmax, ch), max(vmax, cv)
+		}
+		px := w * h
+		samples := px * sum / (hmax * vmax)
+		total := samples
+		if m == 0xC2 || m == 0xC6 || m == 0xCA || m == 0xCE {
+			total += 4 * samples
+		}
+		if nc == 4 || nc == 3 && seg[6] == 'R' && seg[9] == 'G' && seg[12] == 'B' {
+			total += 4 * px
+		}
+		return total, true
+	}
+	return 0, false
+}
+
 // DecodeImage decodes JPEG or PNG bytes and scales the result to fit within
 // maxW×maxH (aspect preserved, never upscaled) with a box filter. Only the
 // scaled result is converted: the full-size picture exists once, in the
 // decoder's own format.
 func DecodeImage(data []byte, maxW, maxH int) (*Image, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("gfx: decode image: %w", err)
 	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || decodedBytes(cfg) > MaxDecodeBytes {
+	need := decodedBytes(cfg)
+	if format == "jpeg" {
+		if n, ok := jpegDecodeBytes(data); ok {
+			need = n
+		}
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || need > MaxDecodeBytes {
 		return nil, fmt.Errorf("gfx: image %dx%d too large", cfg.Width, cfg.Height)
 	}
 	m, _, err := image.Decode(bytes.NewReader(data))

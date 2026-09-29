@@ -161,3 +161,72 @@ func TestResizeBigBoxesDoNotOverflow(t *testing.T) {
 		t.Fatalf("got %08x", got)
 	}
 }
+
+// jpegBytes encodes a w×h JPEG (4:2:0, three components).
+func jpegBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, w, h)), nil); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// patchSOF sets the frame marker's type byte (0xC0 baseline, 0xC2 progressive)
+// and its dimensions.
+func patchSOF(t *testing.T, data []byte, marker byte, w, h int) []byte {
+	t.Helper()
+	out := append([]byte(nil), data...)
+	i := bytes.Index(out, []byte{0xFF, 0xC0})
+	if i < 0 {
+		t.Fatal("no SOF0")
+	}
+	out[i+1] = marker
+	binary.BigEndian.PutUint16(out[i+5:], uint16(h))
+	binary.BigEndian.PutUint16(out[i+7:], uint16(w))
+	return out
+}
+
+func TestJPEGDecodeBytes(t *testing.T) {
+	const w, h = 64, 48
+	base := jpegBytes(t, w, h)
+	want := int64(w*h + 2*((w+1)/2)*((h+1)/2))
+	got, ok := jpegDecodeBytes(base)
+	if !ok || got != want {
+		t.Fatalf("baseline 4:2:0: %d %v, want %d", got, ok, want)
+	}
+	got, ok = jpegDecodeBytes(patchSOF(t, base, 0xC2, w, h))
+	if !ok || got != 5*want {
+		t.Fatalf("progressive: %d %v, want %d", got, ok, 5*want)
+	}
+	// 3000² baseline is fine (13.5 MB), progressive is not (67.5 MB).
+	got, ok = jpegDecodeBytes(patchSOF(t, base, 0xC0, 3000, 3000))
+	if !ok || got > MaxDecodeBytes {
+		t.Fatalf("3000² baseline: %d %v", got, ok)
+	}
+	prog := patchSOF(t, base, 0xC2, 3000, 3000)
+	if got, ok = jpegDecodeBytes(prog); !ok || got <= MaxDecodeBytes {
+		t.Fatalf("3000² progressive: %d %v", got, ok)
+	}
+	if _, err := DecodeImage(prog, 100, 100); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("err %v", err)
+	}
+	// CMYK (4 components) and RGB-labelled JPEGs also pay for an RGBA copy.
+	cmyk := append([]byte(nil), base...)
+	i := bytes.Index(cmyk, []byte{0xFF, 0xC0})
+	cmyk = append(cmyk[:i+9], append([]byte{4, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0}, cmyk[i+9+10:]...)...)
+	binary.BigEndian.PutUint16(cmyk[i+2:], 8+3*4)
+	if got, ok = jpegDecodeBytes(cmyk); !ok || got != int64(4*w*h+4*w*h) {
+		t.Fatalf("cmyk: %d %v", got, ok)
+	}
+}
+
+func TestJPEGDecodeBytesTruncated(t *testing.T) {
+	base := jpegBytes(t, 64, 48)
+	i := bytes.Index(base, []byte{0xFF, 0xC0})
+	for _, data := range [][]byte{nil, base[:2], base[:i], base[:i+6]} {
+		if _, ok := jpegDecodeBytes(data); ok {
+			t.Errorf("%d bytes accepted", len(data))
+		}
+	}
+}
