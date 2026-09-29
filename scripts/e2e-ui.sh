@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d)
 mock=""
-cleanup() { [ -n "$mock" ] && kill "$mock" 2>/dev/null; rm -rf "$tmp"; }
+cleanup() { if [ -n "$mock" ]; then kill "$mock" 2>/dev/null; fi; rm -rf "$tmp"; }
 trap cleanup EXIT
 
 go build -o "$tmp/" ./cmd/mistersubsonic ./tools/mocksubsonic
@@ -25,7 +25,16 @@ CFG
 
 "$tmp/mocksubsonic" -dir "$tmp/music" -addr "127.0.0.1:$port" > "$tmp/mock.log" 2>&1 &
 mock=$!
-sleep 0.5
+up=""
+for _ in $(seq 50); do
+  if curl -fs "http://127.0.0.1:$port/rest/ping.view" >/dev/null 2>&1; then up=1; break; fi
+  sleep 0.1
+done
+if [ -z "$up" ]; then
+  echo "e2e-ui failed: mock server did not start; log:" >&2
+  cat "$tmp/mock.log" >&2
+  exit 1
+fi
 
 "$tmp/mistersubsonic" -config "$tmp/config.toml" -display headless -frames "$tmp/frames" -null \
   -keys "a:1500ms,a:800ms,a:800ms" -exit-after 6s > "$tmp/app.log" 2>&1 || {

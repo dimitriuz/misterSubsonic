@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,6 +31,9 @@ import (
 	"mistersubsonic/internal/subsonic"
 	"mistersubsonic/internal/ui"
 )
+
+// openDevice is replaceable so tests never touch a sound card.
+var openDevice = audio.OpenDevice
 
 type flags struct {
 	config, display, viewerAddr, frames, profile, fbdev, keys string
@@ -118,6 +122,11 @@ func run(f flags) error {
 		inputs = append(inputs, v.Events())
 	case "headless":
 		prof := ui.PickProfile(1280, 720, profileName)
+		if f.frames != "" {
+			if err := os.MkdirAll(f.frames, 0o755); err != nil {
+				return err
+			}
+		}
 		disp = gfx.NewHeadless(prof.W, prof.H, f.frames)
 	default:
 		return fmt.Errorf("unknown -display %q", f.display)
@@ -150,13 +159,13 @@ func run(f flags) error {
 	if dev == "default" {
 		dev = ""
 	}
-	out, err := audio.OpenDevice(audio.DeviceOptions{Name: dev, Null: f.null})
-	if err != nil {
-		return err
+	var eng *audio.Engine
+	out, audioErr := openDevice(audio.DeviceOptions{Name: dev, Null: f.null})
+	if audioErr == nil {
+		defer out.Close()
+		eng = audio.NewEngine(audio.EngineOptions{Output: out})
+		defer eng.Close()
 	}
-	defer out.Close()
-	eng := audio.NewEngine(audio.EngineOptions{Output: out})
-	defer eng.Close()
 
 	pctx, cancelPlayer := context.WithCancel(context.Background())
 	playerDone := make(chan struct{})
@@ -210,12 +219,16 @@ func run(f flags) error {
 		a.Attach(c, pl, loader)
 	}
 
-	app, err = ui.New(ui.Options{
+	app, err := ui.New(ui.Options{
 		Display: disp, Profile: prof, Inputs: inputs,
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
 		Start: func(a *ui.App) {
 			var connect func()
 			connect = func() {
+				if audioErr != nil {
+					a.Replace(ui.NewMessageScreen("No audio device", fmt.Sprintf("Couldn't open the audio device (%v).\nCheck alsa_device in %s, or that nothing else is using the sound card.", audioErr, f.config), nil))
+					return
+				}
 				if cfgErr != nil {
 					a.Replace(ui.NewMessageScreen("Setup needed", configMessage(f.config, cfgErr), nil))
 					return
@@ -231,7 +244,7 @@ func run(f flags) error {
 						if err != nil {
 							srv, _ := cfg.ActiveServer()
 							a.Replace(ui.NewMessageScreen("Can't reach the server",
-								fmt.Sprintf("%s: %s.\n%s", srv.URL, subsonic.Classify(err), hint(err)), connect))
+								fmt.Sprintf("%s: %s.\n%s", displayURL(srv.URL), subsonic.Classify(err), hint(err)), connect))
 							return
 						}
 						if pl == nil { // first successful connect
@@ -248,6 +261,16 @@ func run(f flags) error {
 		return err
 	}
 	return app.Run(ctx)
+}
+
+// displayURL is raw without credentials, safe to show on screen or log.
+func displayURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<server>"
+	}
+	u.User = nil
+	return u.String()
 }
 
 func configMessage(path string, err error) string {
