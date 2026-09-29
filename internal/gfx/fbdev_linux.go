@@ -3,6 +3,7 @@
 package gfx
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -77,7 +78,15 @@ func OpenFB(path string) (*FB, error) {
 		f.Close()
 		return nil, err
 	}
+	if err := v.checkLayout(); err != nil {
+		f.Close()
+		return nil, err
+	}
 	size := ff.stride * ff.height
+	if uint64(size) > uint64(fx.SmemLen) {
+		f.Close()
+		return nil, fmt.Errorf("gfx: framebuffer memory %d < %d needed", fx.SmemLen, size)
+	}
 	mem, err := syscall.Mmap(int(f.Fd()), 0, size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
 		mem, err = mmapDevMem(fx.SmemStart, size)
@@ -87,6 +96,23 @@ func OpenFB(path string) (*FB, error) {
 		}
 	}
 	return &FB{f: f, mem: mem, fmt: ff}, nil
+}
+
+// checkLayout accepts only XRGB8888 (32 bpp) and RGB565 (16 bpp) channel layouts.
+func (v *fbVarScreenInfo) checkLayout() error {
+	r, g, b := v.Red, v.Green, v.Blue
+	ok := false
+	switch v.BitsPerPixel {
+	case 32:
+		ok = r.Offset == 16 && r.Length == 8 && g.Offset == 8 && g.Length == 8 && b.Offset == 0 && b.Length == 8
+	case 16:
+		ok = r.Offset == 11 && r.Length == 5 && g.Offset == 5 && g.Length == 6 && b.Offset == 0 && b.Length == 5
+	}
+	if !ok {
+		return fmt.Errorf("gfx: unsupported %d bpp pixel layout r%d/%d g%d/%d b%d/%d",
+			v.BitsPerPixel, r.Offset, r.Length, g.Offset, g.Length, b.Offset, b.Length)
+	}
+	return nil
 }
 
 func mmapDevMem(phys uintptr, size int) ([]byte, error) {
@@ -105,6 +131,9 @@ func mmapDevMem(phys uintptr, size int) ([]byte, error) {
 func (b *FB) Size() (int, int) { return b.fmt.width, b.fmt.height }
 
 func (b *FB) Present(c *Canvas) error {
+	if b.mem == nil {
+		return errors.New("gfx: framebuffer closed")
+	}
 	if c.W != b.fmt.width || c.H != b.fmt.height {
 		return fmt.Errorf("gfx: frame %dx%d != framebuffer %dx%d", c.W, c.H, b.fmt.width, b.fmt.height)
 	}
@@ -119,8 +148,19 @@ func (b *FB) Blank() {
 	}
 }
 
+// Close blanks and unmaps the framebuffer. It is idempotent.
 func (b *FB) Close() error {
+	if b.mem == nil {
+		return nil
+	}
 	b.Blank()
-	syscall.Munmap(b.mem)
-	return b.f.Close()
+	err := syscall.Munmap(b.mem)
+	b.mem = nil
+	if b.f != nil {
+		if e := b.f.Close(); err == nil {
+			err = e
+		}
+		b.f = nil
+	}
+	return err
 }
