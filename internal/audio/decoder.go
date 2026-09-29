@@ -46,6 +46,7 @@ type cDecoder struct {
 	rate      int
 	length    uint64
 	lengthSet bool
+	got       C.uint64_t // frames of the last Read; a field so passing &got to C doesn't heap-allocate per call
 }
 
 // OpenDecoder opens a miniaudio decoder that pulls bytes from src.
@@ -87,8 +88,9 @@ func (c *cDecoder) Read(dst []float32) (int, error) {
 	if frames == 0 {
 		return 0, nil
 	}
-	var got C.uint64_t
-	rc := C.mss_decoder_read(c.d, (*C.float)(unsafe.Pointer(&dst[0])), C.uint64_t(frames), &got)
+	c.got = 0
+	rc := C.mss_decoder_read(c.d, (*C.float)(unsafe.Pointer(&dst[0])), C.uint64_t(frames), &c.got)
+	got := c.got
 	if c.src.err != nil {
 		return int(got), c.src.err
 	}

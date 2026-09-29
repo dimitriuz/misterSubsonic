@@ -235,3 +235,35 @@ func TestFormatFromSuffix(t *testing.T) {
 		}
 	}
 }
+
+func TestDecoderReadDoesNotAllocate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		f    Format
+	}{{"tone-44k16.flac", FormatFLAC}, {"tone-44k16.mp3", FormatMP3}} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", tc.name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, err := OpenDecoder(bytes.NewReader(data), tc.f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			// 51 reads of 256 frames stay inside the half-second fixture.
+			buf := make([]float32, 256*2)
+			if _, err := d.Read(buf); err != nil { // warm up
+				t.Fatal(err)
+			}
+			var rerr error
+			n := testing.AllocsPerRun(50, func() { _, rerr = d.Read(buf) })
+			if rerr != nil {
+				t.Fatalf("read: %v", rerr)
+			}
+			if n != 0 {
+				t.Fatalf("Read allocates %v times per call, want 0", n)
+			}
+		})
+	}
+}
