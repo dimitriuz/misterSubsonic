@@ -39,6 +39,7 @@ type SearchScreen struct {
 	songs     songsView
 	more      [3]bool // a full page came back for this kind
 	gen       int     // bumped by every edit; older timers and results are stale
+	shown     int     // bumped whenever the results change; a next page is for one of them
 	cancel    func()
 	searched  string // query of the results shown
 	searching bool
@@ -73,6 +74,7 @@ func (s *SearchScreen) Text(a *App, r rune) bool {
 func (s *SearchScreen) edit(a *App, q []rune) {
 	s.query = q
 	s.gen++
+	s.err = nil
 	if s.cancel != nil {
 		s.cancel()
 		s.cancel = nil
@@ -103,6 +105,9 @@ func (s *SearchScreen) search(a *App) {
 		s.searching, s.cancel = false, nil
 		if err != nil {
 			s.err = err
+			if s.total() > 0 { // the old results stay up: say why they are stale
+				a.Toast("Search failed: %s", subsonic.Classify(err).String())
+			}
 			return
 		}
 		s.setResults(v.(*subsonic.SearchResult), q)
@@ -111,6 +116,7 @@ func (s *SearchScreen) search(a *App) {
 
 func (s *SearchScreen) setResults(r *subsonic.SearchResult, q string) {
 	s.searched = q
+	s.shown++
 	s.artists = artistsView{artists: r.Artists}
 	s.albums = albumsView{albums: r.Albums}
 	s.songs = songsView{songs: r.Songs}
@@ -145,7 +151,7 @@ func (s *SearchScreen) loadMore(a *App) {
 		return
 	}
 	s.more[kind] = false
-	q, gen := s.searched, s.gen
+	q, shown := s.searched, s.shown
 	var sq subsonic.SearchQuery
 	switch kind {
 	case resArtists:
@@ -156,7 +162,12 @@ func (s *SearchScreen) loadMore(a *App) {
 		sq.SongCount, sq.SongOffset = searchPage, len(s.songs.songs)
 	}
 	a.Load(s, func(ctx context.Context) (any, error) { return a.Library().Search3(ctx, q, sq) }, func(v any, err error) {
-		if gen != s.gen || err != nil {
+		if shown != s.shown { // the results this page belongs to are gone
+			return
+		}
+		if err != nil {
+			s.more[kind] = true // the next move near the end tries again
+			a.Toast("Couldn't load more: %s", subsonic.Classify(err).String())
 			return
 		}
 		r := v.(*subsonic.SearchResult)

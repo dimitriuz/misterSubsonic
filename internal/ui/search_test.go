@@ -224,3 +224,132 @@ func TestSearchErrorThenRetry(t *testing.T) {
 		t.Fatalf("after retry: err %v, artists %v", s.err, s.artists.artists)
 	}
 }
+
+// pump runs posted UI callbacks until cond holds (loads may stay in flight).
+func pump(t *testing.T, ta *testApp, cond func() bool) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for !cond() {
+		select {
+		case f := <-ta.post:
+			f()
+		case <-deadline:
+			t.Fatal("condition not reached")
+		}
+	}
+}
+
+func tuneSearch(t *testing.T, p Profile) (*testApp, *SearchScreen) {
+	ta := newTestApp(t, p)
+	var many []subsonic.Song
+	for i := range 70 {
+		many = append(many, subsonic.Song{ID: subsonic.ID(fmt.Sprint("t", i)), Title: fmt.Sprint("Tune ", i), Duration: 60})
+	}
+	ta.lib.albums = append(ta.lib.albums, subsonic.Album{ID: "al-9", Name: "Filler"})
+	ta.lib.tracks["al-9"] = many
+	ta.Push(NewHomeScreen())
+	s := NewSearchScreen()
+	ta.Push(s)
+	typeKeys(ta, "tune")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	for i := 0; !s.inResults && i < 11; i++ {
+		ta.press(input.BtnDown)
+	}
+	return ta, s
+}
+
+// A next page requested for the old query must not land on the new results.
+func TestSearchDropsStalePage(t *testing.T) {
+	ta, s := tuneSearch(t, ProfileCRT240)
+	old := make(chan struct{})
+	ta.lib.mu.Lock()
+	ta.lib.block = old
+	ta.lib.mu.Unlock()
+	typeKeys(ta, " 1")                   // "tune 1": 11 tracks; the search is still pending
+	for i := 0; s.more[resTracks]; i++ { // scroll until the next page is requested
+		if i > 60 {
+			t.Fatal("no next page requested")
+		}
+		ta.press(input.BtnDown)
+	}
+	waitSearches(t, ta, 2)
+	ta.lib.mu.Lock()
+	ta.lib.block = nil
+	ta.lib.mu.Unlock()
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	pump(t, ta, func() bool { return s.searched == "tune 1" })
+	close(old) // the old page arrives after the new results
+	pump(t, ta, func() bool { return ta.loads == 0 })
+	if len(s.songs.songs) != 11 {
+		t.Fatalf("%d songs after a stale page, want 11", len(s.songs.songs))
+	}
+}
+
+func TestSearchErrorOverResultsToasts(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewHomeScreen())
+	s := NewSearchScreen()
+	ta.Push(s)
+	typeKeys(ta, "a")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	if s.total() == 0 {
+		t.Fatal("no first results")
+	}
+	ta.lib.err = errOffline
+	typeKeys(ta, "b")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	want := "Search failed: " + subsonic.Classify(errOffline).String()
+	if s.err == nil || s.total() == 0 || len(ta.toasts) == 0 || ta.toasts[len(ta.toasts)-1].text != want {
+		t.Fatalf("err %v, %d results, toasts %v; want toast %q", s.err, s.total(), ta.toasts, want)
+	}
+}
+
+func TestSearchFailedPageIsReportedAndRetried(t *testing.T) {
+	ta, s := tuneSearch(t, ProfileCRT240)
+	ta.lib.mu.Lock()
+	ta.lib.err = errOffline
+	ta.lib.mu.Unlock()
+	for range 60 {
+		ta.press(input.BtnDown)
+	}
+	ta.settle(t)
+	want := "Couldn't load more: " + subsonic.Classify(errOffline).String()
+	if len(s.songs.songs) != searchPage || !s.more[resTracks] || len(ta.toasts) == 0 || ta.toasts[len(ta.toasts)-1].text != want {
+		t.Fatalf("%d songs, more %v, toasts %v; want toast %q", len(s.songs.songs), s.more, ta.toasts, want)
+	}
+	ta.lib.mu.Lock()
+	ta.lib.err = nil
+	ta.lib.mu.Unlock()
+	ta.press(input.BtnUp)
+	ta.press(input.BtnDown)
+	ta.settle(t)
+	if len(s.songs.songs) != 70 || s.more[resTracks] {
+		t.Fatalf("after retry: %d songs, more %v", len(s.songs.songs), s.more)
+	}
+}
+
+func TestSearchEditClearsError(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewHomeScreen())
+	s := NewSearchScreen()
+	ta.Push(s)
+	ta.lib.err = errOffline
+	typeKeys(ta, "b")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	if s.err == nil {
+		t.Fatal("no error to clear")
+	}
+	ta.onInput(input.Event{Button: input.BtnB, Kind: input.Press, Rune: '\b'})
+	if s.err != nil {
+		t.Fatalf("error %v survived emptying the field", s.err)
+	}
+}
