@@ -860,3 +860,73 @@ func TestEmitDoesNotAllocate(t *testing.T) {
 		}
 	}
 }
+
+// Close closes the sources of commands the engine never ran, and of tracks
+// handed to it after it closed.
+func TestEngineCloseClosesSourcesItNeverRan(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	a := newFakeSource(ramp(1000, 0), OutputRate)
+	a.block = make(chan struct{}) // the run goroutine sits in a read
+	e.Play(Track{ID: 1, Source: a})
+	waitFor(t, "a being read", func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.busy != nil })
+	var queued []*fakeSource
+	for i := range 20 {
+		s := newFakeSource(ramp(10, 0), OutputRate)
+		queued = append(queued, s)
+		e.QueueNext(Track{ID: uint64(10 + i), Source: s})
+	}
+	e.Close()
+	late := newFakeSource(ramp(10, 0), OutputRate)
+	e.Play(Track{ID: 99, Source: late})
+	for i, s := range append(queued, a, late) {
+		if !s.isClosed() {
+			t.Errorf("source %d left open", i)
+		}
+	}
+}
+
+// A successor that finishes opening after Close has its decoder and source
+// closed too; its goroutine doesn't wait forever to hand it over.
+func TestEngineOpenerFinishingAfterCloseIsClosed(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	hold := make(chan struct{})
+	var srcs []*fakeSource
+	for i := range 6 { // more than the result buffer holds
+		s := newFakeSource(ramp(10, 0), OutputRate)
+		s.openHold = hold
+		s.openStarted = make(chan struct{})
+		srcs = append(srcs, s)
+		e.QueueNext(Track{ID: uint64(1 + i), Source: s})
+	}
+	for _, s := range srcs {
+		<-s.openStarted // every open is under way, stuck until hold
+	}
+	go func() { time.Sleep(50 * time.Millisecond); close(hold) }()
+	e.Close()
+	waitFor(t, "every late decoder closed", func() bool {
+		for _, s := range srcs {
+			if s.decClosed.Load() != 1 {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func TestEngineEventsCloseAfterClose(t *testing.T) {
+	e := newTestEngine(newFakeOutput(1000))
+	e.Close()
+	done := make(chan struct{})
+	go func() {
+		for range e.Events() {
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Events() stayed open after Close")
+	}
+}

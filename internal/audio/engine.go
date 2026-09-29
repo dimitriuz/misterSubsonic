@@ -83,24 +83,34 @@ type openResult struct {
 	t   Track
 }
 
+// command is one call for the run goroutine. src is the track source it
+// hands over: if the engine closes before running it, Close closes src.
+type command struct {
+	run func()
+	src io.ReadSeeker
+}
+
 // Engine decodes tracks into an Output. Decoder state is owned by the run
 // goroutine and public methods post commands to it. A separate monitor
 // goroutine turns device progress into Started/Ended events, so events keep
 // flowing even while a decode is blocked on a slow network read.
 type Engine struct {
-	o      EngineOptions
-	cmds   chan func()
-	events chan Event
-	openCh chan openResult
-	quit   chan struct{}
-	done   chan struct{}
+	o       EngineOptions
+	cmds    chan command
+	events  chan Event // closed once the engine has closed
+	openCh  chan openResult
+	quit    chan struct{}
+	done    chan struct{}
+	openers sync.WaitGroup // queued tracks still opening
+
+	sendMu sync.Mutex // orders commands against Close
+	closed bool       // guarded by sendMu
 
 	mu      sync.Mutex
 	segs    []segment // guarded by mu
 	evq     []Event   // guarded by mu
 	busy    io.Closer // guarded by mu: source of the voice being decoded
 	killed  io.Closer // guarded by mu: source closed by interrupt, reason for failed open
-	closed  bool      // guarded by mu
 	seekReq *seekReq  // guarded by mu: latest requested seek, not yet run
 
 	// Owned by the run goroutine.
@@ -138,7 +148,7 @@ func NewEngine(o EngineOptions) *Engine {
 	}
 	e := &Engine{
 		o:       o,
-		cmds:    make(chan func(), 64),
+		cmds:    make(chan command, 64),
 		events:  make(chan Event, 256),
 		openCh:  make(chan openResult, 4),
 		quit:    make(chan struct{}),
@@ -156,7 +166,7 @@ func (e *Engine) Events() <-chan Event { return e.events }
 // Play stops whatever is playing and starts t immediately.
 func (e *Engine) Play(t Track) {
 	e.dropSeekReq()
-	e.send(func() { e.doPlay(t) })
+	e.send(func() { e.doPlay(t) }, t.Source)
 	e.interrupt(t.Source)
 }
 
@@ -165,15 +175,15 @@ func (e *Engine) Play(t Track) {
 // already finished decoding (or finished playing), the queued track starts
 // as soon as it is open. A track still opening 10 s after it is needed is
 // dropped with EventError (ErrOpenTimeout) and the queue ends.
-func (e *Engine) QueueNext(t Track) { e.send(func() { e.doQueueNext(t) }) }
+func (e *Engine) QueueNext(t Track) { e.send(func() { e.doQueueNext(t) }, t.Source) }
 
 // ClearNext drops the queued track.
-func (e *Engine) ClearNext() { e.send(e.cancelNext) }
+func (e *Engine) ClearNext() { e.send(e.cancelNext, nil) }
 
 // Stop halts playback and discards everything buffered.
 func (e *Engine) Stop() {
 	e.dropSeekReq()
-	e.send(e.doStop)
+	e.send(e.doStop, nil)
 	e.interrupt(nil)
 }
 
@@ -219,7 +229,7 @@ func (e *Engine) Seek(id uint64, pos time.Duration) {
 		if err := e.doSeek(target.id, target.pos); err != nil {
 			e.queueEvent(Event{Kind: EventSeekFailed, TrackID: target.id, Err: err})
 		}
-	})
+	}, nil)
 }
 
 func (e *Engine) SetPaused(p bool)    { e.o.Output.SetPaused(p) }
@@ -242,31 +252,49 @@ func (e *Engine) Position() (id uint64, pos time.Duration, ok bool) {
 	return 0, 0, false
 }
 
-// Close stops the engine goroutine. The Output is not closed.
+// Close stops the engine and closes every track source it still holds,
+// including those of commands it never got to and of successors that
+// finished opening too late. Events() is closed afterwards. The Output is
+// not closed.
 func (e *Engine) Close() {
-	e.mu.Lock()
+	e.sendMu.Lock()
 	if e.closed {
-		e.mu.Unlock()
+		e.sendMu.Unlock()
 		return
 	}
 	e.closed = true
-	e.mu.Unlock()
+	e.sendMu.Unlock()
 	e.interrupt(nil)
 	close(e.quit)
 	<-e.done
+	go func() { e.openers.Wait(); close(e.openCh) }()
+	for r := range e.openCh {
+		closeVoice(r.v)
+	}
+	for {
+		select {
+		case c := <-e.cmds:
+			closeSource(c.src)
+		default:
+			return
+		}
+	}
 }
 
-func (e *Engine) send(f func()) bool {
-	e.mu.Lock()
-	closed := e.closed
-	e.mu.Unlock()
-	if closed {
+// send queues f for the run goroutine. src is the track source f takes over;
+// if the engine is closed, src is closed instead.
+func (e *Engine) send(f func(), src io.ReadSeeker) bool {
+	e.sendMu.Lock()
+	defer e.sendMu.Unlock()
+	if e.closed {
+		closeSource(src)
 		return false
 	}
 	select {
-	case e.cmds <- f:
+	case e.cmds <- command{run: f, src: src}:
 		return true
 	case <-e.done:
+		closeSource(src)
 		return false
 	}
 }
@@ -327,8 +355,8 @@ func (e *Engine) run() {
 func (e *Engine) poll() bool {
 	for {
 		select {
-		case f := <-e.cmds:
-			f()
+		case c := <-e.cmds:
+			c.run()
 		case r := <-e.openCh:
 			e.onOpened(r)
 		case <-e.quit:
@@ -343,8 +371,8 @@ func (e *Engine) wait(d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
-	case f := <-e.cmds:
-		f()
+	case c := <-e.cmds:
+		c.run()
 	case r := <-e.openCh:
 		e.onOpened(r)
 	case <-e.quit:
@@ -361,6 +389,7 @@ func (e *Engine) queueEvent(ev Event) {
 }
 
 func (e *Engine) monitor() {
+	defer close(e.events)
 	t := time.NewTicker(e.o.Poll)
 	defer t.Stop()
 	for {
@@ -613,9 +642,15 @@ func (e *Engine) doQueueNext(t Track) {
 	e.opening = &t
 	e.openedAt = time.Now()
 	gen := e.gen
+	e.openers.Add(1)
 	go func() {
+		defer e.openers.Done()
 		v, err := e.openVoice(t)
-		e.openCh <- openResult{gen: gen, v: v, err: err, t: t}
+		select {
+		case e.openCh <- openResult{gen: gen, v: v, err: err, t: t}:
+		case <-e.done:
+			closeVoice(v) // the engine stopped: nobody else will
+		}
 	}()
 }
 

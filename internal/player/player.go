@@ -221,6 +221,7 @@ func (p *Player) Run(ctx context.Context) {
 	}
 	p.applyVolume()
 	go p.scrobbles.Flush(ctx, p.o.API)
+	events := p.o.Engine.Events()
 	for {
 		select {
 		case <-ctx.Done():
@@ -231,7 +232,11 @@ func (p *Player) Run(ctx context.Context) {
 			f()
 		case r := <-p.opens:
 			p.onOpened(r)
-		case ev := <-p.o.Engine.Events():
+		case ev, ok := <-events:
+			if !ok {
+				events = nil // the engine closed; stop listening instead of spinning
+				continue
+			}
 			p.onEngine(ev)
 		case <-tick:
 			p.onTick()

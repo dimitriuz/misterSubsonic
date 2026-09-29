@@ -711,3 +711,17 @@ func TestMuteKeepsTheVolume(t *testing.T) {
 		t.Fatalf("unmuted gain %v, want the -10 dB volume", v)
 	}
 }
+
+// When the engine closes its event stream, the player stops reading it
+// rather than spinning on the closed channel, and still takes commands.
+func TestPlayerStopsReadingAClosedEngineStream(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.do(func() {})
+	close(h.eng.events)
+	time.Sleep(50 * time.Millisecond)
+	h.p.PlayNow(songs(1, 300), 0)
+	h.waitFor("engine.Play", func() bool { return h.eng.playCount() == 1 })
+	if n := h.eng.eventReqs.Load(); n > 2 {
+		t.Fatalf("Events() read %d times: the player spun on the closed stream", n)
+	}
+}

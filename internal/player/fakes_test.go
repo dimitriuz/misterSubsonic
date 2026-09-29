@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ type fakeEngine struct {
 	pos       time.Duration
 	posOK     bool
 	events    chan audio.Event
+	eventReqs atomic.Int32 // Events() calls
 }
 
 func newFakeEngine() *fakeEngine { return &fakeEngine{events: make(chan audio.Event, 64)} }
@@ -53,7 +55,7 @@ func (e *fakeEngine) Stop()                      { e.mu.Lock(); e.stops++; e.pos
 func (e *fakeEngine) SetPaused(p bool)           { e.mu.Lock(); e.paused = p; e.mu.Unlock() }
 func (e *fakeEngine) SetVolume(v float32)        { e.mu.Lock(); e.volume = v; e.mu.Unlock() }
 func (e *fakeEngine) getVolume() float32         { e.mu.Lock(); defer e.mu.Unlock(); return e.volume }
-func (e *fakeEngine) Events() <-chan audio.Event { return e.events }
+func (e *fakeEngine) Events() <-chan audio.Event { e.eventReqs.Add(1); return e.events }
 
 // Seek records the call and returns at once, like audio.Engine. The seek
 // completes (position moves, or EventSeekFailed if seekErr is set) right

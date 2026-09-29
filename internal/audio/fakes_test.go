@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -70,6 +71,8 @@ type fakeSource struct {
 	openStartedOnce sync.Once     // protects closing openStarted
 	seekBlock       chan struct{} // blocks SeekFrame if set, until closed
 	eofWithData     bool          // the last Read returns its frames together with io.EOF
+	openHold        chan struct{} // fakeOpen waits for it even after the source is closed
+	decClosed       atomic.Int32  // decoders of this source closed
 	once            sync.Once
 	closed          chan struct{}
 }
@@ -110,6 +113,9 @@ func fakeOpen(src io.ReadSeeker, _ Format) (Decoder, error) {
 			return nil, errClosed
 		}
 	}
+	if s.openHold != nil {
+		<-s.openHold // a slow open that notices nothing until it finishes
+	}
 	return &fakeDecoder{src: s}, nil
 }
 
@@ -117,7 +123,7 @@ var errClosed = errors.New("source closed")
 
 func (d *fakeDecoder) SampleRate() int      { return d.src.rate }
 func (d *fakeDecoder) LengthFrames() uint64 { return uint64(len(d.src.pcm) / 2) }
-func (d *fakeDecoder) Close() error         { return nil }
+func (d *fakeDecoder) Close() error         { d.src.decClosed.Add(1); return nil }
 func (d *fakeDecoder) SeekFrame(f uint64) error {
 	if d.src.seekBlock != nil {
 		select {
