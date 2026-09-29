@@ -3,9 +3,11 @@ package gfx
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -236,14 +238,31 @@ func TestTruncateKeepsValidUTF8(t *testing.T) {
 
 // A PNG header claiming a gigantic image is rejected before decoding.
 func TestDecodeRejectsDecompressionBomb(t *testing.T) {
-	m := image.NewNRGBA(image.Rect(0, 0, 1, 1))
-	var buf bytes.Buffer
-	png.Encode(&buf, m)
-	b := buf.Bytes()
-	// IHDR width/height live at bytes 16..23; claim 20000x20000.
-	binary.BigEndian.PutUint32(b[16:], 20000)
-	binary.BigEndian.PutUint32(b[20:], 20000)
-	if _, err := DecodeImage(b, 100, 100); err == nil {
-		t.Fatal("20000x20000 image accepted")
+	for _, dim := range [][2]uint32{{20000, 20000}, {65536, 65536}} {
+		m := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+		var buf bytes.Buffer
+		png.Encode(&buf, m)
+		b := buf.Bytes()
+		// IHDR width/height live at bytes 16..23; fix the chunk CRC so the
+		// header parses and only the size guard can reject it.
+		binary.BigEndian.PutUint32(b[16:], dim[0])
+		binary.BigEndian.PutUint32(b[20:], dim[1])
+		binary.BigEndian.PutUint32(b[29:], crc32.ChecksumIEEE(b[12:29]))
+		_, err := DecodeImage(b, 100, 100)
+		if err == nil || !strings.Contains(err.Error(), "too large") {
+			t.Fatalf("%dx%d: err = %v, want \"too large\"", dim[0], dim[1], err)
+		}
 	}
+}
+
+func TestOpaqueTextIsExactColour(t *testing.T) {
+	f := testFont(t, 40)
+	c := NewCanvas(60, 60)
+	f.Draw(c, 5, 50, "H", RGB(255, 255, 255), c.Bounds())
+	for _, p := range c.Pix {
+		if Color(p)|0xFF000000 == RGB(255, 255, 255) {
+			return
+		}
+	}
+	t.Fatal("no pixel reached exact white")
 }

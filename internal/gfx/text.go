@@ -79,13 +79,17 @@ type Font struct {
 
 // Face returns t at size px (pixel em height).
 func (t *Typeface) Face(px int) (*Font, error) {
-	f := &Font{fonts: t.fonts, cache: map[rune]*glyph{}}
-	for _, sf := range t.fonts {
+	f := &Font{cache: map[rune]*glyph{}}
+	for i, sf := range t.fonts {
 		face, err := opentype.NewFace(sf, &opentype.FaceOptions{Size: float64(px), DPI: 72, Hinting: font.HintingFull})
 		if err != nil {
-			return nil, err
+			if i == 0 {
+				return nil, err
+			}
+			continue // a broken fallback font must not disable all text
 		}
 		f.faces = append(f.faces, face)
+		f.fonts = append(f.fonts, sf)
 	}
 	m := f.faces[0].Metrics()
 	f.ascent, f.descent = m.Ascent.Ceil(), m.Descent.Ceil()
@@ -173,7 +177,11 @@ func (f *Font) Draw(c *Canvas, x, y int, s string, col Color, clip Rect) int {
 				crow := c.Pix[py*c.W:]
 				for px := area.X; px < area.Right(); px++ {
 					a := uint32(mrow[px-gx]) * alpha / 255
-					if a != 0 {
+					switch a {
+					case 0:
+					case 255:
+						crow[px] = v
+					default:
 						crow[px] = blend(crow[px], v, a)
 					}
 				}

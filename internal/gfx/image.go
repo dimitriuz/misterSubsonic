@@ -18,7 +18,7 @@ func DecodeImage(data []byte, maxW, maxH int) (*Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gfx: decode image: %w", err)
 	}
-	if cfg.Width*cfg.Height > MaxDecodePixels {
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > MaxDecodePixels {
 		return nil, fmt.Errorf("gfx: image %dx%d too large", cfg.Width, cfg.Height)
 	}
 	m, _, err := image.Decode(bytes.NewReader(data))
