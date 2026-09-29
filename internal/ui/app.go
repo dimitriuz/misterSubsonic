@@ -168,6 +168,7 @@ type App struct {
 	swallowed  map[input.Button]bool
 	insecure   bool
 	stars      map[starKey]bool       // star changes made in this session
+	starBusy   map[starKey]bool       // star requests in flight
 	starGen    int                    // bumped by every successful star change
 	artists    []subsonic.ArtistIndex // getArtists, fetched once per connection
 	cfg        *config.Config
@@ -194,7 +195,7 @@ func New(o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
-		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now()}
+		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}, starBusy: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now()}
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err
@@ -273,6 +274,7 @@ func (a *App) Push(s Screen) {
 }
 
 // Pop closes the top screen (never the last one) and cancels its loads.
+// The screen shown again is told (Shown), so it can refresh.
 func (a *App) Pop() {
 	if len(a.stack) <= 1 {
 		return
@@ -281,6 +283,9 @@ func (a *App) Pop() {
 	top.cancel()
 	a.stack = a.stack[:len(a.stack)-1]
 	a.dirty = true
+	if sh, ok := a.Top().(shower); ok {
+		sh.Shown(a)
+	}
 }
 
 // popTo pops screens until pred matches the top; if no screen in the stack

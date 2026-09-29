@@ -60,20 +60,24 @@ func (a *App) isStarred(it starItem) bool {
 	return it.server
 }
 
-// toggleStar stars or unstars it on the server (off the UI goroutine,
-// under owner) and remembers the new state once the server agrees.
-func (a *App) toggleStar(owner Screen, it starItem) {
+// toggleStar stars or unstars it on the server (off the UI goroutine) and
+// remembers the new state once the server agrees. The request runs under
+// the root screen, so leaving the screen it came from doesn't lose the
+// answer; a second toggle while one is in flight is ignored.
+func (a *App) toggleStar(it starItem) {
 	lib := a.Library()
-	if lib == nil {
+	if lib == nil || len(a.stack) == 0 || a.starBusy[it.key()] {
 		return
 	}
 	on := !a.isStarred(it)
-	a.Load(owner, func(ctx context.Context) (any, error) {
+	a.starBusy[it.key()] = true
+	a.Load(a.stack[0].s, func(ctx context.Context) (any, error) {
 		if on {
 			return nil, lib.Star(ctx, it.target())
 		}
 		return nil, lib.Unstar(ctx, it.target())
 	}, func(_ any, err error) {
+		delete(a.starBusy, it.key())
 		verb := "unstar"
 		if on {
 			verb = "star"

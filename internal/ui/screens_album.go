@@ -81,7 +81,7 @@ func (s *AlbumScreen) Handle(a *App, e input.Event) bool {
 		case s.list.Focus == 1:
 			s.play(a, 0, true)
 		case s.list.Focus == 2:
-			a.toggleStar(s, albumStar(s.info()))
+			a.toggleStar(albumStar(s.info()))
 		default:
 			s.play(a, s.list.Focus-albumActionRows, false)
 		}

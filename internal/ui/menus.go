@@ -154,7 +154,7 @@ func starEntry(a *App, it starItem) menuEntry {
 	if a.isStarred(it) {
 		label = "Unstar"
 	}
-	return menuEntry{label, func(a *App) { a.toggleStar(a.Top(), it) }}
+	return menuEntry{label, func(a *App) { a.toggleStar(it) }}
 }
 
 // The menu builders take the App to label Star/Unstar.

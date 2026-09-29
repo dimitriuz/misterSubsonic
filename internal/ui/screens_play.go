@@ -133,7 +133,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		pl.TogglePause()
 	case input.BtnX:
 		if song, ok := st.Current(); ok {
-			a.toggleStar(s, songStar(song))
+			a.toggleStar(songStar(song))
 		}
 	case input.BtnL:
 		pl.Prev()

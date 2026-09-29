@@ -81,18 +81,18 @@ func TestToggleStarRemembersAndToasts(t *testing.T) {
 	s := &probe{}
 	ta.Push(s)
 	it := albumStar(ta.lib.albums[1])
-	ta.toggleStar(s, it)
+	ta.toggleStar(it)
 	ta.settle(t)
 	if !ta.isStarred(it) || ta.toasts[0].text != "Starred Homogenic" {
 		t.Fatalf("starred %v, toasts %v", ta.isStarred(it), ta.toasts)
 	}
-	ta.toggleStar(s, it)
+	ta.toggleStar(it)
 	ta.settle(t)
 	if ta.isStarred(it) || !slices.Equal(ta.lib.stars, []string{"star al-2", "unstar al-2"}) {
 		t.Fatalf("starred %v, calls %v", ta.isStarred(it), ta.lib.stars)
 	}
 	ta.lib.err = errOffline
-	ta.toggleStar(s, it)
+	ta.toggleStar(it)
 	ta.settle(t)
 	if ta.isStarred(it) {
 		t.Fatal("a failed star changed the state")

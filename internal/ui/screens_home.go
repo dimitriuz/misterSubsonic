@@ -72,6 +72,17 @@ func (s *HomeScreen) Enter(a *App) {
 	})
 }
 
+// sync drops the Resume row once something is playing: resuming then
+// would replace the live queue.
+func (s *HomeScreen) sync(a *App) {
+	if s.resume != nil && a.hasQueue() {
+		s.resume = nil
+		if s.list.Focus > 0 {
+			s.list.Focus-- // keep the focus on the same item
+		}
+	}
+}
+
 func (s *HomeScreen) items() []homeItem {
 	var out []homeItem
 	if s.resume != nil {
@@ -82,6 +93,7 @@ func (s *HomeScreen) items() []homeItem {
 }
 
 func (s *HomeScreen) Handle(a *App, e input.Event) bool {
+	s.sync(a)
 	items := s.items()
 	if s.list.Handle(e, len(items)) {
 		return true
@@ -104,6 +116,7 @@ func (s *HomeScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *HomeScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
+	s.sync(a)
 	items := s.items()
 	s.list.Draw(c, area, len(items), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
 		col := colText

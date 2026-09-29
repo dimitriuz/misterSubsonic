@@ -35,7 +35,20 @@ func sessionApp(t *testing.T, cfg *config.Config) (*testApp, *connectRecorder) {
 	ta.o.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	ta.o.Connect = rec.connect
 	ta.Detach()
+	t.Cleanup(func() { waitSaves(ta) }) // before the temp dir goes
 	return ta, rec
+}
+
+// waitSaves lets config writes in flight finish (they post back when done).
+func waitSaves(ta *testApp) {
+	deadline := time.Now().Add(2 * time.Second)
+	for (ta.saving || len(ta.post) > 0) && time.Now().Before(deadline) {
+		select {
+		case f := <-ta.post:
+			f()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }
 
 func messageTitle(ta *testApp) string {

@@ -19,7 +19,7 @@ func TestStarStateIsPerKind(t *testing.T) {
 	ta.Push(s)
 	artist := starItem{kind: starArtist, id: "7", name: "Artist seven"}
 	album := starItem{kind: starAlbum, id: "7", name: "Album seven"}
-	ta.toggleStar(s, artist)
+	ta.toggleStar(artist)
 	ta.settle(t)
 	if !ta.isStarred(artist) {
 		t.Fatal("artist 7 not starred")
@@ -206,7 +206,7 @@ func TestStarredRefreshesAfterAStarChange(t *testing.T) {
 	}
 	star := func(t *testing.T, ta *testApp, owner Screen) {
 		ta.lib.starred.Albums = append(ta.lib.starred.Albums, ta.lib.albums[0]) // the server's view
-		ta.toggleStar(owner, albumStar(ta.lib.albums[0]))
+		ta.toggleStar(albumStar(ta.lib.albums[0]))
 		ta.settle(t)
 	}
 	t.Run("sidebar", func(t *testing.T) {

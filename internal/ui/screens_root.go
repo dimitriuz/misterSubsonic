@@ -80,6 +80,14 @@ func (s *SidebarRoot) open(a *App) Screen {
 	return s.children[s.sel]
 }
 
+// Shown passes on to the section when the root is visible again (a screen
+// above it was closed).
+func (s *SidebarRoot) Shown(a *App) {
+	if sh, ok := s.current().(shower); ok {
+		sh.Shown(a)
+	}
+}
+
 // current is the selected section, nil while it hasn't been opened yet.
 func (s *SidebarRoot) current() Screen { return s.children[s.sel] }
 

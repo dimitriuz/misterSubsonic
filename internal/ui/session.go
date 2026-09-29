@@ -80,7 +80,7 @@ func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 	a.Attach(lib, pl, art)
 	a.conn = info
 	a.SetInsecure(info.Server.InsecureSkipVerify)
-	a.artists, a.stars, a.starGen = nil, map[starKey]bool{}, 0
+	a.artists, a.stars, a.starBusy, a.starGen = nil, map[starKey]bool{}, map[starKey]bool{}, 0
 	a.Replace(NewRootScreen(a.P))
 	a.drainInput()
 }
