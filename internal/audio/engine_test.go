@@ -67,6 +67,24 @@ func TestEngineGaplessAt48k(t *testing.T) {
 
 // Two halves of a 44.1k file, played gaplessly through the resampler, must
 // produce exactly the same 48k output as the whole file.
+// gatedReader returns its first bytes freely, then blocks until gate is
+// closed, so a short track can't finish before the test has queued its
+// successors (the player queues them well ahead of the end).
+type gatedReader struct {
+	*bytes.Reader
+	gate <-chan struct{}
+	n    int
+}
+
+func (g *gatedReader) Read(p []byte) (int, error) {
+	if g.n > 1024 {
+		<-g.gate
+	}
+	n, err := g.Reader.Read(p)
+	g.n += n
+	return n, err
+}
+
 func TestEngineGaplessResampledMatchesWholeFile(t *testing.T) {
 	read := func(name string) *bytes.Reader {
 		b, err := os.ReadFile("testdata/" + name)
@@ -79,10 +97,12 @@ func TestEngineGaplessResampledMatchesWholeFile(t *testing.T) {
 		out := newFakeOutput(1 << 20)
 		e := NewEngine(EngineOptions{Output: out, Poll: time.Millisecond})
 		defer e.Close()
-		e.Play(Track{ID: 1, Source: read(tracks[0]), Format: FormatFLAC})
+		gate := make(chan struct{})
+		e.Play(Track{ID: 1, Source: &gatedReader{Reader: read(tracks[0]), gate: gate}, Format: FormatFLAC})
 		for i, name := range tracks[1:] {
 			e.QueueNext(Track{ID: uint64(i + 2), Source: read(name), Format: FormatFLAC})
 		}
+		close(gate) // every successor is queued; the first track may finish now
 		last := uint64(len(tracks))
 		deadline := time.After(3 * time.Second)
 		for {
