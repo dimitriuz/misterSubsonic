@@ -38,3 +38,27 @@ func TestNullDeviceConsumesAndFlushes(t *testing.T) {
 	}
 	out.SetPaused(false)
 }
+
+// I3: Flush must not spin forever when the device callback has stopped
+// (device error, unplugged USB DAC); it drains the ring itself.
+func TestFlushAfterDeviceStopped(t *testing.T) {
+	out, err := OpenDevice(DeviceOptions{Null: true, RingFrames: 4800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if n := out.Write(make([]float32, 4800*2)); n != 4800 {
+		t.Fatalf("Write took %d frames, want 4800", n)
+	}
+	stopDeviceForTest()
+	done := make(chan struct{})
+	go func() { out.Flush(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Flush did not return with the device callback stopped")
+	}
+	if got := out.Consumed(); got != 4800 {
+		t.Fatalf("after Flush Consumed = %d, want 4800 (everything written)", got)
+	}
+}

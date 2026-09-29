@@ -43,5 +43,6 @@ uint64_t mss_device_consumed(void);
 void mss_device_set_paused(int paused);
 void mss_device_set_volume(float volume);
 void mss_device_flush(void);
+void mss_device_stop_for_test(void);
 
 #endif

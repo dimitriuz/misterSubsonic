@@ -15,26 +15,33 @@ static volatile int g_flush_req;
 static volatile uint64_t g_consumed;
 static volatile float g_volume = 1.0f;
 
+/* Discards everything in the ring, counting it as consumed. Only the ring's
+   consumer may call it: the callback, or the producer once the callback has
+   stopped for good. */
+static void drain_ring(void) {
+    ma_uint32 avail = ma_pcm_rb_available_read(&g_ring);
+    while (avail > 0) {
+        ma_uint32 n = avail;
+        void* p;
+        if (ma_pcm_rb_acquire_read(&g_ring, &n, &p) != MA_SUCCESS || n == 0) {
+            break;
+        }
+        ma_pcm_rb_commit_read(&g_ring, n);
+        __atomic_add_fetch(&g_consumed, n, __ATOMIC_SEQ_CST);
+        avail -= n;
+    }
+}
+
 static void data_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames) {
     (void)dev;
     (void)in;
     float* dst = (float*)out;
-    if (g_flush_req) {
-        ma_uint32 avail = ma_pcm_rb_available_read(&g_ring);
-        while (avail > 0) {
-            ma_uint32 n = avail;
-            void* p;
-            if (ma_pcm_rb_acquire_read(&g_ring, &n, &p) != MA_SUCCESS || n == 0) {
-                break;
-            }
-            ma_pcm_rb_commit_read(&g_ring, n);
-            __atomic_add_fetch(&g_consumed, n, __ATOMIC_SEQ_CST);
-            avail -= n;
-        }
+    if (__atomic_load_n(&g_flush_req, __ATOMIC_SEQ_CST)) {
+        drain_ring();
         __atomic_store_n(&g_flush_req, 0, __ATOMIC_SEQ_CST);
     }
     ma_uint32 done = 0;
-    if (!g_paused) {
+    if (!__atomic_load_n(&g_paused, __ATOMIC_SEQ_CST)) {
         while (done < frames) {
             ma_uint32 n = frames - done;
             void* p;
@@ -47,7 +54,8 @@ static void data_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames)
         }
         __atomic_add_fetch(&g_consumed, done, __ATOMIC_SEQ_CST);
     }
-    float vol = g_volume;
+    float vol;
+    __atomic_load(&g_volume, &vol, __ATOMIC_RELAXED);
     if (vol != 1.0f) {
         for (ma_uint32 i = 0; i < done * 2; i++) {
             dst[i] *= vol;
@@ -153,13 +161,36 @@ void mss_device_set_paused(int paused) {
 }
 
 void mss_device_set_volume(float volume) {
-    g_volume = volume;
+    __atomic_store(&g_volume, &volume, __ATOMIC_RELAXED);
+}
+
+/* The callback is not running and won't run again unless we restart it. */
+static int device_stopped(void) {
+    ma_device_state st = ma_device_get_state(&g_device);
+    return st == ma_device_state_stopped || st == ma_device_state_uninitialized;
 }
 
 void mss_device_flush(void) {
+    if (device_stopped()) {
+        drain_ring();
+        return;
+    }
     __atomic_store_n(&g_flush_req, 1, __ATOMIC_SEQ_CST);
-    while (__atomic_load_n(&g_flush_req, __ATOMIC_SEQ_CST)) {
+    /* The callback normally clears the request within one period (20 ms).
+       Wait at most 200 ms so a stalled or stopped device can't hang us. */
+    for (int i = 0; i < 200 && __atomic_load_n(&g_flush_req, __ATOMIC_SEQ_CST); i++) {
         struct timespec ts = { 0, 1000000 };
         nanosleep(&ts, NULL);
     }
+    if (__atomic_load_n(&g_flush_req, __ATOMIC_SEQ_CST)) {
+        if (device_stopped()) {
+            drain_ring(); /* no consumer left: the single producer may drain */
+        }
+        __atomic_store_n(&g_flush_req, 0, __ATOMIC_SEQ_CST);
+    }
+}
+
+/* Test hook: stops the device callback as a failed or unplugged device would. */
+void mss_device_stop_for_test(void) {
+    ma_device_stop(&g_device);
 }

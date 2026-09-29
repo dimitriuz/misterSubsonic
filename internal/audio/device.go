@@ -82,3 +82,7 @@ func (device) SetPaused(p bool) {
 func (device) SetVolume(v float32) { C.mss_device_set_volume(C.float(v)) }
 func (device) Flush()              { C.mss_device_flush() }
 func (device) Close() error        { C.mss_device_close(); return nil }
+
+// stopDeviceForTest is a test hook: it stops the device callback, as a
+// failed or unplugged device would, without closing the device.
+func stopDeviceForTest() { C.mss_device_stop_for_test() }
