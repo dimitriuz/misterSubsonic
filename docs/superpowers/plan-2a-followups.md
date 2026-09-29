@@ -210,3 +210,36 @@ And also:
   - `check-notices.sh` passes when `go list` fails (no `pipefail`) and checks the host dependency graph, not the ARM one.
 - **Docs:** the README's Install section doesn't list `config.example.toml`, `LICENSE` and `THIRD_PARTY.txt`.
 - **To check on the device:** `flock --help` and `bash --version`; `pidof`/`ps` with SAM running; what Main_MiSTer sends a script it cancels; `RestoreText` on `/dev/tty0` if Main_MiSTer switched terminals; whether Downloader accepts `"v": 1` and the `mistersubsonic/` folder.
+
+## Resolved by Plan 3b
+
+- **Memory:**
+  - A prefetching stream (the queued next track) holds a ring of 1.25× its prefetch (5 MiB) until it plays, then grows to the full window.
+  - Covers are scaled straight from the decoder's output, so the full-size picture isn't converted.
+  - A 48 MiB decode budget replaces the 4096² pixel cap. A 4096² JPEG still decodes, but not an RGBA PNG of that size.
+- **Covers:**
+  - `FromImage` reads YCbCr, RGBA, NRGBA and Gray directly.
+  - `Resize` sums are 64-bit.
+- **Raw MP3:** seeking and resuming reopen the stream at a byte estimate (past the ID3v2 tag, in proportion to time), not a decode from the start. MP3s of unknown size still seek through the decoder.
+- **Device:**
+  - Calls after close are no-ops.
+  - The end of a track keeps feeding the device while its successor opens.
+  - Steady-state decoding doesn't allocate: the pending buffer is reused, and the resampler's counters no longer escape.
+- **Clean shutdown:**
+  - Openers that finish after Close close what they opened.
+  - Sources of commands still queued at Close are closed.
+  - `Events()` closes, and the player stops reading a closed stream.
+- **Stream:**
+  - A 416 before the end is an error.
+  - 408, 429 and 502–504 are retried, honouring Retry-After, on the first request too.
+  - The open timeout (`StallTimeout`) is documented.
+- **Disk cache:**
+  - Stray `.tmp` files are removed at open and after a failed write.
+  - The eviction walk recounts the size.
+- **ReplayGain:** changes apply at once: to the playing track, the queued one, and one still opening.
+- **Mock server:** honours `timeOffset` for MP3.
+
+Still open:
+- On the device: spikes 2 and 3, the `Repaint` benchmarks, input with real maps and grabs next to Main_MiSTer, and the CRT margins (see `docs/spikes.md` and `docs/testing-on-mister.md`).
+- `drawField` trims by rune.
+- The minor lists above.

@@ -51,3 +51,7 @@ pending — MiSTer unavailable. Still to do: run the setup wizard on the TV with
 ## Plan 3a on the MiSTer
 
 pending — MiSTer unavailable. Run the checklist in `docs/testing-on-mister.md` and record the results here: install with `make deploy`, then start from the Scripts menu; check the console and cursor, BGM and SAM, exit and crash recovery, the watchdog, and the log.
+
+## Plan 3b on the MiSTer
+
+pending — MiSTer unavailable. Plan 3b's fixes are verified on the host. On the device, run `docs/testing-on-mister.md` items 6 (long FLAC), 16 (long MP3), 17 (ReplayGain) and 18 (memory), together with spikes 2 and 3 and the `Repaint` benchmarks.

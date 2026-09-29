@@ -63,7 +63,7 @@ Items the Plan 1 reviews triaged as "fix later". Plans 2 and 3 should pick these
 - **Config:** ship `config.example.toml`, since `Save` already references it.
 - **Mock server:** `serveTranscode` ignores `timeOffset`.
 
-## Known intermittent failure (unresolved)
+## Known intermittent failure (resolved in Plan 3b)
 
 - On 2026-09-29, one full `go test -race ./...` run reported `FAIL mistersubsonic/internal/audio 0.863s`. The failure came early, which suggests an assertion or a race report rather than a timeout. The output was not captured.
 - It did not reproduce in 20 further full-suite runs or 95 audio-package runs under CPU stress (`-cpu 1,2` alongside player/stream load).
@@ -71,3 +71,5 @@ Items the Plan 1 reviews triaged as "fix later". Plans 2 and 3 should pick these
   - the device tests, which share the global miniaudio device (`TestNullDeviceConsumesAndFlushes`, `TestFlushAfterDeviceStopped`)
   - the timing of the new `openWait`/seek tests
 - Next time it appears, keep the full `-v` log. CI runs with `-race` on every push, so it will show up there if it recurs.
+
+Found in Plan 3b: `TestEngineGaplessResampledMatchesWholeFile` raced. Under load the short first track finished decoding before its successor's QueueNext ran, so the chain broke and the resampler flush added a frame (48002 vs 48000 samples). Test-only fix: the first track's reads wait until the successor is queued. The engine is right — the player queues successors 20 s early.

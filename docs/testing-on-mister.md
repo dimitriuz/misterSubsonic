@@ -52,7 +52,17 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 15. **Overwrite watchdog.** Over ssh, run
     `head -c 200000 /dev/urandom > /dev/fb0` while the app shows a still
     screen. The noise is gone within about 2 s.
-16. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+16. **Long MP3.** Seek to about 80% of a long constant-bitrate MP3 (a
+    podcast or a mix). Playback resumes within about a second, near the
+    target.
+17. **ReplayGain.** With a quiet and a loud album, switch Settings → Playback
+    → ReplayGain between off and track while a song plays: the level changes
+    within about half a second.
+18. **Memory.** During a gapless album, check
+    `grep VmRSS /proc/$(pidof mistersubsonic)/status` over ssh after each of
+    the first five track changes, and record the values. They level off
+    rather than keep growing.
+19. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks
