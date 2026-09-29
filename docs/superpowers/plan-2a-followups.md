@@ -245,3 +245,31 @@ Still open:
 - The minor lists above.
 - A sized MP3 reopens its stream on every seek, even inside the buffered window (a few HTTP requests; still far faster than dr_mp3 decoding from byte 0). Reuse the reader when the estimate falls inside its window.
 - VBR MP3 seeks land by proportion; reading the Xing TOC (100 points) after the ID3v2 tag would make them accurate.
+
+## Plan 3b minors (deferred)
+
+- **Covers:**
+  - A JPEG whose marker walk fails (stray bytes before SOF) falls back to the weaker 3 B/px estimate. Only crafted files do this.
+  - Adobe RGB (APP14 transform 0) isn't counted.
+  - The RGBA fast path's fully transparent, opaque and clamp branches, and the CMYK, Gray16 and NRGBA64 fallbacks, have no tests.
+  - The per-pixel closure costs about 0.2–0.5 s for a 2000² cover on the A9. A row loop would be faster.
+- **Disk cache:**
+  - `evictLocked` zeroes the size before the walk, so a failed walk leaves 0.
+  - Errors removing stray `.tmp` files are ignored.
+  - There is no test for a rename failure.
+- **Stream:**
+  - `Promote` allocates the 32 MiB ring under the lock (about 50–80 ms on the A9, against a 500 ms device ring), and still allocates on a closed reader.
+  - `parseRetryAfter` overflows for absurd values.
+  - The 416 check uses the first response's size.
+  - The Open deadline check covers the wait but not the retry request.
+  - There are no tests for Open's budget running out, a ctx cancel during Open's sleep, or a 500 failing Open at once.
+- **Audio:**
+  - `breakChain`'s Flush can grow `pending` without updating `pendBuf`: one allocation per track break.
+  - `g_open` is a plain int. That is fine for the current shutdown order; an atomic would be cheap.
+  - `Close`'s comment says `Events()` closes afterwards, but it closes asynchronously.
+  - The gapless test's gate isn't closed in a defer.
+- **Player:**
+  - No test covers a ReplayGain change while the prefetch is still opening. It is correct by construction.
+  - In an MP3 byte-estimate open, the Seek failure paths don't rewind after the header read (practically unreachable).
+  - `fromOffset` allows seeks before its base.
+  - No opener-level test covers the estimate-failure fallback.
