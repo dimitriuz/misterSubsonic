@@ -25,6 +25,7 @@ import (
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/logfile"
+	"mistersubsonic/internal/platform"
 	"mistersubsonic/internal/ui"
 )
 
@@ -36,7 +37,7 @@ var version = "dev"
 
 type flags struct {
 	config, display, viewerAddr, frames, profile, fbdev, keys, log string
-	null                                                           bool
+	null, restoreConsole                                           bool
 	volume                                                         float64
 	exitAfter                                                      time.Duration
 }
@@ -54,7 +55,15 @@ func main() {
 	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
 	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
+	flag.BoolVar(&f.restoreConsole, "restore-console", false, "put the console back in text mode and exit (the launcher runs this after the app)")
 	flag.Parse()
+	if f.restoreConsole {
+		if err := platform.RestoreText(); err != nil {
+			fmt.Fprintln(os.Stderr, "mistersubsonic:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(f); err != nil {
 		fmt.Fprintln(os.Stderr, "mistersubsonic:", err)
 		os.Exit(1)
@@ -122,7 +131,29 @@ func openLog(flagPath, display, dataDir string) func() {
 	}
 }
 
-func run(f flags) error {
+// shutdownLimit bounds the clean-up after the UI quits (saving the queue,
+// closing audio): past it the app restores the console and exits anyway, so
+// a stuck close never leaves the TV on a frozen screen.
+var shutdownLimit = 10 * time.Second
+
+// forceExit ends a shutdown that took too long; tests replace it.
+var forceExit = func() {
+	log.Printf("shutdown took longer than %v; exiting", shutdownLimit)
+	platform.RestoreText()
+	os.Exit(3)
+}
+
+// armDeadline starts the shutdown deadline (once).
+func armDeadline(t **time.Timer, d time.Duration) {
+	if *t == nil {
+		*t = time.AfterFunc(d, forceExit)
+	}
+}
+
+// beforeRun runs just before the UI loop; tests use it.
+var beforeRun = func(*ui.App) {}
+
+func run(f flags) (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if f.exitAfter > 0 {
@@ -141,6 +172,22 @@ func run(f flags) error {
 	dataDir := filepath.Dir(f.config)
 	closeLog := openLog(f.log, f.display, dataDir)
 	defer closeLog()
+	var deadline *time.Timer
+	defer func() {
+		// Runs after every other clean-up below, a panic's included: a
+		// panic on the UI goroutine still restores the console, input and
+		// framebuffer, and is logged with its stack.
+		if deadline != nil {
+			deadline.Stop()
+		}
+		if r := recover(); r != nil {
+			log.Printf("panic: %v\n%s", r, debug.Stack())
+			err = fmt.Errorf("panic: %v", r)
+		}
+		if err != nil {
+			log.Printf("error: %v", err) // stderr isn't seen on the MiSTer
+		}
+	}()
 	log.Printf("MiSTer Subsonic %s starting (%s, config %s)", version, f.display, f.config)
 	defer log.Printf("MiSTer Subsonic exiting")
 
@@ -165,6 +212,11 @@ func run(f flags) error {
 		if err != nil {
 			return err
 		}
+		con, err := platform.GraphicsMode()
+		if err != nil {
+			log.Printf("console: %v (its text may show over the app)", err)
+		}
+		defer con.Restore() // after the framebuffer is blanked (defers run last-in first-out)
 		disp = fb
 		mgr := input.NewManager(input.ManagerOptions{Grab: true})
 		defer mgr.Close()
@@ -222,6 +274,7 @@ func run(f flags) error {
 	// engine and device close (defers run last-in first-out).
 	sess := newSessions(ctx, eng, dataDir, vol)
 	defer sess.close()
+	defer armDeadline(&deadline, shutdownLimit) // runs first: bounds the clean-ups above
 
 	var loaded *config.Config
 	if cfgErr == nil {
@@ -236,6 +289,7 @@ func run(f flags) error {
 	if err != nil {
 		return err
 	}
+	beforeRun(app)
 	err = app.Run(ctx)
 	stop() // a second Ctrl-C now kills the process instead of waiting out the shutdown below
 	return err

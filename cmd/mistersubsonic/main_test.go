@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mistersubsonic/internal/audio"
+	"mistersubsonic/internal/ui"
 )
 
 func TestNoAudioDeviceShowsMessage(t *testing.T) {
@@ -170,5 +171,58 @@ func TestAnUnwritableLogFallsBackToStderr(t *testing.T) {
 	defer closeLog()
 	if log.Writer() != os.Stderr {
 		t.Fatal("the log went somewhere other than stderr")
+	}
+}
+
+// A panic on the UI goroutine is recovered after the clean-ups ran (the
+// console, input and framebuffer restored), logged with its stack and
+// returned.
+func TestAPanicInTheUIIsLoggedAndReturned(t *testing.T) {
+	nullDevice(t)
+	dir, cfg := writeConfig(t, "http://127.0.0.1:1")
+	old := beforeRun
+	beforeRun = func(*ui.App) { panic("boom") }
+	defer func() { beforeRun = old }()
+	logPath := filepath.Join(dir, "app.log")
+	err := run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: time.Second, log: logPath})
+	if err == nil || err.Error() != "panic: boom" {
+		t.Fatalf("run returned %v", err)
+	}
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "panic: boom") || !strings.Contains(string(b), "main_test.go") ||
+		!strings.Contains(string(b), "error: panic: boom") {
+		t.Fatalf("the log has no panic stack or final error:\n%s", b)
+	}
+}
+
+func TestShutdownDeadlineFires(t *testing.T) {
+	fired := make(chan struct{})
+	old := forceExit
+	forceExit = func() { close(fired) }
+	defer func() { forceExit = old }()
+	var d *time.Timer
+	armDeadline(&d, 10*time.Millisecond)
+	armDeadline(&d, time.Hour) // a second arm keeps the first deadline
+	select {
+	case <-fired:
+	case <-time.After(time.Second):
+		t.Fatal("the deadline didn't fire")
+	}
+}
+
+func TestShutdownDeadlineIsStoppedAfterACleanExit(t *testing.T) {
+	nullDevice(t)
+	_, cfg := writeConfig(t, "http://127.0.0.1:1")
+	fired := make(chan struct{}, 1)
+	oldL, oldF := shutdownLimit, forceExit
+	shutdownLimit, forceExit = 300*time.Millisecond, func() { fired <- struct{}{} }
+	defer func() { shutdownLimit, forceExit = oldL, oldF }()
+	if err := run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: 200 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-fired:
+		t.Fatal("the deadline fired after a clean exit")
+	case <-time.After(400 * time.Millisecond):
 	}
 }
