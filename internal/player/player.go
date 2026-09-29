@@ -22,7 +22,8 @@ type Engine interface {
 	QueueNext(t audio.Track)
 	ClearNext()
 	Stop()
-	Seek(id uint64, pos time.Duration) error
+	// Seek must not block: failures come back as audio.EventSeekFailed.
+	Seek(id uint64, pos time.Duration)
 	SetPaused(bool)
 	SetVolume(float32)
 	Position() (uint64, time.Duration, bool)
@@ -161,7 +162,9 @@ type Player struct {
 	startedAt  time.Time
 	failures   int
 	lastSave   time.Time
-	announced  bool // true after now-playing sent for current play
+	announced  bool          // true after now-playing sent for current play
+	seekTarget time.Duration // position of the last raw seek sent to the engine
+	seekRetry  bool          // a failed seek already caused one reopen
 }
 
 func New(o Options) *Player {
@@ -427,13 +430,15 @@ func (p *Player) Seek(pos time.Duration) {
 			pos = d - time.Second
 		}
 		p.lastPos, p.position = pos, pos
+		p.seekRetry = false
 		if p.curSrc.Transcoded {
 			p.reopenAt(pos) // I2: use reopenAt to preserve listen state and pause
 			return
 		}
-		if err := p.o.Engine.Seek(p.curID, pos); err != nil {
-			p.reopenAt(pos) // I2: use reopenAt as fallback for raw seek
-		}
+		// R16: fire and forget. A failure (e.g. ErrNotCurrent while the
+		// track is still loading) comes back as EventSeekFailed -> reopenAt.
+		p.seekTarget = pos
+		p.o.Engine.Seek(p.curID, pos)
 	})
 }
 
@@ -618,6 +623,7 @@ func (p *Player) startAt(cursor int, offset time.Duration) {
 	p.curID = id
 	p.curSrc = Opened{}
 	p.position, p.lastPos = offset, offset
+	p.seekRetry = false
 	p.resetListen()
 	p.o.Engine.SetPaused(false)
 	p.setStatus(Loading)
@@ -697,9 +703,8 @@ func (p *Player) onOpened(r openResult) {
 	p.curSrc = r.opened
 	p.o.Engine.Play(p.track(r.id, r.song, r.opened))
 	if r.seek > 0 {
-		if err := p.o.Engine.Seek(r.id, r.seek); err != nil {
-			log.Printf("player: resume seek: %v", err)
-		}
+		p.seekTarget = r.seek
+		p.o.Engine.Seek(r.id, r.seek) // a failure arrives as EventSeekFailed
 	}
 }
 
@@ -757,6 +762,18 @@ func (p *Player) onEngine(ev audio.Event) {
 			p.curID = 0
 			p.stop()
 		}
+	case audio.EventSeekFailed:
+		if ev.TrackID != p.curID {
+			return // stale: the track was replaced after the seek was sent
+		}
+		if p.seekRetry {
+			// The seek after a reopen failed too; keep playing from where
+			// the engine is instead of reopening forever.
+			log.Printf("player: seek: %v", ev.Err)
+			return
+		}
+		p.seekRetry = true
+		p.reopenAt(p.seekTarget) // I2: reopen preserves listen state and pause
 	case audio.EventError:
 		switch ev.TrackID {
 		case p.nextID:

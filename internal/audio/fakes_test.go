@@ -68,6 +68,7 @@ type fakeSource struct {
 	openBlock       chan struct{} // blocks fakeOpen if set
 	openStarted     chan struct{} // closed when fakeOpen begins
 	openStartedOnce sync.Once     // protects closing openStarted
+	seekBlock       chan struct{} // blocks SeekFrame if set, until closed
 	once            sync.Once
 	closed          chan struct{}
 }
@@ -117,6 +118,13 @@ func (d *fakeDecoder) SampleRate() int      { return d.src.rate }
 func (d *fakeDecoder) LengthFrames() uint64 { return uint64(len(d.src.pcm) / 2) }
 func (d *fakeDecoder) Close() error         { return nil }
 func (d *fakeDecoder) SeekFrame(f uint64) error {
+	if d.src.seekBlock != nil {
+		select {
+		case <-d.src.seekBlock:
+		case <-d.src.closed:
+			return errClosed
+		}
+	}
 	d.pos = int(f) * 2
 	return nil
 }

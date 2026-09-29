@@ -19,19 +19,20 @@ type seekCall struct {
 }
 
 type fakeEngine struct {
-	mu      sync.Mutex
-	played  []audio.Track
-	queued  []audio.Track
-	clears  int
-	stops   int
-	seeks   []seekCall
-	seekErr error
-	paused  bool
-	volume  float32
-	posID   uint64
-	pos     time.Duration
-	posOK   bool
-	events  chan audio.Event
+	mu        sync.Mutex
+	played    []audio.Track
+	queued    []audio.Track
+	clears    int
+	stops     int
+	seeks     []seekCall
+	seekErr   error
+	seekBlock chan struct{} // if set, the seek doesn't complete until closed
+	paused    bool
+	volume    float32
+	posID     uint64
+	pos       time.Duration
+	posOK     bool
+	events    chan audio.Event
 }
 
 func newFakeEngine() *fakeEngine { return &fakeEngine{events: make(chan audio.Event, 64)} }
@@ -53,15 +54,36 @@ func (e *fakeEngine) SetPaused(p bool)           { e.mu.Lock(); e.paused = p; e.
 func (e *fakeEngine) SetVolume(v float32)        { e.mu.Lock(); e.volume = v; e.mu.Unlock() }
 func (e *fakeEngine) getVolume() float32         { e.mu.Lock(); defer e.mu.Unlock(); return e.volume }
 func (e *fakeEngine) Events() <-chan audio.Event { return e.events }
-func (e *fakeEngine) Seek(id uint64, pos time.Duration) error {
+
+// Seek records the call and returns at once, like audio.Engine. The seek
+// completes (position moves, or EventSeekFailed if seekErr is set) right
+// away, or once seekBlock is closed.
+func (e *fakeEngine) Seek(id uint64, pos time.Duration) {
+	e.mu.Lock()
+	e.seeks = append(e.seeks, seekCall{id, pos})
+	block := e.seekBlock
+	e.mu.Unlock()
+	if block == nil {
+		e.completeSeek(id, pos)
+		return
+	}
+	go func() { <-block; e.completeSeek(id, pos) }()
+}
+func (e *fakeEngine) completeSeek(id uint64, pos time.Duration) {
+	e.mu.Lock()
+	err := e.seekErr
+	if err == nil {
+		e.pos = pos
+	}
+	e.mu.Unlock()
+	if err != nil {
+		e.events <- audio.Event{Kind: audio.EventSeekFailed, TrackID: id, Err: err}
+	}
+}
+func (e *fakeEngine) seekList() []seekCall {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.seeks = append(e.seeks, seekCall{id, pos})
-	if e.seekErr != nil {
-		return e.seekErr
-	}
-	e.pos = pos
-	return nil
+	return append([]seekCall(nil), e.seeks...)
 }
 func (e *fakeEngine) Position() (uint64, time.Duration, bool) {
 	e.mu.Lock()

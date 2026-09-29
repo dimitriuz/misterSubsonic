@@ -31,6 +31,10 @@ const (
 	// EventError: the track failed to open or decode. For the current track
 	// the engine then moves on as if it had ended.
 	EventError
+	// EventSeekFailed: a Seek could not be done (Err says why, ErrNotCurrent
+	// if the track wasn't the one being decoded). Playback carries on from
+	// wherever the decoder is; the caller decides whether to reopen.
+	EventSeekFailed
 )
 
 type Event struct {
@@ -39,7 +43,7 @@ type Event struct {
 	Err     error
 }
 
-// ErrNotCurrent is returned by Seek when the track is not the one being decoded.
+// ErrNotCurrent is the EventSeekFailed error when the track is not the one being decoded.
 var ErrNotCurrent = errors.New("audio: track is not the one being decoded")
 
 // ErrOpenTimeout is the EventError for a queued track that was still opening
@@ -169,18 +173,16 @@ func (e *Engine) Stop() {
 	e.interrupt(nil)
 }
 
-// Seek moves the track being decoded to pos (song time).
-func (e *Engine) Seek(id uint64, pos time.Duration) error {
-	reply := make(chan error, 1)
-	if !e.send(func() { reply <- e.doSeek(id, pos) }) {
-		return errors.New("audio: engine closed")
-	}
-	select {
-	case err := <-reply:
-		return err
-	case <-e.done:
-		return errors.New("audio: engine closed")
-	}
+// Seek moves the track being decoded to pos (song time). It only posts the
+// command: the decoder seek may restart an HTTP request, and the caller
+// must not wait for that. A failure arrives as EventSeekFailed; success
+// shows in Position.
+func (e *Engine) Seek(id uint64, pos time.Duration) {
+	e.send(func() {
+		if err := e.doSeek(id, pos); err != nil {
+			e.queueEvent(Event{Kind: EventSeekFailed, TrackID: id, Err: err})
+		}
+	})
 }
 
 func (e *Engine) SetPaused(p bool)    { e.o.Output.SetPaused(p) }

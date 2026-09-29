@@ -1,6 +1,7 @@
 package player
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -235,8 +236,8 @@ func TestSeekRawUsesEngineAndTranscodedReopens(t *testing.T) {
 	h.p.PlayNow(q, 0)
 	a := h.playAndStart(1)
 	h.p.Seek(42 * time.Second)
-	if len(h.eng.seeks) != 1 || h.eng.seeks[0] != (seekCall{a.ID, 42 * time.Second}) {
-		t.Fatalf("seeks = %v", h.eng.seeks)
+	if seeks := h.eng.seekList(); len(seeks) != 1 || seeks[0] != (seekCall{a.ID, 42 * time.Second}) {
+		t.Fatalf("seeks = %v", seeks)
 	}
 	h.p.Next()
 	h.playAndStart(2)
@@ -510,6 +511,63 @@ func TestNextDuringTranscodedReopenStillAnnouncesNext(t *testing.T) {
 	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
 	h.p.do(func() {})
 	h.waitFor("both announced", func() bool { return slices.Equal(h.api.nowPlayings(), []subsonic.ID{"sa", "sb"}) })
+}
+
+// I1: a seek that is slow in the engine (an HTTP Range restart) must not
+// block the player goroutine, and so neither the caller nor the next command.
+func TestSeekDoesNotBlockOnEngine(t *testing.T) {
+	h := newHarness(t, nil)
+	release := make(chan struct{})
+	h.eng.mu.Lock()
+	h.eng.seekBlock = release
+	h.eng.mu.Unlock()
+	defer close(release)
+	h.p.PlayNow(songs(1, 100), 0)
+	h.playAndStart(1)
+
+	returned := func(what string, f func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { f(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("%s blocked while the engine seek is in progress", what)
+		}
+	}
+	returned("Seek", func() { h.p.Seek(30 * time.Second) })
+	returned("TogglePause", h.p.TogglePause)
+}
+
+// I1/R16: a raw seek that fails in the engine arrives as EventSeekFailed.
+// The player reopens at the requested position (not wherever ticks moved
+// it meanwhile), and only once, so a seek that always fails can't loop.
+func TestSeekFailureReopensAtTargetOnce(t *testing.T) {
+	h := newHarness(t, nil)
+	release := make(chan struct{})
+	h.eng.mu.Lock()
+	h.eng.seekErr = errors.New("range restart failed")
+	h.eng.seekBlock = release
+	h.eng.mu.Unlock()
+	h.p.PlayNow(songs(1, 100), 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 5*time.Second)
+
+	h.p.Seek(30 * time.Second)
+	h.tickAt(a.ID, 5*time.Second+250*time.Millisecond) // engine still at the old place
+	close(release)
+	h.waitFor("fallback reopen", func() bool { return h.eng.playCount() == 2 })
+	calls := h.opener.callList()
+	if last := calls[len(calls)-1]; last.offset != 30*time.Second {
+		t.Fatalf("reopened at %v, want 30s", last.offset)
+	}
+	// The reopened track's resume seek fails too: no second reopen.
+	h.waitFor("resume seek", func() bool { return len(h.eng.seekList()) == 2 })
+	time.Sleep(30 * time.Millisecond)
+	h.p.do(func() {})
+	if n := h.eng.playCount(); n != 2 {
+		t.Fatalf("playCount = %d after a second seek failure, want 2 (reopen once)", n)
+	}
 }
 
 // Seek while loading must announce when Started arrives.

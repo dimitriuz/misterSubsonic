@@ -119,11 +119,17 @@ func TestEngineSeekFlushesAndContinuesFromTarget(t *testing.T) {
 	expectEvent(t, e, EventStarted, 7)
 	waitFor(t, "ring full", func() bool { return len(out.written())/2 == 1000 })
 
-	if err := e.Seek(7, 2*time.Second+500*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if out.flushes < 2 { // one from Play, one from Seek
-		t.Fatalf("Seek did not flush the output (flushes=%d)", out.flushes)
+	// Seek is asynchronous: wait for Position to show the target.
+	e.Seek(7, 2*time.Second+500*time.Millisecond)
+	waitFor(t, "seek applied", func() bool {
+		_, pos, _ := e.Position()
+		return pos == 2*time.Second+500*time.Millisecond
+	})
+	out.mu.Lock()
+	flushes := out.flushes
+	out.mu.Unlock()
+	if flushes < 2 { // one from Play, one from Seek
+		t.Fatalf("Seek did not flush the output (flushes=%d)", flushes)
 	}
 	id, pos, ok := e.Position()
 	if !ok || id != 7 || pos != 2*time.Second+500*time.Millisecond {
@@ -139,6 +145,27 @@ func TestEngineSeekFlushesAndContinuesFromTarget(t *testing.T) {
 		t.Fatalf("Position after 480 frames = %v, want 2.51s", pos)
 	}
 	noEvent(t, e, 20*time.Millisecond) // a seek is not a new track
+}
+
+// I1: Seek posts the command and returns; a decoder seek that blocks on
+// the network must not hold up the caller (the player goroutine).
+func TestEngineSeekDoesNotWaitForDecoder(t *testing.T) {
+	out := newFakeOutput(1000)
+	e := newTestEngine(out)
+	defer e.Close()
+	src := newFakeSource(ramp(48000, 0), OutputRate)
+	src.seekBlock = make(chan struct{})
+	defer close(src.seekBlock)
+	e.Play(Track{ID: 1, Source: src})
+	expectEvent(t, e, EventStarted, 1)
+
+	done := make(chan struct{})
+	go func() { e.Seek(1, time.Second); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Seek waited for the decoder seek to finish")
+	}
 }
 
 func TestEnginePlayInterruptsStalledRead(t *testing.T) {
@@ -189,8 +216,16 @@ func TestEngineSeekWrongTrack(t *testing.T) {
 	e := newTestEngine(out)
 	defer e.Close()
 	e.Play(Track{ID: 1, Source: newFakeSource(ramp(100000, 0), OutputRate)})
-	if err := e.Seek(99, time.Second); err != ErrNotCurrent {
-		t.Fatalf("err = %v, want ErrNotCurrent", err)
+	e.Seek(99, time.Second)
+	for {
+		ev := nextEvent(t, e)
+		if ev.Kind == EventStarted && ev.TrackID == 1 {
+			continue
+		}
+		if ev.Kind != EventSeekFailed || ev.TrackID != 99 || ev.Err != ErrNotCurrent {
+			t.Fatalf("event = %+v, want EventSeekFailed for track 99 with ErrNotCurrent", ev)
+		}
+		return
 	}
 }
 
