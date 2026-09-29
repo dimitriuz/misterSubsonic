@@ -384,3 +384,67 @@ func TestKeysBeforePlayerAttached(t *testing.T) {
 		t.Fatalf("top = %T", a.Top())
 	}
 }
+
+func TestYTogglesWithoutGrowingStack(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewHomeScreen())
+	for i := 0; i < 5; i++ {
+		ta.press(input.BtnY)
+		if len(ta.stack) > 3 {
+			t.Fatalf("stack depth %d after %d Y presses", len(ta.stack), i+1)
+		}
+		_, np := ta.Top().(*NowPlayingScreen)
+		_, q := ta.Top().(*QueueScreen)
+		if (i%2 == 0 && !np) || (i%2 == 1 && !q) {
+			t.Fatalf("press %d: top = %T", i+1, ta.Top())
+		}
+	}
+	ta.press(input.BtnB)
+	ta.press(input.BtnB)
+	if _, ok := ta.Top().(*HomeScreen); !ok || len(ta.stack) != 1 {
+		t.Fatalf("after two B: top %T depth %d", ta.Top(), len(ta.stack))
+	}
+}
+
+func TestQueueRemoveAfterShrinkDoesNotPanic(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewHomeScreen())
+	ta.Push(NewQueueScreen())
+	ta.settle(t)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnDown)
+	ta.pl.st.Queue = ta.pl.st.Queue[:1]
+	ta.press(input.BtnX)
+	ta.press(input.BtnA)
+}
+
+func TestBHoldClearedWhenScreenPushed(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewHomeScreen())
+	ta.onInput(input.Event{Button: input.BtnB, Kind: input.Press})
+	ta.Push(NewNowPlayingScreen())
+	ta.now = ta.now.Add(exitHold)
+	ta.onWake()
+	if ta.confirm {
+		t.Fatal("exit prompt appeared on a non-root screen")
+	}
+}
+
+func TestToastsAreCappedAndCoalesced(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	for i := 0; i < 5; i++ {
+		ta.Toast("t%d", i)
+	}
+	if len(ta.toasts) != 3 || ta.toasts[0].text != "t2" {
+		t.Fatalf("toasts %+v", ta.toasts)
+	}
+	ta.toasts = nil
+	ta.Toast("same")
+	ta.Toast("same")
+	if len(ta.toasts) != 1 {
+		t.Fatalf("toasts %+v", ta.toasts)
+	}
+}

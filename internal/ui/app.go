@@ -84,6 +84,7 @@ type toast struct {
 
 const (
 	toastTime    = 3 * time.Second
+	maxToasts    = 3
 	exitHold     = 2 * time.Second
 	progressTick = 500 * time.Millisecond
 )
@@ -181,6 +182,7 @@ func (a *App) Art(id subsonic.ID, px int) (*gfx.Image, bool) {
 func (a *App) Push(s Screen) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.stack = append(a.stack, screenEntry{s, ctx, cancel})
+	a.bDown = time.Time{}
 	a.dirty = true
 	s.Enter(a)
 }
@@ -194,6 +196,20 @@ func (a *App) Pop() {
 	top.cancel()
 	a.stack = a.stack[:len(a.stack)-1]
 	a.dirty = true
+}
+
+// popTo pops screens until pred matches the top; if no screen in the stack
+// matches, the stack is left unchanged and false is returned.
+func (a *App) popTo(pred func(Screen) bool) bool {
+	for i := len(a.stack) - 1; i >= 0; i-- {
+		if pred(a.stack[i].s) {
+			for len(a.stack) > i+1 {
+				a.Pop()
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // Replace swaps the whole stack for one root screen.
@@ -245,7 +261,16 @@ func (a *App) Load(s Screen, fn func(ctx context.Context) (any, error), done fun
 
 // Toast shows a short message over the current screen.
 func (a *App) Toast(format string, args ...any) {
-	a.toasts = append(a.toasts, toast{fmt.Sprintf(format, args...), a.o.Now().Add(toastTime)})
+	text := fmt.Sprintf(format, args...)
+	until := a.o.Now().Add(toastTime)
+	if n := len(a.toasts); n > 0 && a.toasts[n-1].text == text {
+		a.toasts[n-1].until = until
+	} else {
+		a.toasts = append(a.toasts, toast{text, until})
+		if len(a.toasts) > maxToasts {
+			a.toasts = a.toasts[len(a.toasts)-maxToasts:]
+		}
+	}
 	a.dirty = true
 }
 
@@ -321,7 +346,7 @@ func (a *App) onWake() {
 		}
 	}
 	a.toasts = kept
-	if !a.bDown.IsZero() && !now.Before(a.bDown.Add(exitHold)) {
+	if !a.bDown.IsZero() && len(a.stack) == 1 && !now.Before(a.bDown.Add(exitHold)) {
 		a.bDown = time.Time{}
 		a.confirm = true
 		a.dirty = true
@@ -382,7 +407,13 @@ func (a *App) dispatch(e input.Event) {
 			a.o.Player.TogglePause()
 		}
 	case input.BtnY:
-		if _, ok := a.Top().(*NowPlayingScreen); !ok && a.hasQueue() {
+		if !a.hasQueue() {
+			break
+		}
+		if _, ok := a.Top().(*NowPlayingScreen); ok {
+			break
+		}
+		if !a.popTo(func(s Screen) bool { _, ok := s.(*NowPlayingScreen); return ok }) {
 			a.Push(NewNowPlayingScreen())
 		}
 	}

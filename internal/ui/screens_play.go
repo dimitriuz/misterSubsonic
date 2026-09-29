@@ -159,8 +159,22 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 	if s.list.Handle(e, len(st.Queue)) {
 		return true
 	}
-	if e.Kind != input.Press || len(st.Queue) == 0 {
+	if e.Kind != input.Press {
 		return false
+	}
+	if e.Button == input.BtnY {
+		a.Pop()
+		if _, ok := a.Top().(*NowPlayingScreen); !ok {
+			a.Push(NewNowPlayingScreen())
+		}
+		return true
+	}
+	if len(st.Queue) == 0 {
+		return false
+	}
+	if (e.Button == input.BtnA || e.Button == input.BtnX) && s.list.Focus >= len(st.Queue) {
+		s.list.Focus = len(st.Queue) - 1
+		return true
 	}
 	switch e.Button {
 	case input.BtnA:
