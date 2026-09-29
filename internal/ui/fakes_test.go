@@ -30,6 +30,7 @@ type fakeLibrary struct {
 	searches  []string
 	stars     []string      // "star al-1", "unstar s2"
 	block     chan struct{} // if set, Search3 waits for it (or ctx)
+	starCalls int           // GetStarred2 calls
 }
 
 func (l *fakeLibrary) GetAlbumList2(_ context.Context, q subsonic.AlbumListQuery) ([]subsonic.Album, error) {
@@ -117,6 +118,7 @@ func (l *fakeLibrary) GetPlaylist(_ context.Context, id subsonic.ID) (*subsonic.
 func (l *fakeLibrary) GetStarred2(context.Context) (*subsonic.Starred, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.starCalls++
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -279,11 +281,17 @@ func sampleLibrary() *fakeLibrary {
 		{Name: "А", Artists: []subsonic.Artist{{ID: "ar-1", Name: "Аквариум", CoverArt: "ar-1", AlbumCount: 1, Starred: "2026-01-01T00:00:00Z"}}},
 	}
 	l.genres = []subsonic.Genre{{Name: "rock", AlbumCount: 2}, {Name: "Electronic", AlbumCount: 1}}
+	l.playlists = []subsonic.Playlist{
+		{ID: "pl-1", Name: "Дорога домой", Owner: "alice", SongCount: 2, Duration: 375, CoverArt: "pl-1"},
+		{ID: "pl-2", Name: "Empty", Owner: "alice", CoverArt: "pl-2"},
+	}
 	l.tracks["al-1"] = []subsonic.Song{
 		{ID: "s1", Title: "Капитан Африка", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", ArtistID: "ar-1", CoverArt: "al-1", Track: 1, Duration: 240, Suffix: "flac", BitDepth: 24, SamplingRate: 96000},
 		{ID: "s2", Title: "Время Луны", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 2, Duration: 160, Suffix: "flac", BitDepth: 16, SamplingRate: 44100},
 		{ID: "s3", Title: "Рок-н-ролл мёртв", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 3, Duration: 215, Suffix: "flac", BitDepth: 16, SamplingRate: 44100},
 	}
+	l.plSongs = map[subsonic.ID][]subsonic.Song{"pl-1": {l.tracks["al-1"][2], l.tracks["al-1"][1]}}
+	l.starred = subsonic.Starred{Albums: l.albums[1:2], Artists: l.artists[2].Artists, Songs: l.tracks["al-1"][:1]}
 	return l
 }
 
