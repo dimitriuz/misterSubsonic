@@ -191,7 +191,7 @@ func (k *Keyboard) Draw(a *App, c *gfx.Canvas, r gfx.Rect, h int, focused bool) 
 	unit := r.W / kbUnits
 	gap := max(unit/12, 1)
 	f := a.F.Body
-	if unit < f.Measure("Space")/3 {
+	if unit < f.Measure("Space")/3 || h-2*gap < f.Ascent() { // narrow keys, or too short for the letters
 		f = a.F.Small
 	}
 	k.Focused()

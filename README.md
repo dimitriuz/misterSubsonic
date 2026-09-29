@@ -16,10 +16,10 @@ checks are still pending; see `docs/spikes.md`.
 On first start the app runs a setup wizard: server address (`http://` / `https://` and `:4533`
 are one key away), username, password and, for servers that hand them out, an API key. It
 tests the login and saves `config.toml` next to the app. With token login (most servers) only a
-token and salt are saved, never the password; servers that need the plain password (LDAP) are asked
-for your consent over http (stored only after you allow it) and over https get it stored as the
-server requires, and a self-signed certificate is skipped only after you allow
-that (the safer way is `ca_file`, below). A config file the app can't read is kept as
+token and salt are saved, never the password. For servers that need the plain password (LDAP),
+you're asked before it is sent over http, and it is stored only if you allow it; over https it is
+stored as the server requires. A self-signed certificate is skipped only after you allow that (the
+safer way is `ca_file`, below). A config file the app can't read is kept as
 `config.toml.invalid-<date>` when the wizard replaces it.
 
 Settings (the last section) switches between servers, adds and removes them, and changes the
