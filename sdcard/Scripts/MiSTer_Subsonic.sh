@@ -64,8 +64,11 @@ restore() {
 # INT and TERM go on to the app, which closes cleanly; the launcher then
 # restores as usual. Before the app runs there is nothing to pass them to.
 app=
+sig=
 forward() {
-	if [ -n "$app" ]; then kill -TERM "$app" 2>/dev/null; else exit 130; fi
+	# $! covers a signal between the launch and app=$!.
+	local target=${app:-$!}
+	if [ -n "$target" ]; then sig=1; kill -TERM "$target" 2>/dev/null; else exit 130; fi
 }
 trap restore EXIT
 trap forward INT TERM
@@ -88,14 +91,16 @@ fi
 
 printf '\033[?25l' # hide the cursor
 # In the background so a signal reaches the trap at once (<&0 keeps its
-# stdin); wait again after each one until the app has really ended.
+# stdin). A trapped signal makes wait return 128+n; wait again until a wait
+# ends without one: bash keeps the reaped app's status, so that returns its
+# own exit code even if it had already ended.
 "$APP" "$@" <&0 &
 app=$!
-wait "$app"
-code=$?
-while kill -0 "$app" 2>/dev/null; do
+while :; do
+	sig=
 	wait "$app"
 	code=$?
+	[ -n "$sig" ] || break
 done
 trap - EXIT
 restore
