@@ -94,7 +94,8 @@ func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, *keeper, 
 		log.Printf("display: asked for %v, got %dx%d; keeping %v", to, w, h, from)
 		fb.Close()
 	}
-	if err := ctl.Restore(); err != nil {
+	// The framebuffer is at neither from nor to: ask for from, whatever it has.
+	if err := ctl.RestoreAlways(); err != nil {
 		log.Printf("display: %v", err)
 	}
 	fb, err = gfx.OpenFB(path)

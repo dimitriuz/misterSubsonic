@@ -25,7 +25,6 @@ import (
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/logfile"
-	"mistersubsonic/internal/platform"
 	"mistersubsonic/internal/ui"
 )
 
@@ -155,8 +154,21 @@ var shutdownLimit = 10 * time.Second
 // forceExit ends a shutdown that took too long; tests replace it.
 var forceExit = func() {
 	log.Printf("shutdown took longer than %v; exiting", shutdownLimit)
-	platform.RestoreText()
+	restoreOnForcedExit()
 	os.Exit(3)
+}
+
+// restoreOnForcedExit puts the framebuffer size back, then the console's
+// text mode. The console is still in graphics mode here (run entered it at
+// start, and only its deferred exit path leaves it), as the size change
+// needs. If that path was already past the size, there is nothing saved.
+func restoreOnForcedExit() {
+	if err := fbControl().Restore(); err != nil {
+		log.Printf("display: %v", err)
+	}
+	if err := restoreText(); err != nil {
+		log.Printf("console: %v", err)
+	}
 }
 
 // armDeadline starts the shutdown deadline (once).

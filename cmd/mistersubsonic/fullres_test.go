@@ -37,9 +37,10 @@ func TestFullSize(t *testing.T) {
 // puts back the framebuffer size the app saved.
 func TestRestoreConsoleRestoresTheFramebuffer(t *testing.T) {
 	dir := t.TempDir()
-	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 50 * time.Millisecond}
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 500 * time.Millisecond}
 	os.WriteFile(c.Cmd, nil, 0o644)
 	os.WriteFile(c.State, []byte("960 600\n"), 0o644)
+	answeringMenu(t, c)
 	old := fbControl
 	fbControl = func() platform.FBControl { return c }
 	defer func() { fbControl = old }()
@@ -51,6 +52,28 @@ func TestRestoreConsoleRestoresTheFramebuffer(t *testing.T) {
 	if _, err := os.Stat(c.State); !os.IsNotExist(err) {
 		t.Fatal("the saved size is still there")
 	}
+}
+
+// answeringMenu stands in for Main_MiSTer: res_count goes up when a command
+// arrives in the command file.
+func answeringMenu(t *testing.T, c platform.FBControl) {
+	t.Helper()
+	os.WriteFile(filepath.Join(c.Sys, "res_count"), []byte("1\n"), 0o644)
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+			if b, _ := os.ReadFile(c.Cmd); len(b) > 0 {
+				os.WriteFile(filepath.Join(c.Sys, "res_count"), []byte("2\n"), 0o644)
+				return
+			}
+		}
+	}()
 }
 
 // fakeConsole replaces the console calls for the test; g and r run when the
@@ -77,9 +100,10 @@ func fakeConsole(t *testing.T, g, r func()) {
 // fbcon redraws its text into the new framebuffer and crashes the kernel).
 func TestRestoreConsoleKeepsGraphicsModeAroundTheSizeChange(t *testing.T) {
 	dir := t.TempDir()
-	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 50 * time.Millisecond}
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 500 * time.Millisecond}
 	os.WriteFile(c.Cmd, nil, 0o644)
 	os.WriteFile(c.State, []byte("960 600\n"), 0o644)
+	answeringMenu(t, c)
 	old := fbControl
 	fbControl = func() platform.FBControl { return c }
 	defer func() { fbControl = old }()
@@ -105,7 +129,7 @@ func TestRestoreConsoleKeepsGraphicsModeAroundTheSizeChange(t *testing.T) {
 
 func TestRestoreConsoleWithoutSavedSizeOnlyRestoresText(t *testing.T) {
 	dir := t.TempDir()
-	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 50 * time.Millisecond}
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 500 * time.Millisecond}
 	old := fbControl
 	fbControl = func() platform.FBControl { return c }
 	defer func() { fbControl = old }()
@@ -114,6 +138,36 @@ func TestRestoreConsoleWithoutSavedSizeOnlyRestoresText(t *testing.T) {
 	restoreConsole()
 	if strings.Join(steps, ",") != "text" {
 		t.Fatalf("steps %v", steps)
+	}
+}
+
+// The shutdown deadline puts the size back too, then the text mode. The
+// console is still in graphics mode then (the app entered it at start and
+// only the deferred exit path leaves it), which the size change needs.
+func TestForceExitRestoresTheSizeThenText(t *testing.T) {
+	dir := t.TempDir()
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 500 * time.Millisecond}
+	os.WriteFile(c.Cmd, nil, 0o644)
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	answeringMenu(t, c)
+	os.WriteFile(filepath.Join(dir, "width"), []byte("1920\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "height"), []byte("1200\n"), 0o644)
+	old := fbControl
+	fbControl = func() platform.FBControl { return c }
+	defer func() { fbControl = old }()
+	text := false
+	fakeConsole(t, nil, func() {
+		if b, _ := os.ReadFile(c.Cmd); strings.TrimSpace(string(b)) != "fb_cmd1 8888 1 960 600" {
+			t.Errorf("text mode before the size was restored: %q", b)
+		}
+		text = true
+	})
+	restoreOnForcedExit()
+	if !text {
+		t.Fatal("text mode not restored")
+	}
+	if c.Saved() {
+		t.Fatal("the saved size is still there")
 	}
 }
 

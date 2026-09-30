@@ -95,6 +95,21 @@ func TestCloseTwiceAndAttachAfterClose(t *testing.T) {
 	}
 }
 
+// Close forgets the gamepads too: nothing is connected any more.
+func TestCloseForgetsThePads(t *testing.T) {
+	m := newIdleManager(time.Hour)
+	m.mu.Lock()
+	m.pads["event3"] = true
+	m.mu.Unlock()
+	if !m.HasPad() {
+		t.Fatal("no pad before Close")
+	}
+	m.Close()
+	if m.HasPad() {
+		t.Fatal("HasPad still true after Close")
+	}
+}
+
 func TestScanPrunesStalePlaceholders(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "event0")
