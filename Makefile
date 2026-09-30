@@ -74,16 +74,20 @@ deploy: release
 	scp $(REL)/sdcard/mistersubsonic/* root@$(MISTER):/media/fat/mistersubsonic/
 
 # Audio test binary for on-device checks and benchmarks.
+# Every package's tests are built for ARM too, so 32-bit-only breakage (an
+# int overflow, say) fails here and in CI; the ones run on the device are
+# copied by deploy-dev.
 mister-test:
-	$(ARM_ENV) $(GO) test -c -o $(BIN)/arm/audio.test ./internal/audio
-	$(ARM_ENV) $(GO) test -c -o $(BIN)/arm/ui.test ./internal/ui
+	$(ARM_ENV) $(GO) test -c -o $(BIN)/arm/tests/ ./...
+	cp $(BIN)/arm/tests/audio.test $(BIN)/arm/tests/ui.test $(BIN)/arm/tests/gfx.test $(BIN)/arm/
 	./scripts/check-glibc.sh $(BIN)/arm/audio.test
 	./scripts/check-glibc.sh $(BIN)/arm/ui.test
+	./scripts/check-glibc.sh $(BIN)/arm/gfx.test
 
 # Copies the dev tools to the MiSTer (default root password is "1").
 deploy-dev: mister mister-test
 	ssh root@$(MISTER) mkdir -p $(DEVDIR)/testdata
-	scp $(BIN)/arm/mss-cli $(BIN)/arm/mistersubsonic $(BIN)/arm/audio.test $(BIN)/arm/ui.test root@$(MISTER):$(DEVDIR)/
+	scp $(BIN)/arm/mss-cli $(BIN)/arm/mistersubsonic $(BIN)/arm/audio.test $(BIN)/arm/ui.test $(BIN)/arm/gfx.test root@$(MISTER):$(DEVDIR)/
 	scp internal/audio/testdata/*.flac internal/audio/testdata/*.wav internal/audio/testdata/*.mp3 root@$(MISTER):$(DEVDIR)/testdata/
 
 vendor-check:
