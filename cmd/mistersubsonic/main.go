@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/logfile"
+	"mistersubsonic/internal/platform"
 	"mistersubsonic/internal/ui"
 )
 
@@ -158,17 +160,55 @@ var forceExit = func() {
 	os.Exit(3)
 }
 
-// restoreOnForcedExit puts the framebuffer size back, then the console's
-// text mode. The console is still in graphics mode here (run entered it at
-// start, and only its deferred exit path leaves it), as the size change
-// needs. If that path was already past the size, there is nothing saved.
+// exitRestore makes the display restore run once, whichever path gets there
+// first: the deferred exit path (restoreDisplay) or the shutdown deadline
+// (restoreOnForcedExit). done means the size was put back or at least tried,
+// and the console has left graphics mode; after that nothing may send a size
+// command, because in text mode fbcon redraws its text into the new
+// framebuffer and crashes the kernel. A failed Restore keeps its state file,
+// so the state being there does not mean the size may still change.
+var exitRestore struct {
+	mu   sync.Mutex
+	done bool
+}
+
+// restoreDisplay is the exit path: the framebuffer gets its old size back
+// (the console still in graphics mode), then the console returns to text
+// mode. The forced exit waits on the lock while this runs; the wait is
+// bounded, since a size request waits at most FBControl.Wait.
+func restoreDisplay(con *platform.Console) {
+	exitRestore.mu.Lock()
+	defer exitRestore.mu.Unlock()
+	if exitRestore.done {
+		return
+	}
+	if err := fbControl().Restore(); err != nil {
+		log.Printf("display: %v", err)
+	}
+	if err := con.Restore(); err != nil {
+		log.Printf("console: %v", err)
+	}
+	exitRestore.done = true
+}
+
+// restoreOnForcedExit is the shutdown deadline's restore: the same steps in
+// the same order as restoreDisplay, unless the exit path already did them
+// (or is doing them: it waits for that). The console is still in graphics
+// mode here when it runs first (run entered it at start, and only the exit
+// path leaves it), as the size change needs.
 func restoreOnForcedExit() {
+	exitRestore.mu.Lock()
+	defer exitRestore.mu.Unlock()
+	if exitRestore.done {
+		return
+	}
 	if err := fbControl().Restore(); err != nil {
 		log.Printf("display: %v", err)
 	}
 	if err := restoreText(); err != nil {
 		log.Printf("console: %v", err)
 	}
+	exitRestore.done = true
 }
 
 // armDeadline starts the shutdown deadline (once).
@@ -253,14 +293,10 @@ func run(f flags) (err error) {
 		// the same): the framebuffer is closed (unmapped), then the input is
 		// released, then the framebuffer gets its old size back (the console
 		// still in graphics mode), and last the console returns to text mode.
-		defer func() {
-			if err := fbControl().Restore(); err != nil {
-				log.Printf("display: %v", err)
-			}
-			if err := con.Restore(); err != nil {
-				log.Printf("console: %v", err)
-			}
-		}()
+		// restoreDisplay shares a guard with the shutdown deadline's restore,
+		// so whichever runs second does nothing (never a size change in text
+		// mode).
+		defer restoreDisplay(con)
 		fb, keep, err := openFB(f.fbdev, profileName, dataDir, allowFullRes(cfg.Display.FullResolution, con))
 		if err != nil {
 			return err

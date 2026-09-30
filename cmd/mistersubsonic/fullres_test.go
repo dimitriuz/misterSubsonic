@@ -145,6 +145,7 @@ func TestRestoreConsoleWithoutSavedSizeOnlyRestoresText(t *testing.T) {
 // console is still in graphics mode then (the app entered it at start and
 // only the deferred exit path leaves it), which the size change needs.
 func TestForceExitRestoresTheSizeThenText(t *testing.T) {
+	resetExitRestore(t)
 	dir := t.TempDir()
 	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 500 * time.Millisecond}
 	os.WriteFile(c.Cmd, nil, 0o644)
@@ -168,6 +169,88 @@ func TestForceExitRestoresTheSizeThenText(t *testing.T) {
 	}
 	if c.Saved() {
 		t.Fatal("the saved size is still there")
+	}
+}
+
+func resetExitRestore(t *testing.T) {
+	t.Helper()
+	exitRestore.mu.Lock()
+	exitRestore.done = false
+	exitRestore.mu.Unlock()
+	t.Cleanup(func() {
+		exitRestore.mu.Lock()
+		exitRestore.done = false
+		exitRestore.mu.Unlock()
+	})
+}
+
+// After the exit path restored (even when the size request failed and the
+// state stayed) the console is in text mode: a late forced exit must send no
+// size command and not touch the console again.
+func TestForceExitAfterTheExitRestoreDoesNothing(t *testing.T) {
+	resetExitRestore(t)
+	dir := t.TempDir()
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 200 * time.Millisecond}
+	os.WriteFile(c.Cmd, nil, 0o644)
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644) // no res_count: the request fails
+	old := fbControl
+	fbControl = func() platform.FBControl { return c }
+	defer func() { fbControl = old }()
+	texts := 0
+	fakeConsole(t, nil, func() { texts++ })
+	restoreDisplay(nil)
+	if !c.Saved() {
+		t.Fatal("the failed restore dropped the state")
+	}
+	restoreOnForcedExit()
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("size command after the console left graphics mode: %q", b)
+	}
+	if texts != 0 {
+		t.Fatalf("restoreText ran %d times", texts)
+	}
+}
+
+// A forced exit that starts while the exit restore waits for the menu waits
+// for it: one size command, and no console change of its own.
+func TestForceExitWaitsForTheExitRestore(t *testing.T) {
+	resetExitRestore(t)
+	dir := t.TempDir()
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 2 * time.Second}
+	os.WriteFile(c.Cmd, nil, 0o644)
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "width"), []byte("1920\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "height"), []byte("1200\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "res_count"), []byte("1\n"), 0o644)
+	old := fbControl
+	fbControl = func() platform.FBControl { return c }
+	defer func() { fbControl = old }()
+	texts := 0
+	fakeConsole(t, nil, func() { texts++ })
+	go func() { // a slow menu: it answers 300 ms after the command
+		for {
+			if b, _ := os.ReadFile(c.Cmd); len(b) > 0 {
+				time.Sleep(300 * time.Millisecond)
+				os.WriteFile(filepath.Join(dir, "res_count"), []byte("2\n"), 0o644)
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	deferred := make(chan struct{})
+	go func() { restoreDisplay(nil); close(deferred) }()
+	time.Sleep(100 * time.Millisecond) // the deferred restore has sent its command
+	restoreOnForcedExit()
+	select {
+	case <-deferred:
+	default:
+		t.Fatal("the forced exit did not wait for the exit restore")
+	}
+	if b, _ := os.ReadFile(c.Cmd); strings.Count(string(b), "fb_cmd1") != 1 {
+		t.Fatalf("commands: %q", b)
+	}
+	if texts != 0 {
+		t.Fatalf("restoreText ran %d times", texts)
 	}
 }
 

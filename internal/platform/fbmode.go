@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -161,6 +162,7 @@ func (c FBControl) restore(checkStale bool) error {
 	}
 	if n == 4 && checkStale {
 		if cur, ok := c.Current(); ok && cur != to {
+			log.Printf("display: saved size is stale (framebuffer is %v, not the switched size %v); not restoring", cur, to)
 			os.Remove(c.State)
 			return nil
 		}
