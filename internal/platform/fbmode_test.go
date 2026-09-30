@@ -169,3 +169,42 @@ func TestSaved(t *testing.T) {
 		t.Fatal("still saved after a restore")
 	}
 }
+
+func TestResCountAndCurrent(t *testing.T) {
+	c := fakeMenu(t, true)
+	if got := c.ResCount(); got != "8" {
+		t.Fatalf("ResCount %q", got)
+	}
+	if _, ok := c.Current(); ok {
+		t.Fatal("a size from missing files")
+	}
+	os.WriteFile(filepath.Join(c.Sys, "width"), []byte("960\n"), 0o644)
+	if _, ok := c.Current(); ok {
+		t.Fatal("a size without a height")
+	}
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte("600\n"), 0o644)
+	if s, ok := c.Current(); !ok || s != (Size{960, 600}) {
+		t.Fatalf("Current %v %v", s, ok)
+	}
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte("junk"), 0o644)
+	if _, ok := c.Current(); ok {
+		t.Fatal("junk accepted")
+	}
+	if (FBControl{Sys: filepath.Join(t.TempDir(), "none")}).ResCount() != "" {
+		t.Fatal("ResCount of a missing dir")
+	}
+}
+
+// Resize asks again without touching the saved size.
+func TestResizeKeepsTheSavedSize(t *testing.T) {
+	c := fakeMenu(t, false)
+	if err := c.Switch(Size{800, 600}, Size{1920, 1200}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Resize(Size{1920, 1200}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(c.State); string(b) != "800 600\n" {
+		t.Fatalf("state %q", b)
+	}
+}

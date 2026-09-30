@@ -93,6 +93,11 @@ type Options struct {
 	FallbackFonts string
 	Now           func() time.Time
 
+	// WatchDisplay, if set, is called every watchdogEvery on the UI
+	// goroutine. repaint asks for a full frame (the display was
+	// reconfigured); an error quits the app.
+	WatchDisplay func() (repaint bool, err error)
+
 	// ConfigPath is where the configuration is saved. Config is the loaded
 	// one (nil if missing or invalid: ConfigErr says why); the UI owns it.
 	ConfigPath string
@@ -249,7 +254,7 @@ func New(o Options) (*App, error) {
 		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
 	}
 	a.verify, a.pad = o.VerifyRedraw, o.PadAtStart
-	if _, ok := o.Display.(gfx.Checker); ok {
+	if _, ok := o.Display.(gfx.Checker); ok || o.WatchDisplay != nil {
 		a.checkAt = o.Now().Add(watchdogEvery)
 	}
 	for _, ch := range o.Inputs {

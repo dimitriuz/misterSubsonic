@@ -15,11 +15,25 @@ const watchdogEvery = 2 * time.Second
 
 // checkScreen runs the watchdog when it is due.
 func (a *App) checkScreen(now time.Time) {
-	chk, ok := a.o.Display.(gfx.Checker)
-	if !ok || a.checkAt.IsZero() || now.Before(a.checkAt) {
+	if a.checkAt.IsZero() || now.Before(a.checkAt) {
 		return
 	}
 	a.checkAt = now.Add(watchdogEvery)
+	if a.o.WatchDisplay != nil {
+		repaint, err := a.o.WatchDisplay()
+		if err != nil {
+			log.Printf("ui: %v", err)
+			a.quit = true
+			return
+		}
+		if repaint {
+			a.dirty = true
+		}
+	}
+	chk, ok := a.o.Display.(gfx.Checker)
+	if !ok {
+		return
+	}
 	if chk.Intact() {
 		a.overwritten = false
 		return

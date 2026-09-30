@@ -226,6 +226,7 @@ func run(f flags) (err error) {
 	var disp gfx.Display
 	var inputs []<-chan input.Event
 	padAtStart := false
+	var watchDisplay func() (bool, error)
 	switch f.display {
 	case "fbdev":
 		// The console goes to graphics mode before the framebuffer size can
@@ -248,11 +249,14 @@ func run(f flags) (err error) {
 				log.Printf("console: %v", err)
 			}
 		}()
-		fb, err := openFB(f.fbdev, profileName, dataDir, allowFullRes(cfg.Display.FullResolution, con))
+		fb, keep, err := openFB(f.fbdev, profileName, dataDir, allowFullRes(cfg.Display.FullResolution, con))
 		if err != nil {
 			return err
 		}
 		disp = fb
+		if keep != nil {
+			watchDisplay = keep.check
+		}
 		mgr := input.NewManager(input.ManagerOptions{Grab: true})
 		defer mgr.Close()
 		inputs = append(inputs, mgr.Events())
@@ -322,6 +326,7 @@ func run(f flags) (err error) {
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
 		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),
 		VerifyRedraw:  f.verifyRedraw,
+		WatchDisplay:  watchDisplay,
 		PadAtStart:    padAtStart,
 		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})

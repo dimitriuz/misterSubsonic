@@ -44,6 +44,7 @@ type fbFixScreenInfo struct {
 
 // FB is the Linux framebuffer display.
 type FB struct {
+	path    string
 	f       *os.File
 	mapping []byte // the whole mmap, for Munmap
 	mem     []byte // the visible screen inside it
@@ -61,6 +62,15 @@ func ioctl(fd uintptr, req uintptr, arg unsafe.Pointer) error {
 // OpenFB maps the framebuffer device (normally /dev/fb0). If mmap on the
 // device fails, it maps the same memory through /dev/mem.
 func OpenFB(path string) (*FB, error) {
+	b, err := openFB(path)
+	if err != nil {
+		return nil, err
+	}
+	b.path = path
+	return b, nil
+}
+
+func openFB(path string) (*FB, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gfx: open %s: %w", path, err)
@@ -217,4 +227,49 @@ func (b *FB) Close() error {
 		b.f = nil
 	}
 	return err
+}
+
+// Release unmaps and closes the framebuffer without blanking it, keeping
+// the path for Reopen. Present fails until Reopen succeeds.
+func (b *FB) Release() error {
+	if b.mem == nil {
+		return nil
+	}
+	err := syscall.Munmap(b.mapping)
+	b.mem, b.mapping, b.last = nil, nil, nil
+	if b.f != nil {
+		if e := b.f.Close(); err == nil {
+			err = e
+		}
+		b.f = nil
+	}
+	return err
+}
+
+// Reopen maps the framebuffer again after Release. It fails, leaving the FB
+// released, if the framebuffer now has another size than before. The next
+// Present draws everything (no frame is remembered).
+func (b *FB) Reopen() error {
+	if b.mem != nil {
+		return errors.New("gfx: framebuffer already open")
+	}
+	n, err := openFB(b.path)
+	if err != nil {
+		return err
+	}
+	if err := sameSize(b.fmt, n.fmt); err != nil {
+		n.Close()
+		return err
+	}
+	b.f, b.mapping, b.mem, b.fmt, b.last = n.f, n.mapping, n.mem, n.fmt, nil
+	return nil
+}
+
+// sameSize checks that a remapped framebuffer still fits the frames drawn
+// for old.
+func sameSize(old, cur fbFormat) error {
+	if old.width != cur.width || old.height != cur.height {
+		return fmt.Errorf("gfx: framebuffer is %dx%d, not %dx%d", cur.width, cur.height, old.width, old.height)
+	}
+	return nil
 }

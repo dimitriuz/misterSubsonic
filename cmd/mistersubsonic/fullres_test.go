@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,5 +129,147 @@ func TestAllowFullRes(t *testing.T) {
 	}
 	if allowFullRes(false, con) {
 		t.Error("full resolution allowed although disabled")
+	}
+}
+
+type fakeFB struct {
+	events   *[]string
+	size     func() platform.Size // what the driver reports at Reopen time
+	want     platform.Size
+	reopenOK bool
+}
+
+func (f *fakeFB) Release() error { *f.events = append(*f.events, "release"); return nil }
+func (f *fakeFB) Reopen() error {
+	*f.events = append(*f.events, "reopen")
+	if s := f.size(); s != f.want {
+		return fmt.Errorf("gfx: framebuffer is %v, not %v", s, f.want)
+	}
+	return nil
+}
+
+// keeperMenu is a menu that starts at the full size (res_count 8); reset()
+// simulates the hotplug reset, and a command sets the size asked for.
+type keeperMenu struct {
+	ctl    platform.FBControl
+	events []string
+	mu     sync.Mutex
+	size   platform.Size
+	fb     *fakeFB
+}
+
+var fullSz = platform.Size{W: 1920, H: 1200}
+
+func newKeeperMenu(t *testing.T, deaf bool) (*keeperMenu, *keeper) {
+	t.Helper()
+	dir := t.TempDir()
+	m := &keeperMenu{size: fullSz}
+	m.ctl = platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 300 * time.Millisecond}
+	os.WriteFile(m.ctl.Cmd, nil, 0o644)
+	m.publish(8)
+	m.fb = &fakeFB{events: &m.events, size: m.get, want: fullSz}
+	os.WriteFile(m.ctl.State, []byte("960 600\n"), 0o644) // as openFB's Switch left it
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		seen := 0
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+			b, _ := os.ReadFile(m.ctl.Cmd)
+			if n := strings.Count(string(b), "\n"); n > seen && !deaf {
+				seen = n
+				var w, h int
+				txt := strings.TrimSpace(string(b))
+				fmt.Sscanf(txt[strings.LastIndex(txt, "fb_cmd1"):], "fb_cmd1 8888 1 %d %d", &w, &h)
+				m.set(platform.Size{W: w, H: h})
+				m.publish(100 + n)
+			}
+		}
+	}()
+	k := newKeeper(m.ctl, m.fb, fullSz)
+	k.settle = 200 * time.Millisecond
+	return m, k
+}
+
+func (m *keeperMenu) get() platform.Size  { m.mu.Lock(); defer m.mu.Unlock(); return m.size }
+func (m *keeperMenu) set(s platform.Size) { m.mu.Lock(); m.size = s; m.mu.Unlock() }
+
+func (m *keeperMenu) publish(count int) {
+	d, sz := m.ctl.Sys, m.get()
+	os.WriteFile(filepath.Join(d, "width"), []byte(strconv.Itoa(sz.W)+"\n"), 0o644)
+	os.WriteFile(filepath.Join(d, "height"), []byte(strconv.Itoa(sz.H)+"\n"), 0o644)
+	os.WriteFile(filepath.Join(d, "res_count"), []byte(strconv.Itoa(count)+"\n"), 0o644)
+}
+
+func (m *keeperMenu) commands() string {
+	b, _ := os.ReadFile(m.ctl.Cmd)
+	return strings.TrimSpace(string(b))
+}
+
+func TestKeeperIgnoresAnUnchangedCount(t *testing.T) {
+	m, k := newKeeperMenu(t, false)
+	if rep, err := k.check(); rep || err != nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if m.commands() != "" || len(m.events) != 0 {
+		t.Fatal("did something")
+	}
+}
+
+func TestKeeperRepaintsWhenTheSizeIsStillWanted(t *testing.T) {
+	m, k := newKeeperMenu(t, true)
+	m.publish(9) // reconfigured, same size
+	if rep, err := k.check(); !rep || err != nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if m.commands() != "" || len(m.events) != 0 {
+		t.Fatalf("commands %q events %v", m.commands(), m.events)
+	}
+	if rep, _ := k.check(); rep {
+		t.Fatal("repainted twice for one change")
+	}
+}
+
+func TestKeeperRestoresFullResolutionAfterAReset(t *testing.T) {
+	m, k := newKeeperMenu(t, false)
+	m.set(platform.Size{W: 960, H: 600})
+	m.publish(9)
+	rep, err := k.check()
+	if !rep || err != nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if got := m.commands(); got != "fb_cmd1 8888 1 1920 1200" {
+		t.Fatalf("commands %q", got)
+	}
+	if strings.Join(m.events, ",") != "release,reopen" {
+		t.Fatalf("events %v", m.events)
+	}
+	if b, _ := os.ReadFile(m.ctl.State); string(b) != "960 600\n" {
+		t.Fatalf("the saved size is %q", b)
+	}
+	if rep, err := k.check(); rep || err != nil {
+		t.Fatalf("our own change was taken for a new one: %v %v", rep, err)
+	}
+}
+
+func TestKeeperReportsAMenuThatNeverConfirms(t *testing.T) {
+	m, k := newKeeperMenu(t, true)
+	m.set(platform.Size{W: 960, H: 600})
+	m.publish(9)
+	rep, err := k.check()
+	if rep || err == nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	for _, want := range []string{"reset to 960x600", "full resolution couldn't be restored", "not usable"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if strings.Join(m.events, ",") != "release,reopen" {
+		t.Fatalf("events %v", m.events)
 	}
 }
