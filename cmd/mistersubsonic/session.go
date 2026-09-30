@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"log"
 	"os"
 	"path/filepath"
@@ -160,8 +162,12 @@ func (m *sessions) build(a sessionUI, c *subsonic.Client, srv config.Server, pb 
 	return s
 }
 
-// serverDir is where a server's data lives: servers/<name> in the data
-// folder, with the name made safe for a file name.
+// serverDir is where a server's data lives: servers/<name>-<hash> in the
+// data folder, the name made safe for a file name and the hash of the exact
+// name keeping servers apart when they sanitize alike ("a/b", "a_b") or
+// differ only in case (exFAT folds it). Older versions used the bare safe
+// name; a server whose folder is there keeps using it, so an upgrade keeps
+// its cache and resume state.
 func (m *sessions) serverDir(name string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -173,9 +179,14 @@ func (m *sessions) serverDir(name string) string {
 	if safe == "" || safe == "." || safe == ".." {
 		safe = "_"
 	}
-	dir := filepath.Join(m.dataDir, "servers", safe)
+	servers := filepath.Join(m.dataDir, "servers")
+	dir := filepath.Join(servers, safe)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		h := sha1.Sum([]byte(name))
+		dir = filepath.Join(servers, safe+"-"+hex.EncodeToString(h[:4]))
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Printf("server data folder: %v", err)
+		log.Printf("server data folder %s: %v", dir, err)
 	}
 	return dir
 }

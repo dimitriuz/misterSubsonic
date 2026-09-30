@@ -321,22 +321,36 @@ func (a *App) Pop() {
 	if len(a.stack) <= 1 {
 		return
 	}
+	a.drop()
+	a.shown()
+}
+
+// drop closes the top screen without telling the one below.
+func (a *App) drop() {
 	top := a.stack[len(a.stack)-1]
 	top.cancel()
 	a.stack = a.stack[:len(a.stack)-1]
 	a.dirty = true
+}
+
+// shown tells the top screen it is visible again.
+func (a *App) shown() {
 	if sh, ok := a.Top().(shower); ok {
 		sh.Shown(a)
 	}
 }
 
 // popTo pops screens until pred matches the top; if no screen in the stack
-// matches, the stack is left unchanged and false is returned.
+// matches, the stack is left unchanged and false is returned. Only the
+// screen that ends up on top is told (Shown), not the ones passed through.
 func (a *App) popTo(pred func(Screen) bool) bool {
 	for i := len(a.stack) - 1; i >= 0; i-- {
 		if pred(a.stack[i].s) {
-			for len(a.stack) > i+1 {
-				a.Pop()
+			if len(a.stack) > i+1 {
+				for len(a.stack) > i+1 {
+					a.drop()
+				}
+				a.shown()
 			}
 			return true
 		}

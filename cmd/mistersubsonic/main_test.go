@@ -110,7 +110,7 @@ func TestConnectBuildsSessionAndExitsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "servers", "x", "cache", "art")); err != nil {
+	if _, err := os.Stat(filepath.Join((&sessions{dataDir: dir}).serverDir("x"), "cache", "art")); err != nil {
 		t.Fatalf("art cache not created after connect: %v", err)
 	}
 }

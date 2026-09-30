@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -105,8 +106,9 @@ func TestSwitchStopsTheOldSessionAndKeepsTheVolume(t *testing.T) {
 	if got := f.players[1].State().VolumeDB; got != -17 {
 		t.Fatalf("new player volume %v, want the old one's -17", got)
 	}
+	check := &sessions{dataDir: dir}
 	for _, name := range []string{"a", "b"} {
-		if _, err := os.Stat(filepath.Join(dir, "servers", name, "cache", "art")); err != nil {
+		if _, err := os.Stat(filepath.Join(check.serverDir(name), "cache", "art")); err != nil {
 			t.Errorf("server %s has no data folder: %v", name, err)
 		}
 	}
@@ -175,10 +177,41 @@ func TestCloseStopsTheSessionAndLaterConnects(t *testing.T) {
 
 func TestServerDirIsSafe(t *testing.T) {
 	m := &sessions{dataDir: t.TempDir()}
-	for name, want := range map[string]string{"home": "home", "a/b": "a_b", "..": "_", "c:\\x": "c__x"} {
-		if got := filepath.Base(m.serverDir(name)); got != want {
-			t.Errorf("serverDir(%q) = %q, want %q", name, got, want)
+	for name, want := range map[string]string{"home": "home-", "a/b": "a_b-", "..": "_-", "c:\\x": "c__x-"} {
+		got := filepath.Base(m.serverDir(name))
+		if !strings.HasPrefix(got, want) || len(got) != len(want)+8 {
+			t.Errorf("serverDir(%q) = %q, want %q and 8 hex digits", name, got, want)
 		}
+	}
+}
+
+// Names that sanitize alike (or differ only in case, which exFAT folds) must
+// not share a folder: IDs mean different songs on different servers.
+func TestServerDirIsUniquePerServer(t *testing.T) {
+	m := &sessions{dataDir: t.TempDir()}
+	seen := map[string]string{}
+	for _, name := range []string{"a/b", "a_b", "a\\b", "Home", "home", "HOME"} {
+		dir := strings.ToLower(filepath.Base(m.serverDir(name)))
+		if other, ok := seen[dir]; ok {
+			t.Errorf("%q and %q share the folder %q", other, name, dir)
+		}
+		seen[dir] = name
+	}
+	if m.serverDir("home") != m.serverDir("home") {
+		t.Error("the folder isn't stable")
+	}
+}
+
+// A folder made by an older version (the plain sanitized name) keeps being
+// used, so an upgrade doesn't lose the cache and resume state.
+func TestServerDirKeepsAnOldFolder(t *testing.T) {
+	m := &sessions{dataDir: t.TempDir()}
+	old := filepath.Join(m.dataDir, "servers", "a_b")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.serverDir("a/b"); got != old {
+		t.Errorf("serverDir = %q, want the old folder %q", got, old)
 	}
 }
 

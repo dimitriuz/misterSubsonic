@@ -64,6 +64,10 @@ type Options struct {
 // maxPending bounds the request stack; the oldest requests are dropped.
 const maxPending = 64
 
+// maxFailed bounds the failed-key map (a server with thousands of missing
+// covers must not grow it forever); the oldest failures are forgotten first.
+const maxFailed = 512
+
 type entry struct {
 	key   Key
 	img   *gfx.Image
@@ -186,7 +190,7 @@ func (l *Loader) worker() {
 		l.mu.Lock()
 		delete(l.inflight, k)
 		if err != nil {
-			l.failed[k] = l.o.Now()
+			l.noteFailedLocked(k)
 		} else {
 			delete(l.failed, k)
 			l.insertLocked(k, img)
@@ -195,6 +199,32 @@ func (l *Loader) worker() {
 		if l.o.Ready != nil && l.ctx.Err() == nil {
 			l.o.Ready(k)
 		}
+	}
+}
+
+// noteFailedLocked remembers a failure. Past maxFailed, the ones that may
+// be retried anyway go first, then the oldest.
+func (l *Loader) noteFailedLocked(k Key) {
+	now := l.o.Now()
+	l.failed[k] = now
+	if len(l.failed) <= maxFailed {
+		return
+	}
+	for fk, t := range l.failed {
+		if now.Sub(t) >= l.o.RetryAfter {
+			delete(l.failed, fk)
+		}
+	}
+	for len(l.failed) > maxFailed {
+		var oldest Key
+		var ot time.Time
+		first := true
+		for fk, t := range l.failed {
+			if first || t.Before(ot) {
+				oldest, ot, first = fk, t, false
+			}
+		}
+		delete(l.failed, oldest)
 	}
 }
 

@@ -271,3 +271,33 @@ func TestScreenDrawsOnlyInsideItsArea(t *testing.T) {
 		t.Errorf("body pixel %06x: the screen lost its own area", uint32(got)&0xFFFFFF)
 	}
 }
+
+// shownProbe counts how often it is told it is visible again.
+type shownProbe struct {
+	probe
+	shown int
+}
+
+func (s *shownProbe) Shown(*App) { s.shown++ }
+
+// popTo passes through the screens between the top and the target: only the
+// one that ends up on top is told (a refresh on each would be wasted work,
+// and a network call for some).
+func TestPopToShowsOnlyTheTarget(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	root, mid1, mid2, target := &probe{}, &shownProbe{}, &shownProbe{}, &shownProbe{}
+	ta.Push(root)
+	ta.Push(target)
+	ta.Push(mid1)
+	ta.Push(mid2)
+	ta.Push(&probe{})
+	if !ta.popTo(func(s Screen) bool { return s == target }) {
+		t.Fatal("popTo found nothing")
+	}
+	if ta.Top() != Screen(target) {
+		t.Fatalf("top is %T", ta.Top())
+	}
+	if mid1.shown != 0 || mid2.shown != 0 || target.shown != 1 {
+		t.Fatalf("shown: mid1 %d, mid2 %d, target %d; want 0, 0, 1", mid1.shown, mid2.shown, target.shown)
+	}
+}

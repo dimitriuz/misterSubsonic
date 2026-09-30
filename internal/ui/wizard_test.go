@@ -232,6 +232,31 @@ func TestWizardReplacesAnInvalidConfig(t *testing.T) {
 	}
 }
 
+// Leaving the wizard while the old config is being moved aside would drop
+// the save (its result is discarded with the screen): the old file would be
+// gone and no new one written. Back does nothing until the save is done.
+func TestWizardStaysWhileTheBackupIsMade(t *testing.T) {
+	srv := fakeServer("ok", false)
+	defer srv.Close()
+	ta, rec := sessionApp(t, nil)
+	os.WriteFile(ta.o.ConfigPath, []byte("this is = not toml ["), 0o600)
+	ta.o.ConfigErr = errors.New("config: invalid TOML syntax at line 1")
+	ta.start()
+	ta.press(input.BtnA) // set up again
+	fill(t, ta, srv.URL, "alice", "pw", "")
+	ta.press(input.BtnA) // save
+	for i := 0; i < 8; i++ {
+		ta.press(input.BtnB) // back out before the backup is done
+	}
+	ta.settle(t)
+	if _, _, err := config.Load(ta.o.ConfigPath); err != nil {
+		t.Fatalf("no new config after leaving during the save: %v", err)
+	}
+	if len(rec.got) != 1 {
+		t.Fatalf("connects %d", len(rec.got))
+	}
+}
+
 func TestGoldenWizard(t *testing.T) {
 	for _, p := range profiles {
 		ta := newTestApp(t, p)

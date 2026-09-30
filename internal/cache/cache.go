@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +19,9 @@ import (
 
 // writeFile is replaceable in tests (a full SD card fails mid-write).
 var writeFile = os.WriteFile
+
+// walkDir is replaceable in tests (a walk that fails).
+var walkDir = filepath.WalkDir
 
 type Disk struct {
 	dir string
@@ -42,7 +46,9 @@ func Open(dir string, maxBytes int64) (*Disk, error) {
 			continue
 		}
 		if strings.HasSuffix(e.Name(), ".tmp") {
-			os.Remove(filepath.Join(dir, e.Name()))
+			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+				log.Printf("art cache: removing %s: %v", e.Name(), err)
+			}
 			continue
 		}
 		d.size += info.Size()
@@ -125,7 +131,8 @@ var evictions int
 // evictLocked removes the oldest entries down to a low-water mark of 90% of
 // the budget, so the directory walk happens once per ~10% of new data. The
 // walk also recounts the size, which drifts if files are deleted behind the
-// cache's back.
+// cache's back. A walk that fails leaves the size and the files alone: a
+// partial count would let the cache outgrow its budget.
 func (d *Disk) evictLocked(keep string) {
 	evictions++
 	target := d.max * 9 / 10
@@ -135,21 +142,32 @@ func (d *Disk) evictLocked(keep string) {
 		mod  time.Time
 	}
 	var all []ent
-	d.size = 0
-	filepath.WalkDir(d.dir, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() {
+	var total int64
+	walkErr := walkDir(d.dir, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if e.IsDir() {
 			return nil
 		}
 		info, err := e.Info()
-		if err != nil {
-			return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // removed since the listing
 		}
-		d.size += info.Size()
+		if err != nil {
+			return err
+		}
+		total += info.Size()
 		if p != keep {
 			all = append(all, ent{p, info.Size(), info.ModTime()})
 		}
 		return nil
 	})
+	if walkErr != nil {
+		log.Printf("art cache: eviction walk: %v", walkErr)
+		return
+	}
+	d.size = total
 	sort.Slice(all, func(i, j int) bool { return all[i].mod.Before(all[j].mod) })
 	for _, e := range all {
 		if d.size <= target {

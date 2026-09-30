@@ -53,10 +53,18 @@ type starredTab struct {
 }
 
 func (s *starredTab) Title() string { return "Starred" }
-func (s *starredTab) Enter(a *App)  { s.d.load(a, s) }
+func (s *starredTab) Enter(a *App)  { s.autoLoad(a) }
 
 // Shown reloads the list if a star changed while another screen was up.
-func (s *starredTab) Shown(a *App) { s.d.load(a, s) }
+func (s *starredTab) Shown(a *App) { s.autoLoad(a) }
+
+// autoLoad loads on its own, but not again after a failure: the error
+// screen says "A to retry", and Handle does.
+func (s *starredTab) autoLoad(a *App) {
+	if s.d.err == nil {
+		s.d.load(a, s)
+	}
+}
 
 // sync copies the shared result into this tab's view.
 func (s *starredTab) sync() int {

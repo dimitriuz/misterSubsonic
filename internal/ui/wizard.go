@@ -164,6 +164,9 @@ func (s *WizardScreen) Handle(a *App, e input.Event) bool {
 // back goes to the previous step; false (the app pops the wizard) on the
 // first step, unless the wizard is the app's first screen.
 func (s *WizardScreen) back(a *App) bool {
+	if s.saving {
+		return true // the save's result is dropped with the screen: wait for it
+	}
 	if s.step > stepURL {
 		s.cancelTest()
 		s.setStep(s.step - 1)

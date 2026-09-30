@@ -77,6 +77,31 @@ func TestStarredErrorRetries(t *testing.T) {
 	}
 }
 
+// The error screen says "A to retry": coming back to it (Pop, a tab switch)
+// must not fetch again by itself.
+func TestStarredErrorRetriesOnlyOnA(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.lib.err = errOffline
+	ta.Push(NewHomeScreen())
+	ta.Push(NewStarredScreen())
+	ta.settle(t)
+	ta.Push(&probe{})
+	ta.Pop() // back on Starred
+	ta.press(input.BtnUp)
+	ta.press(input.BtnRight) // another tab is entered for the first time
+	ta.settle(t)
+	if ta.lib.starCalls != 1 {
+		t.Fatalf("calls %d after coming back, want no retry", ta.lib.starCalls)
+	}
+	ta.lib.err = nil
+	ta.press(input.BtnDown) // off the tabs
+	ta.press(input.BtnA)
+	ta.settle(t)
+	if ta.lib.starCalls != 2 {
+		t.Fatalf("calls %d, want a retry on A", ta.lib.starCalls)
+	}
+}
+
 func TestGoldenPlaylistsAndStarred(t *testing.T) {
 	for _, p := range profiles {
 		ta := newTestApp(t, p)
