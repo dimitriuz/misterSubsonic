@@ -29,9 +29,54 @@ file /tmp/t.mp3 /tmp/t2.mp3
 
 **Decision:** §5 confirmed. Raw FLAC streams return `206` with `Accept-Ranges: bytes` and correct `Content-Range`, so the range-based stream reader design in spec §5 stands as designed for this server. Transcoded streams are `200`, chunked (no `Content-Length`), `Accept-Ranges: none` — as expected for on-the-fly transcoding, and consistent with §5's sequential-read path for transcoded audio. `timeOffset` is honoured by this server (verified above), so seeking on a transcoded stream reopens the connection at the requested offset rather than restarting from 0.
 
-## Spike 2 — pending — MiSTer unavailable (user can't boot it yet)
+## Spike 2 — toolchain and audio on the device (2026-09-30, silent part)
 
-## Spike 3 — pending — MiSTer unavailable (user can't boot it yet)
+- **Device:** ARMv7 (Cortex-A9), Buildroot, glibc 2.31, bash 5.0.18, util-linux `flock`. `socat`, `pidof` and `timeout` are present; `pgrep` is not. About 490 MB RAM, 427 MB available.
+- **Result:** the zig-built `audio.test` (needs glibc 2.29) runs, and every test passes on the device through miniaudio's null backend. That covers decoders, resampler, engine, gapless and the null device.
+- **Listening test (with the user's go-ahead, into headphones):**
+  - The ALSA `default` device is `plug → rate (S16_LE, 48 kHz) → file "/dev/MrAudio"`, with a `Dummy` hw slave for timing. `/proc/<pid>/fd` confirms that miniaudio's default opens `/dev/MrAudio` and `pcmC0D0p`, the same path as `aplay -D default`.
+  - The first run of `MSS_DEVICE_TEST=1 ./audio.test -test.run RealDevice` wasn't heard.
+  - A quiet `aplay -D default` tone (−30 dBFS) was heard.
+  - A second run of the test was heard clean, with no clicks or crackle reported.
+  - The first silence did not reproduce. Watch for it on the app's first sound after a reboot.
+  - `alsa_device = "default"` stays.
+
+## Spike 3 — Cortex-A9 costs (2026-09-30)
+
+**Decode + resample to 48 kHz (`audio.test -test.bench DecodeResample`), share of one core:**
+
+| Source | q3 | q5 | q7 |
+|---|---|---|---|
+| FLAC 44.1k/16 | 12.0% | **18.0%** | 26.5% |
+| FLAC 96k/24 | — | **14.7%** | — |
+
+- **Decision:** keep quality 5 (the default). It is under the 25% target.
+
+**UI repaint (`ui.test -test.bench Repaint`), per frame:**
+
+| Screen | Time |
+|---|---|
+| albums-hdmi-1080p | 165 ms |
+| nowplaying-hdmi-1080p | 108 ms |
+| feed-hdmi-1080p | 176 ms |
+| search-hdmi-1080p | 74 ms |
+| marquee-hdmi-1080p | 158 ms |
+| albums-crt-240p | **9 ms** |
+
+- **Target:** 30 ms per frame.
+  - CRT meets it.
+  - HDMI at 1080p does not.
+- **Profile of feed-hdmi-1080p on the device:**
+  - 46% goes to the benchmark's `fakeArt.Get`, which makes a gradient image per call with integer division (`runtime.udiv`). The real art source returns cached images.
+  - 19% goes to `Headless.Present`, which copies the frame; the framebuffer packs it instead.
+  - 15% goes to `Scaler.Scale` (1280×720 → 1920×1080).
+  - The rest is `Canvas.Clear`, `Blit` and text.
+- **Estimate for the real app:** excluding the benchmark's own costs, a 1080p frame is roughly 60–90 ms. That is still over the target.
+- **Next:**
+  - Fix the benchmark (cached fake art, a display without the copy).
+  - Profile again.
+  - Work on the scaler, clear and pack paths.
+- **This MiSTer's framebuffer is 960×600 at 32 bpp**, from `video_mode=1920,1200,60`; with `fb_size=0` the framebuffer is halved above 1920×1080. The 1280×720 HDMI layout is therefore scaled down to 0.75. That makes a frame cheaper, but thin text loses rows and columns (nearest neighbour).
 
 ## Plan 2a on the MiSTer
 
@@ -55,3 +100,36 @@ pending — MiSTer unavailable. Run the checklist in `docs/testing-on-mister.md`
 ## Plan 3b on the MiSTer
 
 pending — MiSTer unavailable. Plan 3b's fixes are verified on the host. On the device, run `docs/testing-on-mister.md` items 6 (long FLAC), 16 (long MP3), 17 (ReplayGain) and 18 (memory), together with spikes 2 and 3 and the `Repaint` benchmarks.
+
+## Plan 4 on the MiSTer (2026-09-30)
+
+This MiSTer: HDMI at `video_mode=1920,1200,60`, so the framebuffer is 960×600×32. The app used to draw 1280×720 and scale it down, which blurred text. It now draws at the framebuffer's size.
+
+**Render speed** (`ui.test -test.bench Repaint`, fixed benchmark: cached covers, a display that drops frames; `gfx.test -test.bench Pack` for the framebuffer copy), per frame:
+
+| Case | Draw | Pack | Total |
+|---|---|---|---|
+| Before: 1280×720 scaled to 960×600 | ~35 ms | 17.5 ms | ~52 ms |
+| Native 960×600: albums / feed / Now Playing | 13.5 / 14.7 / 8.9 ms | 5.4 ms | **≈ 20 ms** |
+| Native 1280×720: albums / feed | 22.2 / 22.5 ms | 8.6 ms | ≈ 31 ms |
+| Native 1920×1080: albums / feed | 49.4 / 48.1 ms | 19.2 ms | ≈ 68 ms |
+| 1280×720 scaled to 1920×1080 (the old 1080p path): albums / feed | 51.7 / 49.2 ms | 19.2 ms | ≈ 70 ms |
+| CRT 240p: albums | 4.7 ms | — | — |
+
+- The pack is a straight copy for 32 bpp little-endian framebuffers (was a per-byte loop: 17.5 → 5.4 ms at 960×600).
+- `Blit` has a one-to-one path for covers drawn at their size.
+- On the Cortex-A9, Go's `memmove` is slower than the store loop for `Clear` and `Fill`, and a non-inlined per-pixel helper slows `Blit`; both were tried and left out.
+- **Target (30 ms):** met at 960×600 and on CRT, and just about at 720p (31 ms). Native 1080p is about 68 ms: sharp, but held scrolling redraws at about 15 frames a second. Partial redraws are in the backlog.
+
+**Screenshots** (`ui.test -test.bench Screenshot`): saving a PNG takes 0.21 s at 960×600 and 0.68 s at 1920×1080, off the UI goroutine. The MiSTer Companion remote waits up to 6 s.
+
+**On the TV (2026-09-30, build 83bd059, the user's report):**
+- **Screenshots (item 21):** work. Print Screen saved a 960×600 PNG in `/media/fat/screenshots/MiSTer_Subsonic/`. The menu's own screenshot of a Linux app is 1920×1200 noise, because it saves the output buffer, not the framebuffer.
+- **Sharpness (item 3):** still blurry next to MiSTerHiFi and MiSTerFin. MiSTerFin draws an even smaller picture (its log says `fb: 640x288 (real 960x600)`), but with pre-rendered bitmap fonts, whose hard edges survive the 2× upscale.
+- **Font test card (a throwaway test program, `vmode -r`):**
+  - The menu accepts `vmode -r 1920 1200 rgb32`: the framebuffer becomes 1920×1200, and `vmode -r 960 600 rgb32` puts it back. `vmode` exits 1 even when it works.
+  - At full resolution the current smooth rendering looks best, better than hinted, higher-contrast or unsmoothed text.
+  - Plan 4b therefore draws at the output resolution.
+- **Now Playing's small volume indicator:** the user doesn't like it. Plan 4b removes it and keeps the volume panel.
+- **Hotkey hints:** the user wants hints for the gamepad and keyboard on every screen (Plan 4b).
+- **Media keys and the volume panel (items 19–20):** not reported yet.

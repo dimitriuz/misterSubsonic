@@ -214,7 +214,7 @@ func (p *fakePlayer) call(s string)               { p.calls = append(p.calls, s)
 func (p *fakePlayer) TogglePause()                { p.call("toggle") }
 func (p *fakePlayer) Next()                       { p.call("next") }
 func (p *fakePlayer) Prev()                       { p.call("prev") }
-func (p *fakePlayer) Seek(d time.Duration)        { p.call("seek"); p.seekPos = d }
+func (p *fakePlayer) Seek(d time.Duration)        { p.call("seek"); p.seekPos, p.st.Position = d, d }
 func (p *fakePlayer) Jump(i int)                  { p.call("jump"); p.st.Index = i }
 func (p *fakePlayer) Remove(i int)                { p.call("remove") }
 func (p *fakePlayer) SetShuffle(on bool)          { p.st.Shuffle = on }
@@ -257,10 +257,23 @@ func (p *fakePlayer) PlayNow(songs []subsonic.Song, start int) {
 // fakeArt makes a deterministic two-tone square per cover id.
 type fakeArt struct{}
 
+// fakeArtCache keeps each generated cover, as the real art source keeps
+// decoded covers in memory: a repaint must not pay for making them.
+var fakeArtCache sync.Map // art.Key -> *gfx.Image
+
 func (fakeArt) Get(k art.Key) (*gfx.Image, bool) {
 	if k.ID == "" {
 		return nil, false
 	}
+	if img, ok := fakeArtCache.Load(k); ok {
+		return img.(*gfx.Image), true
+	}
+	img := makeFakeArt(k)
+	fakeArtCache.Store(k, img)
+	return img, true
+}
+
+func makeFakeArt(k art.Key) *gfx.Image {
 	h := fnv.New32a()
 	h.Write([]byte(k.ID))
 	v := h.Sum32()
@@ -274,7 +287,7 @@ func (fakeArt) Get(k art.Key) (*gfx.Image, bool) {
 			img.Pix[y*k.Size+x] = c
 		}
 	}
-	return img, true
+	return img
 }
 
 func sampleLibrary() *fakeLibrary {

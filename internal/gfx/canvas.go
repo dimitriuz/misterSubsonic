@@ -101,6 +101,26 @@ func (c *Canvas) Blit(src *Image, dst Rect) {
 	if clip.Empty() || src == nil || src.W == 0 || src.H == 0 {
 		return
 	}
+	if src.W == dst.W && src.H == dst.H {
+		// Drawn at its own size (covers are decoded to fit): no index
+		// table, no division. The pixel logic stays inline; a helper
+		// call per pixel costs more than it saves on the A9.
+		for y := clip.Y; y < clip.Bottom(); y++ {
+			sy := y - dst.Y
+			srow := src.Pix[sy*src.W+clip.X-dst.X : sy*src.W+clip.Right()-dst.X]
+			drow := c.Pix[y*c.W+clip.X : y*c.W+clip.Right()]
+			for i, p := range srow {
+				switch a := p >> 24; a {
+				case 0:
+				case 255:
+					drow[i] = p & 0xFFFFFF
+				default:
+					drow[i] = blend(drow[i], p&0xFFFFFF, a)
+				}
+			}
+		}
+		return
+	}
 	xmap := make([]int, clip.W)
 	for i := range xmap {
 		xmap[i] = (clip.X + i - dst.X) * src.W / dst.W

@@ -85,7 +85,7 @@ func TestIntactNoticesAnOverwrite(t *testing.T) {
 		}
 		c := NewCanvas(64, 48)
 		for i := range c.Pix {
-			c.Pix[i] = uint32(i*2654435761) & 0xFFFFFF
+			c.Pix[i] = uint32(i) * 2654435761 & 0xFFFFFF
 		}
 		b.Present(c)
 		if !b.Intact() {

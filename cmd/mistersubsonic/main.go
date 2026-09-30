@@ -36,10 +36,10 @@ var openDevice = audio.OpenDevice
 var version = "dev"
 
 type flags struct {
-	config, display, viewerAddr, frames, profile, fbdev, keys, log string
-	null, restoreConsole                                           bool
-	volume                                                         float64
-	exitAfter                                                      time.Duration
+	config, display, viewerAddr, frames, profile, fbdev, keys, log, screenshots string
+	null, restoreConsole                                                        bool
+	volume                                                                      float64
+	exitAfter                                                                   time.Duration
 }
 
 func main() {
@@ -53,6 +53,7 @@ func main() {
 	flag.BoolVar(&f.null, "null", false, "use the null audio device (silent)")
 	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
 	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
+	flag.StringVar(&f.screenshots, "screenshots", "auto", "screenshot folder: auto (/media/fat/screenshots/MiSTer_Subsonic beside the config on the framebuffer, screenshots/ next to the config elsewhere), a path, or \"\" for none")
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
 	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
 	flag.BoolVar(&f.restoreConsole, "restore-console", false, "put the console back in text mode and exit (the launcher runs this after the app)")
@@ -93,6 +94,20 @@ func startVolume(cfgDB, flagDB float64, null bool, display, goos, goarch string)
 
 // logMax caps log.txt (and crash.txt): two files of 1 MB at most (spec §9).
 const logMax = 1 << 20
+
+// screenshotDir is where the screenshot button saves. On the framebuffer
+// (the MiSTer, config in /media/fat/mistersubsonic) that is MiSTer's own
+// screenshots folder, /media/fat/screenshots/MiSTer_Subsonic, where Main's
+// screenshots go and where the Companion remote looks for the newest one.
+func screenshotDir(flagDir, display, dataDir string) string {
+	if flagDir != "auto" {
+		return flagDir
+	}
+	if display == "fbdev" {
+		return filepath.Join(filepath.Dir(dataDir), "screenshots", "MiSTer_Subsonic")
+	}
+	return filepath.Join(dataDir, "screenshots")
+}
 
 // openLog sends the log to log.txt next to the config when the app runs on
 // the framebuffer (the MiSTer: nobody sees stderr there), or where -log
@@ -287,7 +302,8 @@ func run(f flags) (err error) {
 		Display: disp, Profile: prof, Inputs: inputs,
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
-		Connect: func(a *ui.App, c *config.Config) { sess.connect(a, c) },
+		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),
+		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})
 	if err != nil {
 		return err

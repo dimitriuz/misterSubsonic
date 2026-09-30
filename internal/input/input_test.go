@@ -202,3 +202,28 @@ func TestEnterTypesNewlineOnce(t *testing.T) {
 		t.Fatalf("held enter repeats: %v", got)
 	}
 }
+
+// A multimedia keyboard's media keys (a Logitech K400 sends them on its
+// main keyboard device) map to the media buttons; volume and seek repeat.
+func TestMediaKeys(t *testing.T) {
+	tr := newTranslator(nil, nil)
+	for code, want := range map[uint16]Button{
+		keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
+		keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
+		keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
+		keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot,
+	} {
+		got := tr.handle(evKey, code, 1)
+		if len(got) != 1 || got[0].Button != want || got[0].Kind != Press || got[0].Rune != 0 {
+			t.Errorf("key %d = %v, want %v", code, got, want)
+		}
+	}
+	for _, b := range []Button{BtnVolUp, BtnVolDown, BtnSeekFwd, BtnSeekBack} {
+		if !repeats(b) {
+			t.Errorf("%v doesn't repeat when held", b)
+		}
+	}
+	if repeats(BtnPlayPause) || repeats(BtnNextTrack) {
+		t.Error("play/pause or next repeats when held")
+	}
+}

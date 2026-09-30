@@ -249,7 +249,8 @@ func TestDecodeRejectsDecompressionBomb(t *testing.T) {
 		binary.BigEndian.PutUint32(b[20:], dim[1])
 		binary.BigEndian.PutUint32(b[29:], crc32.ChecksumIEEE(b[12:29]))
 		_, err := DecodeImage(b, 100, 100)
-		if err == nil || !strings.Contains(err.Error(), "too large") {
+		// On 32-bit (the MiSTer) image/png refuses these sizes itself.
+		if err == nil || !strings.Contains(err.Error(), "too large") && !strings.Contains(err.Error(), "dimension overflow") {
 			t.Fatalf("%dx%d: err = %v, want \"too large\"", dim[0], dim[1], err)
 		}
 	}

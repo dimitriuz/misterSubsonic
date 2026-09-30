@@ -128,6 +128,9 @@ func (a *App) volumeDB() float64 {
 	if pl := a.Player(); pl != nil {
 		return pl.State().VolumeDB
 	}
+	if a.volumePending {
+		return a.pendingDB // changed while there is no player
+	}
 	if a.cfg != nil {
 		return a.cfg.Playback.VolumeDB
 	}
@@ -141,10 +144,14 @@ func (a *App) setVolume(db float64) {
 		a.setMuted(false) // changing the volume brings the sound back
 	}
 	db = math.Max(-60, math.Min(0, math.Round(db)))
+	a.showVolume()
 	if pl := a.Player(); pl != nil {
 		pl.SetVolumeDB(db)
 	} else {
-		a.volumePending = true // the next player starts at this level
+		a.volumePending, a.pendingDB = true, db // the next player starts at this level
+	}
+	if a.cfg == nil {
+		return // no config was loaded (invalid, or first run): never write one for a volume key
 	}
 	a.UpdateConfig(func(c *config.Config) { c.Playback.VolumeDB = db }, true)
 }
@@ -153,19 +160,13 @@ func (a *App) setVolume(db float64) {
 // app always starts with the sound on.
 func (a *App) setMuted(on bool) {
 	a.muted, a.dirty = on, true
+	a.showVolume()
 	if pl := a.Player(); pl != nil {
 		pl.SetMuted(on)
 	}
 }
 
-func (a *App) toggleMute() {
-	a.setMuted(!a.muted)
-	if a.muted {
-		a.Toast("Muted")
-	} else {
-		a.Toast("Sound on")
-	}
-}
+func (a *App) toggleMute() { a.setMuted(!a.muted) } // the volume panel shows it
 
 // volumeText is the volume as shown: "Muted" while the sound is off.
 func (a *App) volumeText(db float64) string {

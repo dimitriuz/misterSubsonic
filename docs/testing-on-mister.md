@@ -21,8 +21,11 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 2. **Setup wizard.** With no `config.toml`, the wizard starts. Enter a server
    with the controller, then again with a USB keyboard. Afterwards
    `config.toml` has `token` and `salt` and no `password`.
-3. **HDMI.** At 720p and 1080p (`video_mode`, see the README): the image fills
-   the screen and the text is sharp. Covers load in the grids.
+3. **HDMI.** At 720p, 1080p and a mode above 1080p such as 1920x1200
+   (`video_mode`, see the README): the image fills the screen and the text is
+   sharp. Covers load in the grids. Scrolling a long list keeps up with a held
+   D-pad. At 1080p the text is sharp, but held scrolling redraws at about 15
+   frames a second: that is expected, not a failure.
 4. **CRT.** At 240p and 288p: the CRT layout, with nothing important cut off
    by overscan. Tune the title-safe margins if needed.
 5. **Controllers.** The user's MiSTer mapping works. Unplug the pad while the
@@ -62,7 +65,18 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     `grep VmRSS /proc/$(pidof mistersubsonic)/status` over ssh after each of
     the first five track changes, and record the values. They level off
     rather than keep growing.
-19. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+19. **Media keys.** On a multimedia keyboard (for example a Logitech K400
+    Plus), on a browse screen and on Now Playing: volume up and down (held
+    too), mute, play/pause, next, previous, fast-forward and rewind (held too).
+    Each works without leaving the screen.
+20. **Volume panel.** Every volume or mute change shows the panel for about
+    1.5 s: speaker, bar and level, or "Muted". Now Playing shows the small
+    speaker and bar in its status line.
+21. **Screenshots.** Press Print Screen, then use the MiSTer Companion
+    remote's Capture screenshot button. Each shows "Screenshot saved", adds a
+    PNG to `/media/fat/screenshots/MiSTer_Subsonic/`, and the Companion shows
+    the picture.
+22. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks

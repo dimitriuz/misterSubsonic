@@ -11,7 +11,7 @@ type menuEntry struct {
 }
 
 // MenuScreen is a context menu (X) drawn over the screen it was opened
-// from. A runs the focused entry, B or X closes it; Start stays global.
+// from. A runs the focused entry, B or X closes it; Start and the media keys stay global.
 type MenuScreen struct {
 	parent  Screen
 	title   string
@@ -27,6 +27,9 @@ func (s *MenuScreen) Title() string { return s.parent.Title() }
 func (s *MenuScreen) Enter(a *App)  {}
 
 func (s *MenuScreen) Handle(a *App, e input.Event) bool {
+	if isMediaButton(e.Button) {
+		return false // volume, play/pause and the rest work under the menu
+	}
 	if s.list.Handle(e, len(s.entries)) {
 		return true
 	}

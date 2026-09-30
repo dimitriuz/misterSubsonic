@@ -100,6 +100,8 @@ type Options struct {
 	ConfigErr  error
 	AudioErr   error  // the sound device couldn't be opened
 	Version    string // shown in Settings → About
+	// ScreenshotDir is where the screenshot button saves PNGs ("": off).
+	ScreenshotDir string
 	// Connect starts a connection to cfg's active server, off the UI
 	// goroutine, replacing any previous one; it answers with
 	// a.Connected or a.ConnectFailed (through a.Post).
@@ -149,6 +151,8 @@ const (
 // must be called on the UI goroutine.
 type App struct {
 	volumePending bool // the volume changed with no player: apply it on the next Connected
+	pendingDB     float64
+	mediaSeekAt   time.Time // the last seek by a media key outside Now Playing
 	o             Options
 	P             Profile
 	F             Fonts
@@ -192,6 +196,8 @@ type App struct {
 	confirm    bool      // exit confirmation shown
 
 	muted       bool      // the sound is off (not saved: the app starts with sound)
+	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
+	shooting    bool      // a screenshot is being saved
 	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten bool      // the last check found the screen drawn over
 }
@@ -221,7 +227,9 @@ func New(o Options) (*App, error) {
 	}
 	a.canvas = gfx.NewCanvas(a.P.W, a.P.H)
 	pw, ph := o.Display.Size()
-	a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
+	if pw != a.P.W || ph != a.P.H { // drawn at the display's size: nothing to scale
+		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
+	}
 	if _, ok := o.Display.(gfx.Checker); ok {
 		a.checkAt = o.Now().Add(watchdogEvery)
 	}
@@ -445,6 +453,9 @@ func (a *App) untilWake() time.Duration {
 	consider(a.mqWake)
 	consider(a.saveAt)
 	consider(a.checkAt)
+	if !a.volumeUntil.IsZero() {
+		consider(a.volumeUntil)
+	}
 	consider(a.saverDue())
 	if a.saver {
 		consider(now.Add(saverStep)) // the drift; nothing else moves
@@ -502,6 +513,9 @@ func (a *App) onWake() {
 		a.saveConfig()
 	}
 	a.checkScreen(now)
+	if !a.volumeUntil.IsZero() && !now.Before(a.volumeUntil) {
+		a.volumeUntil, a.dirty = time.Time{}, true // the panel goes
+	}
 	if a.animate || (!a.mqWake.IsZero() && !now.Before(a.mqWake)) {
 		a.dirty = true
 	}
@@ -527,10 +541,18 @@ func (a *App) onPlayer(ev player.Event) {
 }
 
 func (a *App) onInput(e input.Event) {
+	if e.Button == input.BtnScreenshot {
+		// On every screen, the screensaver too: it captures the frame as
+		// it is, so it neither wakes the screen nor counts as activity.
+		if e.Kind == input.Press {
+			a.screenshot()
+		}
+		return
+	}
 	now := a.o.Now()
 	a.lastInput = now
-	if a.wake() && e.Kind == input.Press {
-		return // the press that wakes the screensaver does nothing else
+	if a.wake() && e.Kind == input.Press && !isMediaButton(e.Button) {
+		return // the press that wakes the screensaver does nothing else (a media key still acts)
 	}
 	if e.Rune != 0 && !a.confirm {
 		if e.Kind == input.Press {
@@ -572,10 +594,15 @@ func (a *App) dispatch(e input.Event) {
 			a.quit = true
 		case input.BtnB:
 			a.confirm = false
+		default:
+			a.mediaKey(e) // volume and the rest keep working under the prompt
 		}
 		return
 	}
 	if top := a.Top(); top != nil && top.Handle(a, e) {
+		return
+	}
+	if a.mediaKey(e) {
 		return
 	}
 	if e.Kind != input.Press {
@@ -598,8 +625,6 @@ func (a *App) dispatch(e input.Event) {
 		if !a.popTo(func(s Screen) bool { _, ok := s.(*NowPlayingScreen); return ok }) {
 			a.Push(NewNowPlayingScreen())
 		}
-	case input.BtnMute:
-		a.toggleMute()
 	case input.BtnQueue:
 		if !a.hasQueue() {
 			break
@@ -626,6 +651,15 @@ func (a *App) hasCurrent() bool {
 	return ok
 }
 
+// present shows the logical canvas c on the display, scaled when their
+// sizes differ.
+func (a *App) present(c *gfx.Canvas) error {
+	if a.scaler == nil {
+		return a.o.Display.Present(c)
+	}
+	return a.o.Display.Present(a.scaler.Scale(c))
+}
+
 func (a *App) render() error {
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {
@@ -633,7 +667,7 @@ func (a *App) render() error {
 	}
 	if a.saver {
 		a.drawSaver(a.canvas)
-		return a.o.Display.Present(a.scaler.Scale(a.canvas))
+		return a.present(a.canvas)
 	}
 	a.animate, a.mq.seen, a.mqWake, a.dim = false, false, time.Time{}, false
 	c := a.canvas
@@ -659,10 +693,11 @@ func (a *App) render() error {
 		a.mq = marquee{}
 	}
 	a.drawToasts(c)
+	a.drawVolumePanel(c)
 	if a.confirm {
 		a.drawConfirm(c)
 	}
-	return a.o.Display.Present(a.scaler.Scale(c))
+	return a.present(c)
 }
 
 func (a *App) drawHeader(c *gfx.Canvas, title string) {

@@ -1,6 +1,13 @@
 package gfx
 
-import "fmt"
+import (
+	"fmt"
+	"unsafe"
+)
+
+// littleEndian: a canvas pixel 0x00RRGGBB then lies in memory exactly as
+// XRGB8888 stores it (B, G, R, X), so a 32 bpp frame is a plain copy.
+var littleEndian = func() bool { v := uint16(1); return *(*byte)(unsafe.Pointer(&v)) == 1 }()
 
 // fbFormat describes a linear framebuffer's memory layout.
 type fbFormat struct {
@@ -24,6 +31,10 @@ func (f fbFormat) pack(mem []byte, c *Canvas) {
 	for y := 0; y < f.height; y++ {
 		src := c.Pix[y*c.W : y*c.W+f.width]
 		line := mem[y*f.stride:]
+		if f.bpp == 32 && littleEndian {
+			copy(line[:4*f.width], unsafe.Slice((*byte)(unsafe.Pointer(&src[0])), 4*f.width))
+			continue
+		}
 		if f.bpp == 32 {
 			for x, p := range src {
 				o := 4 * x
