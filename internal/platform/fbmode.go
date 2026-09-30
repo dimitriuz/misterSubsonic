@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -146,7 +147,7 @@ func (c FBControl) Restore() error {
 // request sends fb_cmd1 for s (32 bpp) and waits until res_count changes.
 func (c FBControl) request(s Size) error {
 	count := c.resCount()
-	f, err := os.OpenFile(c.Cmd, os.O_WRONLY|os.O_APPEND, 0)
+	f, err := os.OpenFile(c.Cmd, os.O_WRONLY|os.O_APPEND|syscall.O_NONBLOCK, 0) // never block: with no reader a FIFO open fails with ENXIO
 	if err != nil {
 		return fmt.Errorf("platform: %w", err)
 	}
