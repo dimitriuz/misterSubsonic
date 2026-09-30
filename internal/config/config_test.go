@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 func write(t *testing.T, body string) string {
@@ -195,4 +197,13 @@ func TestParseErrorDoesNotEchoSecrets(t *testing.T) {
 	if !strings.Contains(err.Error(), "line 5") {
 		t.Fatalf("error does not say where: %v", err)
 	}
+}
+
+// encodeForCompare renders c through the TOML encoder: equal text means equal values.
+func encodeForCompare(c *Config) string {
+	var b strings.Builder
+	if err := toml.NewEncoder(&b).Encode(c); err != nil {
+		return err.Error()
+	}
+	return b.String()
 }
