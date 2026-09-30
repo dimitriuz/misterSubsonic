@@ -328,3 +328,62 @@ Still open:
   - The fixtures omit the message, unreachable, feed-with-Resume and search-results screens.
   - The pixel-change check can't judge whether a label is right.
   - On a physical keyboard, the typing hints read "Enter Type" and "Tab Delete", with no "Done". They are true but unidiomatic.
+
+## Resolved by Plan 5
+
+- **Settings and screensaver:**
+  - On/Off rows no longer flip on key repeat.
+  - Hand-edited values continue to the nearest choice.
+  - A toast wakes the screensaver.
+  - No screensaver over the exit prompt.
+  - The waking press's Release is swallowed.
+- **UI text:**
+  - The queue menu is titled "Queue".
+  - Grid R keeps the column.
+  - A partial album-load failure is announced.
+  - Keyboard typing hints and Back hints are right.
+  - `normalizeURL` drops `?query` and `#fragment`.
+  - A screenshot press during a save says so.
+  - The README's screenshot text and the example config's first-run text are fixed.
+  - The tab-row marquee is fixed.
+  - The CRT playlist rows are fixed.
+- **MP3:** seeks inside the buffered window reuse the stream and keep the queued track, and VBR seeks use the Xing/Info TOC.
+  - A seek that lands during a gapless handover is refused by the engine (`Replace` checks the track it replaces), and the player reopens instead.
+  - `stream.Reader` no longer counts on bytes a fetch in flight may overwrite.
+- **Stream and player:**
+  - `Promote` allocates outside the lock.
+  - Retry-After is clamped.
+  - 416 and short-EOF use the latest size.
+  - Open is bounded by the budget.
+  - `fromOffset` refuses seeks before its base.
+  - The MP3 estimate's failed rewind is an error.
+  - The missing Open and opener tests are added.
+- **Full resolution and input:**
+  - An unreadable `res_count` fails fast.
+  - The state file holds both sizes, and a stale state is ignored.
+  - The state is kept when a restore fails.
+  - `forceExit` restores the size.
+  - The forced exit and the normal exit restore share one guard, so the framebuffer size never changes in text mode.
+  - A stale saved size is logged.
+  - `pads` is cleared on Close.
+  - A failed EVIOCGBIT is logged.
+- **Logs, launcher and tools:**
+  - The log backs off after a failed rotation.
+  - The launcher forwards TERM and INT and finishes its restore.
+  - After a forwarded signal, the launcher reports the app's own exit code.
+  - The lock fd is checked.
+  - `check-notices.sh` uses pipefail and the ARM graph.
+  - `mkdb` guards its flags.
+  - `mister-test` clears `bin/arm/tests`.
+- **Per-server data:**
+  - Folder names are unique per server, and old folders are kept.
+  - An old folder belongs to the first server that claims it (`.server` marker).
+  - The cache size survives a failed walk.
+  - The art failure map is bounded.
+  - The wizard can't be left mid-save.
+  - `popTo` shows only its target.
+  - Starred retries only on A.
+- **Config and covers:**
+  - Saving keeps comments, blank lines and unknown keys.
+  - An edit that trips over the file falls back to a full rewrite, and a BOM before the first key is kept.
+  - Cover scaling is 30% faster on the A9 (see `docs/spikes.md`).

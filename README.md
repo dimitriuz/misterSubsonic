@@ -29,8 +29,12 @@ stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (
 or hold B on the home screen). Updates never touch your settings.
 
 Everything the app keeps is in `/media/fat/mistersubsonic/`:
-- `config.toml` holds your settings. `config.example.toml` explains every option.
-- `servers/<name>/` holds each server's resume state, scrobble queue and cover cache.
+- `config.toml` holds your settings. `config.example.toml` explains every option. When a setting
+  is changed in the app, only the values that changed are rewritten; your comments, blank lines
+  and key order stay.
+- `servers/<name>-<id>/` holds each server's resume state, scrobble queue and cover cache (`<id>` is
+  8 hex digits from a hash of the server name). An older `servers/<name>/` folder stays with the
+  first server that claims it, recorded in its `.server` file.
 - `log.txt` and `log.txt.1` hold at most 1 MB each. `crash.txt` records crashes.
 - `fonts/` is optional: `.ttf` or `.otf` fonts put there are used for characters the built-in
   font lacks, such as CJK.
@@ -49,7 +53,7 @@ safer way is `ca_file`, below). A config file the app can't read is kept as
 Settings (the last section) switches between servers, adds and removes them, and changes the
 volume, ReplayGain, scrobbling, transcoding, the layout and the screensaver (dark screen with a
 drifting cover after some idle minutes on Now Playing; off with 0). Each server keeps its resume
-state, scrobble queue and cover cache in `servers/<name>/` next to the config, so `cover_art_mb`
+state, scrobble queue and cover cache in `servers/<name>-<id>/` next to the config, so `cover_art_mb`
 applies per server (each server's cache gets that much).
 
 ## Video settings (MiSTer.ini)

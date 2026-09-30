@@ -103,7 +103,14 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     the mini bar are checked too. Browsing is slower in this mode, because
     every partial frame is checked against a full one. After a minute, exit:
     `log.txt` has no "partial redraw differs" line.
-26. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+26. **Settings and the screensaver.**
+    - Hold Right on Settings → Playback → Scrobbling: it flips once.
+    - Let the screensaver start while a track plays, then stop the server or unplug the network: the error's toast wakes the screen.
+    - A key that wakes the screensaver does nothing else. On Now Playing, a Select press that wakes it neither mutes nor changes the mode.
+27. **MP3 seeking.** In a long MP3 album, seek a little forward and back with Left and Right on Now Playing: the next track stays queued (no gap at the end of the track). A VBR MP3 lands near the time shown.
+28. **Config comments.** Add a comment line to `config.toml`, change a setting in the app, and exit: the comment is still there.
+29. **Launcher signals.** Over ssh, run `pkill -TERM -f Scripts/MiSTer_Subsonic.sh` while the app runs: the app exits, and the screen and menu come back as after a normal exit.
+30. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks
