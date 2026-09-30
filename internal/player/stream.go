@@ -183,6 +183,8 @@ func (f *fromOffset) retarget(s subsonic.Song, at time.Duration) (Opened, func()
 	}
 	f.s.refs.Add(1)
 	return Opened{Source: &fromOffset{s: f.s, base: base}, Format: audio.FormatMP3, Offset: at},
+		// If the window moved on since, SeekIfBuffered does nothing: harmless,
+		// place() falls back to a plain Seek.
 		func() { f.s.r.SeekIfBuffered(base) }, true
 }
 

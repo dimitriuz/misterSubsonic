@@ -47,7 +47,7 @@ func (e *fakeEngine) Play(t audio.Track) {
 	e.played = append(e.played, t)
 	e.posID, e.pos, e.posOK = t.ID, t.Offset, true
 }
-func (e *fakeEngine) Replace(t audio.Track, prep func()) {
+func (e *fakeEngine) Replace(_ uint64, t audio.Track, prep func()) {
 	if prep != nil {
 		prep()
 	}

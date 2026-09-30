@@ -19,9 +19,10 @@ import (
 // Engine is the subset of *audio.Engine the player uses.
 type Engine interface {
 	Play(t audio.Track)
-	// Replace swaps the current track for t and keeps the queued next one.
-	// prep runs first (see audio.Engine.Replace).
-	Replace(t audio.Track, prep func())
+	// Replace swaps track cur for t and keeps the queued next one. prep runs
+	// first; a cur that is no longer current fails as EventSeekFailed for
+	// t.ID (see audio.Engine.Replace).
+	Replace(cur uint64, t audio.Track, prep func())
 	QueueNext(t audio.Track)
 	ClearNext()
 	Stop()
@@ -760,14 +761,17 @@ func (p *Player) retargetAt(song subsonic.Song, offset time.Duration) bool {
 		return false
 	}
 	p.seq++
-	id := p.seq
+	id, old := p.seq, p.curID
 	p.curID, p.curSrc = id, op
 	p.position, p.lastPos = offset, offset
 	p.hasOpenSeek = false
+	// A Replace the engine refuses (a handover got there first) comes back
+	// as EventSeekFailed, which reopens at offset like a failed raw seek.
+	p.seekTarget, p.seekRetry = offset, false
 	if p.status != Paused {
 		p.setStatus(Loading)
 	}
-	p.o.Engine.Replace(p.track(id, song, op), prep)
+	p.o.Engine.Replace(old, p.track(id, song, op), prep)
 	return true
 }
 
