@@ -151,6 +151,7 @@ const (
 // must be called on the UI goroutine.
 type App struct {
 	volumePending bool // the volume changed with no player: apply it on the next Connected
+	pendingDB     float64
 	o             Options
 	P             Profile
 	F             Fonts

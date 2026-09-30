@@ -78,8 +78,11 @@ func (a *App) Detach() {
 // of the previous connection (artists, star changes) are dropped.
 func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 	a.Attach(lib, pl, art)
-	if a.volumePending && pl != nil && a.cfg != nil {
-		pl.SetVolumeDB(a.cfg.Playback.VolumeDB) // changed while disconnected
+	if a.volumePending && pl != nil {
+		pl.SetVolumeDB(a.pendingDB) // changed while disconnected
+		if a.cfg != nil {
+			a.cfg.Playback.VolumeDB = a.pendingDB
+		}
 	}
 	a.volumePending = false
 	if a.muted && pl != nil {

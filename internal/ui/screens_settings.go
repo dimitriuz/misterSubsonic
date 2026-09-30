@@ -128,6 +128,9 @@ func (a *App) volumeDB() float64 {
 	if pl := a.Player(); pl != nil {
 		return pl.State().VolumeDB
 	}
+	if a.volumePending {
+		return a.pendingDB // changed while there is no player
+	}
 	if a.cfg != nil {
 		return a.cfg.Playback.VolumeDB
 	}
@@ -145,7 +148,10 @@ func (a *App) setVolume(db float64) {
 	if pl := a.Player(); pl != nil {
 		pl.SetVolumeDB(db)
 	} else {
-		a.volumePending = true // the next player starts at this level
+		a.volumePending, a.pendingDB = true, db // the next player starts at this level
+	}
+	if a.cfg == nil {
+		return // no config was loaded (invalid, or first run): never write one for a volume key
 	}
 	a.UpdateConfig(func(c *config.Config) { c.Playback.VolumeDB = db }, true)
 }
