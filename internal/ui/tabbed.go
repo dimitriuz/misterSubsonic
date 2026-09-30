@@ -83,5 +83,7 @@ func (s *TabbedScreen) Handle(a *App, e input.Event) bool {
 func (s *TabbedScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	h := a.P.RowH
 	s.tabs.Draw(a, c, gfx.R(area.X, area.Y, area.W, h), s.onTabs)
-	s.children[s.tabs.Sel].Draw(a, c, gfx.R(area.X, area.Y+h, area.W, area.H-h))
+	a.drawDimmed(s.onTabs, func() { // only the focused thing scrolls a long title
+		s.children[s.tabs.Sel].Draw(a, c, gfx.R(area.X, area.Y+h, area.W, area.H-h))
+	})
 }

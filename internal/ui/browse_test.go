@@ -321,3 +321,40 @@ func TestAlbumListRetriesFailedPage(t *testing.T) {
 		t.Fatalf("after retry %d albums, want 150", len(s.view.albums))
 	}
 }
+
+// A shuffle of several albums plays what loaded and says how many didn't.
+func TestShuffleOfAlbumsToastsFailedLoads(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.lib.tracks["al-2"] = ta.lib.tracks["al-1"][:1]
+	ta.lib.failAlbum = map[subsonic.ID]bool{"al-3": true}
+	ta.Push(NewHomeScreen())
+	ta.Push(NewAlbumListScreen("Recently added", "newest"))
+	ta.settle(t)
+	ta.press(input.BtnSelect)
+	ta.settle(t)
+	if len(ta.pl.played) != 4 {
+		t.Fatalf("played %d songs, want the 4 of the two albums that loaded", len(ta.pl.played))
+	}
+	if got := lastToast(ta); got != "Couldn't load 1 of 3 albums" {
+		t.Fatalf("toast %q", got)
+	}
+	// All of them failing is still the one error.
+	ta.lib.failAlbum = map[subsonic.ID]bool{"al-1": true, "al-2": true, "al-3": true}
+	ta.pl.played = nil
+	ta.press(input.BtnB)
+	ta.Push(NewAlbumListScreen("Recently added", "newest"))
+	ta.settle(t)
+	ta.press(input.BtnSelect)
+	ta.settle(t)
+	if len(ta.pl.played) != 0 || !strings.HasPrefix(lastToast(ta), "Couldn't load: ") {
+		t.Fatalf("played %d, toast %q", len(ta.pl.played), lastToast(ta))
+	}
+}
+
+// lastToast is the newest toast's text, "" when there is none.
+func lastToast(ta *testApp) string {
+	if len(ta.toasts) == 0 {
+		return ""
+	}
+	return ta.toasts[len(ta.toasts)-1].text
+}

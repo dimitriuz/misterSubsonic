@@ -15,10 +15,14 @@ import (
 // screenshot saves the frame on screen as a PNG in Options.ScreenshotDir,
 // named by the time (20260930_101500.png). The frame is copied here and
 // encoded off the UI goroutine; a toast says how it went. One runs at a
-// time: presses during a save are ignored.
+// time: a press during a save only toasts.
 func (a *App) screenshot() {
 	dir := a.o.ScreenshotDir
-	if dir == "" || a.shooting {
+	if dir == "" {
+		return
+	}
+	if a.shooting {
+		a.Toast("Still saving the last screenshot")
 		return
 	}
 	a.shooting = true

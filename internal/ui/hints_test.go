@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,6 +34,29 @@ var hintFixtures = map[string]func(ta *testApp) Screen{
 	"display":     func(ta *testApp) Screen { return newSettingsList("Display", displaySettings) },
 	"servers":     func(ta *testApp) Screen { return NewServersScreen() },
 	"wizard":      func(ta *testApp) Screen { return NewWizardScreen(false, false) },
+	"wizard with text": func(ta *testApp) Screen {
+		w := NewWizardScreen(false, false)
+		w.fields[stepURL] = []rune("http://h:4533")
+		return w
+	},
+	"wizard second step": func(ta *testApp) Screen {
+		w := NewWizardScreen(true, false)
+		w.setStep(stepUser)
+		return w
+	},
+	"search with text": func(ta *testApp) Screen {
+		s := NewSearchScreen()
+		s.query = []rune("ab")
+		return s
+	},
+	"root content": func(ta *testApp) Screen {
+		r := NewRootScreen(ta.P)
+		if sr, ok := r.(*SidebarRoot); ok {
+			sr.open(ta.App)
+			sr.inSidebar = false
+		}
+		return r
+	},
 	"menu with a queue": func(ta *testApp) Screen {
 		playingState(ta)
 		return NewMenuScreen(ta.Top(), "Menu", []menuEntry{{"One", func(a *App) {}}, {"Two", func(a *App) {}}})
@@ -84,7 +108,11 @@ func TestEveryHintedButtonDoesSomething(t *testing.T) {
 					}
 					before := ta.settle(t).ToRGBA()
 					depth, calls, top := len(ta.stack), len(ta.pl.calls), ta.Top()
-					ta.press(b)
+					if h.Rune != 0 { // a typing key: Backspace, Enter
+						ta.pressKey(h.Rune)
+					} else {
+						ta.press(b)
+					}
 					after := ta.settle(t).ToRGBA()
 					if samePixels(before, after) && len(ta.stack) == depth && len(ta.pl.calls) == calls && ta.Top() == top {
 						t.Errorf("%s on %s: %v (%q) does nothing", name, p.Name, b, h.Label)
@@ -290,5 +318,94 @@ func TestTypingScreensHintNowPlayingOnlyForThePad(t *testing.T) {
 	ta.pad = false
 	if !strings.Contains(hintLabels(ta.screenHints()), "Back") {
 		t.Errorf("Search on a keyboard lost Back: %s", hintLabels(ta.screenHints()))
+	}
+}
+
+// pressKey is a keyboard key that types r: Enter and Backspace carry their
+// button too.
+func (ta *testApp) pressKey(r rune) {
+	b := input.BtnNone
+	switch r {
+	case '\n':
+		b = input.BtnA
+	case '\b':
+		b = input.BtnB
+	}
+	ta.onInput(input.Event{Button: b, Kind: input.Press, Rune: r})
+	ta.onInput(input.Event{Button: b, Kind: input.Release, Rune: r})
+}
+
+// On a keyboard letters type and Backspace deletes, so that is what a
+// typing screen hints (Enter only where it submits); a gamepad still types
+// with A and deletes with X.
+func TestTypingHintsFollowTheInput(t *testing.T) {
+	type key struct{ cap, label string }
+	caps := func(ta *testApp) []key {
+		var out []key
+		for _, h := range ta.screenHints() {
+			c, _ := ta.capFor(h.Button)
+			if h.Key != "" {
+				c = h.Key
+			}
+			out = append(out, key{c, h.Label})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		screen string
+		pad    bool
+		want   []key
+	}{
+		{"wizard", false, []key{{"Enter", "Next"}, {"Esc", "Back"}}},
+		{"wizard with text", false, []key{{"Enter", "Next"}, {"Esc", "Back"}, {"Backspace", "Delete"}}},
+		{"wizard with text", true, []key{{"A", "Type"}, {"B", "Back"}, {"X", "Delete"}}},
+		{"search", false, []key{{"Esc", "Back"}}},
+		{"search with text", false, []key{{"Backspace", "Delete"}, {"Esc", "Back"}}},
+		{"search with text", true, []key{{"A", "Type"}, {"B", "Back"}, {"X", "Delete"}}},
+	} {
+		ta := hintApp(t, ProfileHDMI, hintFixtures[c.screen])
+		ta.pad = c.pad
+		if got := caps(ta); !slices.Equal(got, c.want) {
+			t.Errorf("%s, pad=%v: hints %v, want %v", c.screen, c.pad, got, c.want)
+		}
+	}
+}
+
+// B is hinted where it does something of its own: back a step in the
+// wizard, out of a section to the sidebar (both are the app's first screen,
+// where the app adds no Back).
+func TestBackIsHintedWhereBReturns(t *testing.T) {
+	first := func(s Screen) *testApp {
+		ta := newTestApp(t, ProfileHDMI)
+		ta.cfg = config.Default()
+		ta.pad = true
+		ta.Push(s)
+		ta.settle(t)
+		return ta
+	}
+	w := NewWizardScreen(true, false)
+	if got := hintLabels(first(w).screenHints()); strings.Contains(got, "Back") {
+		t.Errorf("first-run wizard, first step: %s", got) // B has nowhere to go
+	}
+	w = NewWizardScreen(true, false)
+	w.setStep(stepUser)
+	if got := hintLabels(first(w).screenHints()); !strings.Contains(got, "Back") {
+		t.Errorf("first-run wizard, second step: %s", got)
+	}
+	w.setStep(stepTest)
+	if got := hintLabels(first(w).screenHints()); !strings.Contains(got, "Back") {
+		t.Errorf("first-run wizard, test step: %s", got)
+	}
+	root := newSidebarRoot() // starts with the content focused
+	ta := first(root)
+	if got := hintLabels(ta.screenHints()); !strings.Contains(got, "Back") {
+		t.Errorf("root, content focused: %s", got)
+	}
+	ta.press(input.BtnB)
+	if !root.inSidebar {
+		t.Error("B in the content didn't go to the sidebar")
+	}
+	if got := hintLabels(ta.screenHints()); strings.Contains(got, "Back") {
+		t.Errorf("root, sidebar focused: %s", got)
 	}
 }

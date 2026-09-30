@@ -112,3 +112,23 @@ func TestScreenshotDoesNotWakeTheScreensaver(t *testing.T) {
 		t.Fatalf("saver %v, last input moved %v", ta.saver, ta.lastInput.Sub(idle))
 	}
 }
+
+// A press while a save is still running is refused with a toast, not lost
+// silently.
+func TestScreenshotWhileSavingSaysSo(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.o.ScreenshotDir = t.TempDir()
+	ta.Push(NewHomeScreen())
+	ta.settle(t)
+	ta.press(input.BtnScreenshot)
+	ta.press(input.BtnScreenshot) // the first save hasn't reported back yet
+	if got := lastToast(ta); got != "Still saving the last screenshot" {
+		t.Fatalf("toast %q", got)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	if entries, _ := os.ReadDir(ta.o.ScreenshotDir); len(entries) != 1 {
+		t.Fatalf("%d files, want the one screenshot", len(entries))
+	}
+}

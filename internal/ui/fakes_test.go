@@ -26,6 +26,7 @@ type fakeLibrary struct {
 	plSongs   map[subsonic.ID][]subsonic.Song
 	starred   subsonic.Starred
 	err       error
+	failAlbum map[subsonic.ID]bool // GetAlbum fails for these
 	calls     []subsonic.AlbumListQuery
 	searches  []string
 	stars     []string      // "star al-1", "unstar s2"
@@ -52,6 +53,9 @@ func (l *fakeLibrary) GetAlbum(_ context.Context, id subsonic.ID) (*subsonic.Alb
 	defer l.mu.Unlock()
 	if l.err != nil {
 		return nil, l.err
+	}
+	if l.failAlbum[id] {
+		return nil, errOffline
 	}
 	for _, al := range l.albums {
 		if al.ID == id {

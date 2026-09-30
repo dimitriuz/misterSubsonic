@@ -13,10 +13,14 @@ import (
 // whichever was used last.
 
 // Hint is one entry: a button (and a second one for pairs such as L/R or
-// Left/Right) and what it does on this screen.
+// Left/Right) and what it does on this screen. A hint for a typing key
+// (Backspace, Enter) has Key, the cap drawn on a keyboard, and Rune, what
+// that key types; only a keyboard shows it.
 type Hint struct {
 	Button, Pair input.Button
 	Label        string
+	Key          string
+	Rune         rune
 }
 
 // Hinter is a screen with its own hints, most important first. The app adds
@@ -117,6 +121,13 @@ func (a *App) hintRect() gfx.Rect {
 	return gfx.R(0, a.P.H-a.P.SafeY-h, a.P.W, h)
 }
 
+// withBack puts Back right after the first hint, so a narrow bar (CRT)
+// keeps it: the bar drops what doesn't fit from the right.
+func withBack(hs []Hint) []Hint {
+	i := min(1, len(hs))
+	return append(hs[:i:i], append([]Hint{hk(input.BtnB, "Back")}, hs[i:]...)...)
+}
+
 // screenHints is the top screen's list plus Back and Now Playing when the
 // screen leaves B and Y to the app.
 func (a *App) screenHints() []Hint {
@@ -140,10 +151,7 @@ func (a *App) screenHints() []Hint {
 	}
 	out := append([]Hint(nil), hs...)
 	if len(a.stack) > 1 && !uses(input.BtnB) {
-		// Right after the first hint, so a narrow bar (CRT) keeps it: the
-		// bar drops what doesn't fit from the right.
-		back := hk(input.BtnB, "Back")
-		out = append(out[:min(1, len(out))], append([]Hint{back}, out[min(1, len(out)):]...)...)
+		out = withBack(out)
 	}
 	typing := false
 	if t, ok := top.(textTaker); ok {
@@ -178,6 +186,9 @@ func (a *App) drawHints(c *gfx.Canvas) {
 		ok := true
 		for _, b := range caps {
 			t, has := a.capFor(b)
+			if h.Key != "" {
+				t, has = h.Key, true
+			}
 			ok = ok && has
 			texts = append(texts, t)
 		}
@@ -268,7 +279,7 @@ func hintLabels(hs []Hint) string {
 func hintKey(hs []Hint) string {
 	var b strings.Builder
 	for _, h := range hs {
-		fmt.Fprintf(&b, "%d/%d/%s;", h.Button, h.Pair, h.Label)
+		fmt.Fprintf(&b, "%d/%d/%s/%s;", h.Button, h.Pair, h.Label, h.Key)
 	}
 	return b.String()
 }

@@ -202,7 +202,9 @@ func (s *WizardScreen) next(a *App) {
 	}
 }
 
-// normalizeURL accepts "host:port" as http and trims a trailing "/rest".
+// normalizeURL accepts "host:port" as http, trims a trailing "/rest" and
+// drops a pasted ?query and #fragment (the path stays: a server may live
+// under a prefix).
 func normalizeURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -215,7 +217,7 @@ func normalizeURL(raw string) (string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return "", errors.New("That doesn't look like http://host:port or https://host")
 	}
-	u.User = nil
+	u.User, u.RawQuery, u.Fragment, u.RawFragment = nil, "", "", ""
 	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), "/rest")
 	return strings.TrimSuffix(u.String(), "/"), nil
 }

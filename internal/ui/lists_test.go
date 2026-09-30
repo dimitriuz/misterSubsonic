@@ -3,6 +3,7 @@ package ui
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"mistersubsonic/internal/input"
 )
@@ -94,5 +95,55 @@ func TestGoldenPlaylistsAndStarred(t *testing.T) {
 		ta.press(input.BtnRight)
 		ta.press(input.BtnDown)
 		golden(t, "starred-tracks-"+p.Name, ta.settle(t))
+	}
+}
+
+// Only the focused thing scrolls a long title: with the focus on the tab
+// row (or, in Search, on the keyboard or the result tabs) the list below
+// keeps its titles cut.
+func TestMarqueeStopsWhileTheTabsHaveTheFocus(t *testing.T) {
+	scrolls := func(ta *testApp) bool {
+		ta.settle(t)
+		ta.now = ta.now.Add(marqueeDelay + time.Second)
+		ta.settle(t)
+		return ta.animate
+	}
+	for _, p := range profiles {
+		ta := newTestApp(t, p)
+		ta.Push(NewHomeScreen())
+		s := NewAlbumsScreen()
+		ta.Push(s)
+		ta.settle(t)
+		for range 2 { // the long title is the third album, in a grid or a list
+			ta.press(input.BtnDown)
+			ta.press(input.BtnRight)
+		}
+		if !scrolls(ta) {
+			t.Fatalf("%s: the focused long title doesn't scroll (test setup)", p.Name)
+		}
+		for range 5 {
+			if !s.onTabs {
+				ta.press(input.BtnUp)
+			}
+		}
+		if !s.onTabs {
+			t.Fatalf("%s: the focus didn't reach the tabs", p.Name)
+		}
+		if scrolls(ta) {
+			t.Errorf("%s: a title scrolls while the tabs have the focus", p.Name)
+		}
+	}
+}
+
+// On a CRT the playlist page keeps room for more than one track under its
+// Play and Shuffle rows (they used to take two-line rows too).
+func TestPlaylistPageShowsSeveralTracksOnACRT(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	ta.Push(NewHomeScreen())
+	s := NewPlaylistScreen(ta.lib.playlists[0])
+	ta.Push(s)
+	ta.settle(t)
+	if want := playlistActionRows + 3; s.list.rows < want {
+		t.Fatalf("%d rows fit, want %d (Play, Shuffle and three tracks)", s.list.rows, want)
 	}
 }

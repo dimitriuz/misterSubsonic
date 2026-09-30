@@ -102,7 +102,7 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | Select | shuffle-play the list | press: shuffle / repeat modes; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute,
-PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, hold Select on
+PgUp/PgDn = L/R, Space = Start. In Search and the setup wizard, letters type and Backspace deletes. With a controller, hold Select on
 Now Playing to mute; changing the volume turns the sound back on. A multimedia keyboard's media
 keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
 fast-forward/rewind to seek. A volume panel shows the level for a moment whenever it changes.
@@ -110,9 +110,10 @@ fast-forward/rewind to seek. A volume panel shows the level for a moment wheneve
 **Hints:** the bar along the bottom of every screen shows what the buttons do there: as gamepad
 buttons after a gamepad press, as keys after a key press. Settings → Display → Hints turns it off.
 
-**Screenshots:** Print Screen, or Alt+Scroll Lock (MiSTer's own screenshot keys), saves the
-screen as a PNG in `/media/fat/screenshots/MiSTer_Subsonic/`. The MiSTer Companion remote's
-Capture screenshot button works too.
+**Screenshots:** Print Screen or Scroll Lock (alone; Alt+Scroll Lock is MiSTer's own key for it
+too) saves the screen as a PNG. On the MiSTer the folder is `/media/fat/screenshots/MiSTer_Subsonic/`;
+elsewhere it is `screenshots/` next to the config, and `-screenshots` changes it. A press while
+the last one is still saving says so. The MiSTer Companion remote's Capture screenshot button works too.
 
 ## Developing
 

@@ -353,3 +353,36 @@ func TestSearchEditClearsError(t *testing.T) {
 		t.Fatalf("error %v survived emptying the field", s.err)
 	}
 }
+
+// The result tabs having the focus stops the long title below from scrolling.
+func TestSearchResultTitleStopsScrollingOnTheTabs(t *testing.T) {
+	for _, p := range profiles {
+		ta := newTestApp(t, p)
+		ta.Push(NewHomeScreen())
+		s := NewSearchScreen()
+		ta.Push(s)
+		typeKeys(ta, "rather")
+		ta.now = ta.now.Add(searchDelay)
+		ta.onWake()
+		ta.settle(t)
+		for i := 0; !s.inResults && i < 11; i++ { // down the keyboard and past its bottom row: the long album
+			ta.press(input.BtnDown)
+		}
+		scrolls := func() bool {
+			ta.settle(t)
+			ta.now = ta.now.Add(marqueeDelay + time.Second)
+			ta.settle(t)
+			return ta.animate
+		}
+		if !s.inResults || !scrolls() {
+			t.Fatalf("%s: in results %v, scrolling %v (test setup)", p.Name, s.inResults, ta.animate)
+		}
+		ta.press(input.BtnUp)
+		if !s.onTabs {
+			t.Fatalf("%s: Up didn't reach the result tabs", p.Name)
+		}
+		if scrolls() {
+			t.Errorf("%s: a title scrolls while the result tabs have the focus", p.Name)
+		}
+	}
+}

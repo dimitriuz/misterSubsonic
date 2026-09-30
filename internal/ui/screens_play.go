@@ -312,8 +312,8 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 	case input.BtnX:
 		i := s.list.Focus
 		title := st.Queue[i].Title
-		a.Push(NewMenuScreen(s, title, []menuEntry{
-			{"Remove", func(a *App) {
+		a.Push(NewMenuScreen(s, "Queue", []menuEntry{
+			{"Remove " + title, func(a *App) {
 				a.Player().Remove(i)
 				a.Toast("Removed %s", title)
 			}},

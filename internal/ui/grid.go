@@ -57,12 +57,22 @@ func (g *Grid) Handle(e input.Event, n int) bool {
 	case input.BtnL:
 		f = max(f-cols*max(g.rows, 1), f%cols)
 	case input.BtnR:
-		f = min(f+cols*max(g.rows, 1), n-1)
+		f = g.pageDown(f, n)
 	default:
 		return false
 	}
 	g.Focus = f
 	return true
+}
+
+// pageDown is a page below f; past the end it is the last row, in f's
+// column when that row has it, else its last cell.
+func (g *Grid) pageDown(f, n int) int {
+	cols := g.columns()
+	if t := f + cols*max(g.rows, 1); t < n {
+		return t
+	}
+	return min((n-1)/cols*cols+f%cols, n-1)
 }
 
 // Draw lays out n cells of cellW×cellH in area (centred horizontally),

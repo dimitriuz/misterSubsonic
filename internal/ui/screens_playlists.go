@@ -191,7 +191,13 @@ func (s *PlaylistScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		return
 	}
 	songs := s.songs()
-	s.list.Draw(c, body, playlistActionRows+len(songs), p.Row2H, func(i int, r gfx.Rect, focused bool) {
+	// Two-line rows (title over artist) where they fit; a CRT has no room for
+	// them under Play and Shuffle, so its tracks are one line, "Title — Artist".
+	rowH, oneLine := p.Row2H, p.SideW == 0
+	if oneLine {
+		rowH = p.RowH
+	}
+	s.list.Draw(c, body, playlistActionRows+len(songs), rowH, func(i int, r gfx.Rect, focused bool) {
 		switch i {
 		case 0:
 			f := a.F.Body
@@ -200,8 +206,15 @@ func (s *PlaylistScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 			a.drawTextRow(c, r, "", false, "Shuffle", "", colAccent)
 		default:
 			so := songs[i-playlistActionRows]
-			a.drawRow(c, r, row{cover: so.CoverArt, thumb: true, main: so.Title, sub: so.Artist, focused: focused,
-				starred: a.isStarred(songStar(so)), right: clock(secs(so.Duration))})
+			w := row{cover: so.CoverArt, thumb: true, main: so.Title, sub: so.Artist, focused: focused,
+				starred: a.isStarred(songStar(so)), right: clock(secs(so.Duration))}
+			if oneLine {
+				w.thumb, w.sub = false, ""
+				if so.Artist != "" {
+					w.main += " — " + so.Artist
+				}
+			}
+			a.drawRow(c, r, w)
 		}
 	})
 }

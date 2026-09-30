@@ -253,13 +253,17 @@ func TestGoldenWizard(t *testing.T) {
 // People type addresses every which way.
 func TestNormalizeURL(t *testing.T) {
 	for in, want := range map[string]string{
-		"192.168.1.10:4533":                   "http://192.168.1.10:4533",
-		"  https://music.example.com/  ":      "https://music.example.com",
-		"https://music.example.com/rest":      "https://music.example.com",
-		"https://example.com/navidrome/rest/": "https://example.com/navidrome",
-		"HTTP://Music.Example.com:4533":       "http://Music.Example.com:4533",
-		"http://[::1]:4533":                   "http://[::1]:4533",
-		"https://alice:pw@music.example.com":  "https://music.example.com",
+		"192.168.1.10:4533":                    "http://192.168.1.10:4533",
+		"  https://music.example.com/  ":       "https://music.example.com",
+		"https://music.example.com/rest":       "https://music.example.com",
+		"https://example.com/navidrome/rest/":  "https://example.com/navidrome",
+		"HTTP://Music.Example.com:4533":        "http://Music.Example.com:4533",
+		"http://[::1]:4533":                    "http://[::1]:4533",
+		"https://alice:pw@music.example.com":   "https://music.example.com",
+		"https://music.example.com/?u=a#top":   "https://music.example.com",
+		"http://h:4533/navidrome?x=1":          "http://h:4533/navidrome",
+		"https://example.com/nav/rest?u=a&p=b": "https://example.com/nav",
+		"h:4533#frag":                          "http://h:4533",
 	} {
 		got, err := normalizeURL(in)
 		if err != nil || got != want {
