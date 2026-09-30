@@ -754,7 +754,12 @@ func (a *App) drawFrame(c *gfx.Canvas) {
 				a.drawMiniBar(c, gfx.R(0, body.Bottom(), p.W, p.MiniBarH))
 			}
 		}
+		// A screen draws only inside its own area, whatever it overflows
+		// (a partial frame's damage clip stays in force).
+		outer := c.Clip()
+		c.SetClip(body.Intersect(outer))
 		top.Draw(a, c, body)
+		c.SetClip(outer)
 		a.drawHints(c)
 	}
 	if !a.mq.seen {
