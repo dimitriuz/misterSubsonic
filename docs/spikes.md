@@ -33,7 +33,13 @@ file /tmp/t.mp3 /tmp/t2.mp3
 
 - **Device:** ARMv7 (Cortex-A9), Buildroot, glibc 2.31, bash 5.0.18, util-linux `flock`. `socat`, `pidof` and `timeout` are present; `pgrep` is not. About 490 MB RAM, 427 MB available.
 - **Result:** the zig-built `audio.test` (needs glibc 2.29) runs, and every test passes on the device through miniaudio's null backend. That covers decoders, resampler, engine, gapless and the null device.
-- **Still to do (audible, only with the user's go-ahead and the volume low):** `MSS_DEVICE_TEST=1 ./audio.test -test.run RealDevice -test.v`. Listen for the 440 Hz tone and the 44.1k and 96k tones without clicks, and confirm the ALSA device name.
+- **Listening test (with the user's go-ahead, into headphones):**
+  - The ALSA `default` device is `plug → rate (S16_LE, 48 kHz) → file "/dev/MrAudio"`, with a `Dummy` hw slave for timing. `/proc/<pid>/fd` confirms that miniaudio's default opens `/dev/MrAudio` and `pcmC0D0p`, the same path as `aplay -D default`.
+  - The first run of `MSS_DEVICE_TEST=1 ./audio.test -test.run RealDevice` wasn't heard.
+  - A quiet `aplay -D default` tone (−30 dBFS) was heard.
+  - A second run of the test was heard clean, with no clicks or crackle reported.
+  - The first silence did not reproduce. Watch for it on the app's first sound after a reboot.
+  - `alsa_device = "default"` stays.
 
 ## Spike 3 — Cortex-A9 costs (2026-09-30)
 
