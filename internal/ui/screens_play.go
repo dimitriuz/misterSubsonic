@@ -23,6 +23,8 @@ const (
 	// the player's position catches up.
 	seekShow = time.Second
 	volStep  = 1.0 // dB per Up/Down
+	// Select held this long mutes (a shorter press cycles the play mode).
+	muteHold = time.Second
 )
 
 // NowPlayingScreen is the full-screen player (spec §8.2).
@@ -31,6 +33,10 @@ type NowPlayingScreen struct {
 	song     subsonic.ID   // track the target belongs to
 	unsent   bool          // target not yet sent to the player
 	lastSeek time.Time
+
+	selDown  bool // Select is held
+	selMuted bool // ...and has already muted: its release does nothing
+	selHold  int  // counts holds, so an old timer can't fire in a newer one
 }
 
 func NewNowPlayingScreen() *NowPlayingScreen { return &NowPlayingScreen{} }
@@ -50,8 +56,17 @@ var playModes = []struct {
 	{false, player.RepeatOne, "Repeat one"},
 }
 
-// Release flushes a seek target the throttle held back.
+// Release flushes a seek target the throttle held back, and ends a Select
+// press: a short one cycles the play mode.
 func (s *NowPlayingScreen) Release(a *App, b input.Button) {
+	if b == input.BtnSelect && s.selDown {
+		muted := s.selMuted
+		s.selDown, s.selMuted = false, false
+		if !muted {
+			s.cycleMode(a)
+		}
+		return
+	}
 	if (b == input.BtnLeft || b == input.BtnRight || b == input.BtnSeekBack || b == input.BtnSeekFwd) && s.unsent && s.song == s.curID(a.Player().State()) {
 		s.send(a.Player(), a.o.Now())
 		a.dirty = true
@@ -66,6 +81,22 @@ func (s *NowPlayingScreen) settle(a *App, st player.State) {
 		s.send(a.Player(), a.o.Now())
 	}
 	s.unsent, s.song = false, ""
+}
+
+// cycleMode steps through the shuffle/repeat modes.
+func (s *NowPlayingScreen) cycleMode(a *App) {
+	pl := a.Player()
+	st := pl.State()
+	cur := 0
+	for i, m := range playModes {
+		if m.shuffle == st.Shuffle && m.repeat == st.Repeat {
+			cur = i
+		}
+	}
+	m := playModes[(cur+1)%len(playModes)]
+	pl.SetShuffle(m.shuffle)
+	pl.SetRepeat(m.repeat)
+	a.Toast("%s", m.label)
 }
 
 func (s *NowPlayingScreen) curID(st player.State) subsonic.ID {
@@ -147,17 +178,16 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		pl.Next()
 	case input.BtnY:
 		a.Push(NewQueueScreen())
-	case input.BtnSelect:
-		cur := 0
-		for i, m := range playModes {
-			if m.shuffle == st.Shuffle && m.repeat == st.Repeat {
-				cur = i
+	case input.BtnSelect: // a press starts a hold: short cycles the mode, long mutes
+		s.selDown, s.selMuted = true, false
+		s.selHold++
+		hold := s.selHold
+		a.After(s, muteHold, func() {
+			if s.selDown && s.selHold == hold && a.Top() == Screen(s) {
+				s.selMuted = true
+				a.toggleMute()
 			}
-		}
-		m := playModes[(cur+1)%len(playModes)]
-		pl.SetShuffle(m.shuffle)
-		pl.SetRepeat(m.repeat)
-		a.Toast("%s", m.label)
+		})
 	default:
 		return false
 	}

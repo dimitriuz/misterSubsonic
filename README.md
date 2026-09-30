@@ -96,11 +96,11 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | Y | Now Playing | queue |
 | L / R | page (letter jump on Artists) | previous / next track |
 | Start | play/pause | play/pause |
-| Select | shuffle-play the list | shuffle / repeat modes |
+| Select | shuffle-play the list | press: shuffle / repeat modes; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute,
-PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, mute is in
-Settings → Playback; changing the volume turns the sound back on. A multimedia keyboard's media
+PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, hold Select on
+Now Playing to mute; changing the volume turns the sound back on. A multimedia keyboard's media
 keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
 fast-forward/rewind to seek. A volume panel shows the level for a moment whenever it changes.
 

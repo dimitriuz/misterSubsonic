@@ -81,7 +81,7 @@ func (s *NowPlayingScreen) Hints(a *App) []Hint {
 	}
 	return []Hint{hk(input.BtnA, play), hkPair(input.BtnLeft, input.BtnRight, "Seek"),
 		hkPair(input.BtnUp, input.BtnDown, "Volume"), hkPair(input.BtnL, input.BtnR, "Prev/Next"),
-		hk(input.BtnX, star), hk(input.BtnY, "Queue"), hk(input.BtnSelect, "Mode")}
+		hk(input.BtnX, star), hk(input.BtnY, "Queue"), hk(input.BtnSelect, "Mode · hold: Mute")}
 }
 
 func (s *QueueScreen) Hints(a *App) []Hint {

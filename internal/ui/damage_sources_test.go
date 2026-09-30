@@ -145,8 +145,7 @@ func TestArrivingCoverRedrawsItsCells(t *testing.T) {
 	}
 }
 
-// A media volume key redraws the volume panel only, except on a settings
-// list, which shows the level in a row as well.
+// A media volume key redraws the volume panel only, on Settings lists too.
 func TestVolumeKeyRedrawsThePanel(t *testing.T) {
 	ta, d := partialApp(t, ProfileHDMI, NewAlbumListScreen("Recently added", "newest"))
 	ta.press(input.BtnVolUp)
@@ -165,8 +164,8 @@ func TestVolumeKeyRedrawsThePanel(t *testing.T) {
 	d.rects, d.fulls = nil, 0
 	ta.press(input.BtnVolDown)
 	ta.settle(t)
-	if d.fulls != 1 {
-		t.Fatalf("on Settings → Playback: %d full frames, partial %v", d.fulls, d.rects)
+	if rs := presented(t, d); len(rs) != 1 || rs[0] != ta.volumePanelRect() {
+		t.Fatalf("on Settings → Playback redrew %v, want the panel %v", rs, ta.volumePanelRect())
 	}
 }
 

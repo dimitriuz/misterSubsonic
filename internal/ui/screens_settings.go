@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
@@ -57,6 +58,7 @@ type setting struct {
 	label  string
 	value  func(a *App) string
 	change func(a *App, dir int)
+	help   string // what the setting does, shown under the list while it is focused
 }
 
 // SettingsListScreen is a list of settings with their values.
@@ -64,6 +66,7 @@ type SettingsListScreen struct {
 	title string
 	rows  func(a *App) []setting
 	list  List
+	help  gfx.Rect // where the help line was drawn last
 }
 
 func newSettingsList(title string, rows func(a *App) []setting) *SettingsListScreen {
@@ -76,7 +79,9 @@ func (s *SettingsListScreen) Enter(a *App)  {}
 func (s *SettingsListScreen) Handle(a *App, e input.Event) bool {
 	rows := s.rows(a)
 	if s.list.Handle(e, len(rows)) {
-		a.moved(s.list.Moved())
+		if rs := s.list.Moved(); rs != nil {
+			a.moved(append(rs, s.help)) // the help line follows the focus
+		}
 		return true
 	}
 	if e.Kind == input.Release || len(rows) == 0 {
@@ -96,13 +101,44 @@ func (s *SettingsListScreen) Handle(a *App, e input.Event) bool {
 
 func (s *SettingsListScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	rows := s.rows(a)
-	s.list.Draw(c, area, len(rows), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
+	f := a.F.Small
+	helpH := 2*f.Height() + a.P.Margin/2
+	list := gfx.R(area.X, area.Y, area.W, max(area.H-helpH, a.P.RowH))
+	s.help = gfx.R(area.X, list.Y+list.H, area.W, area.Y+area.H-list.Y-list.H)
+	s.list.Draw(c, list, len(rows), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
 		v := rows[i].value(a)
 		if focused {
 			v = "‹ " + v + " ›"
 		}
 		a.drawRow(c, r, row{main: rows[i].label, focused: focused, right: v})
 	})
+	if len(rows) == 0 {
+		return
+	}
+	y := s.help.Y + a.P.Margin/4
+	for _, l := range helpLines(f, rows[s.list.Focus].help, area.W-2*a.P.Margin) {
+		f.Draw(c, area.X+a.P.Margin, y+f.Ascent(), l, colDim, s.help)
+		y += f.Height()
+	}
+}
+
+// helpLines wraps text to w pixels in at most two lines, the second cut
+// with "…" when the text is longer.
+func helpLines(f *gfx.Font, text string, w int) []string {
+	lines := wrap(f, text, w)
+	if len(lines) > 2 {
+		lines = []string{lines[0], f.Truncate(strings.Join(lines[1:], " "), w)}
+	}
+	return lines
+}
+
+// helpText is the help of the focused row (for tests).
+func (s *SettingsListScreen) helpText(a *App) string {
+	rows := s.rows(a)
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[min(max(s.list.Focus, 0), len(rows)-1)].help
 }
 
 // cycle moves through choices by dir, wrapping.
@@ -168,14 +204,6 @@ func (a *App) setMuted(on bool) {
 
 func (a *App) toggleMute() { a.setMuted(!a.muted) } // the volume panel shows it
 
-// volumeText is the volume as shown: "Muted" while the sound is off.
-func (a *App) volumeText(db float64) string {
-	if a.muted {
-		return "Muted"
-	}
-	return volumeLabel(db)
-}
-
 func playbackSettings(a *App) []setting {
 	pb := func() config.Playback {
 		if a.cfg == nil {
@@ -183,11 +211,7 @@ func playbackSettings(a *App) []setting {
 		}
 		return a.cfg.Playback
 	}
-	return []setting{
-		{"Volume", func(a *App) string { return a.volumeText(a.volumeDB()) },
-			func(a *App, dir int) { a.setVolume(a.volumeDB() + float64(dir)) }},
-		{"Mute", func(a *App) string { return onOff(a.muted) },
-			func(a *App, dir int) { a.toggleMute() }},
+	rows := []setting{
 		{"ReplayGain", func(a *App) string { return pb().ReplayGain },
 			func(a *App, dir int) {
 				mode := cycle([]string{"off", "track", "album"}, pb().ReplayGain, dir)
@@ -195,7 +219,8 @@ func playbackSettings(a *App) []setting {
 					pl.SetReplayGain(mode)
 				}
 				a.UpdateConfig(func(c *config.Config) { c.Playback.ReplayGain = mode }, false)
-			}},
+			},
+			"Evens out loudness: track levels each song, album keeps an album's own dynamics. Off plays files as they are."},
 		{"Scrobbling", func(a *App) string { return onOff(pb().Scrobble) },
 			func(a *App, dir int) {
 				on := !pb().Scrobble
@@ -203,20 +228,27 @@ func playbackSettings(a *App) []setting {
 					pl.SetScrobble(on)
 				}
 				a.UpdateConfig(func(c *config.Config) { c.Playback.Scrobble = on }, false)
-			}},
+			},
+			"Tells the server (and Last.fm, if the server is set up for it) what you listen to."},
 		{"Transcode to", func(a *App) string { return pb().TranscodeFormat },
 			func(a *App, dir int) {
 				f := cycle([]string{"mp3", "flac", "wav"}, pb().TranscodeFormat, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Playback.TranscodeFormat = f }, false)
 				a.Toast("Used from the next connection")
-			}},
-		{"Transcode bitrate", func(a *App) string { return fmt.Sprintf("%d kbps", pb().TranscodeBitrate) },
-			func(a *App, dir int) {
-				b := cycle([]int{128, 192, 256, 320}, pb().TranscodeBitrate, dir)
-				a.UpdateConfig(func(c *config.Config) { c.Playback.TranscodeBitrate = b }, false)
-				a.Toast("Used from the next connection")
-			}},
+			},
+			"The server converts files the MiSTer can't play (AAC, OGG, Opus…) to this. FLAC, MP3 and WAV play as they are."},
 	}
+	if pb().TranscodeFormat == "mp3" { // the bitrate only matters for mp3
+		rows = append(rows,
+			setting{"Transcode bitrate", func(a *App) string { return fmt.Sprintf("%d kbps", pb().TranscodeBitrate) },
+				func(a *App, dir int) {
+					b := cycle([]int{128, 192, 256, 320}, pb().TranscodeBitrate, dir)
+					a.UpdateConfig(func(c *config.Config) { c.Playback.TranscodeBitrate = b }, false)
+					a.Toast("Used from the next connection")
+				},
+				"Quality of those conversions to MP3: higher sounds better and uses more network."})
+	}
+	return rows
 }
 
 var screensaverChoices = []int{0, 1, 2, 5, 10, 15, 30}
@@ -234,7 +266,8 @@ func displaySettings(a *App) []setting {
 				p := cycle([]string{"auto", "hdmi", "crt"}, d().Profile, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Display.Profile = p }, false)
 				a.Toast("The layout changes the next time the app starts")
-			}},
+			},
+			"HDMI or CRT screen layout; auto picks by the screen's lines. Takes effect the next time the app starts."},
 		{"Screensaver", func(a *App) string {
 			if m := d().ScreensaverMinutes; m > 0 {
 				return fmt.Sprintf("after %d min", m)
@@ -244,12 +277,14 @@ func displaySettings(a *App) []setting {
 			func(a *App, dir int) {
 				m := cycle(screensaverChoices, d().ScreensaverMinutes, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Display.ScreensaverMinutes = m }, false)
-			}},
+			},
+			"Dims Now Playing and drifts the cover after this long without input."},
 		{"Hints", func(a *App) string { return onOff(d().Hints) },
 			func(a *App, dir int) {
 				on := !d().Hints
 				a.UpdateConfig(func(c *config.Config) { c.Display.Hints = on }, false)
-			}},
+			},
+			"The bar of buttons along the bottom of every screen."},
 	}
 }
 
