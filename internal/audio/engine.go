@@ -119,11 +119,9 @@ type Engine struct {
 	replacing int
 
 	// Owned by the run goroutine.
-	cur *voice
-	// Owned by the run goroutine: the track that ended while a Replace was
-	// pending, until the next track starts or stops.
-	finishedID uint64
-	ended      bool // decoding reached the end of the queue naturally (not Stop)
+	cur        *voice
+	finishedID uint64 // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
+	ended      bool   // decoding reached the end of the queue naturally (not Stop)
 	next       *voice
 	opening    *Track
 	openedAt   time.Time // when opening was queued
@@ -665,6 +663,14 @@ func (e *Engine) finishCur() {
 	if e.cur != nil {
 		return // a Play arrived while we waited
 	}
+	e.startSuccessorOrEnd()
+}
+
+// startSuccessorOrEnd runs once the current track is over: the queued
+// successor starts gaplessly, or, with none, the queue ends (a successor
+// still opening starts when it is open).
+func (e *Engine) startSuccessorOrEnd() {
+	e.finishedID = 0
 	if e.next != nil {
 		v := e.next
 		e.next = nil
@@ -731,15 +737,31 @@ func (e *Engine) doPlay(t Track) {
 
 func (e *Engine) doReplace(cur uint64, t Track) {
 	e.doneReplacing()
-	// cur is current if it is being decoded, or it just ended with this
-	// Replace pending (finishCur left the successor queued).
-	if !(e.cur != nil && e.cur.t.ID == cur) && !(e.cur == nil && e.finishedID == cur && cur != 0) {
+	if !e.isReplaceable(cur) {
 		closeSource(t.Source)
 		e.queueEvent(Event{Kind: EventSeekFailed, TrackID: t.ID, Err: ErrNotCurrent})
+		// finishCur left the successor queued for a Replace that is now
+		// refused: nothing else will start it.
+		e.mu.Lock()
+		more := e.replacing > 0
+		e.mu.Unlock()
+		if e.cur == nil && e.finishedID != 0 && !more {
+			e.startSuccessorOrEnd()
+		}
 		return
 	}
 	e.stopCurrent()
 	e.startTrack(t, true)
+}
+
+// isReplaceable reports whether cur is the track a Replace may swap: it is
+// being decoded, or it just ended or was interrupted with this Replace
+// pending (the successor was left queued).
+func (e *Engine) isReplaceable(cur uint64) bool {
+	if e.cur != nil {
+		return e.cur.t.ID == cur
+	}
+	return cur != 0 && e.finishedID == cur
 }
 
 // startTrack opens t and makes it the current track. If it can't open and
@@ -758,15 +780,21 @@ func (e *Engine) startTrack(t Track, keepNext bool) {
 		kc, _ := t.Source.(io.Closer)
 		e.mu.Lock()
 		interrupted := kc != nil && e.killed == kc
+		replacing := e.replacing > 0
 		e.mu.Unlock()
+		if interrupted && replacing {
+			// A Replace for t is on its way (a second seek): it is accepted
+			// like one for a track that just ended.
+			e.finishedID = t.ID
+		}
 		if !interrupted {
 			e.queueEvent(Event{Kind: EventError, TrackID: t.ID, Err: err})
 			if keepNext && e.next != nil {
 				v := e.next
 				e.next = nil
 				e.startVoice(v, false)
-			} else if keepNext && e.opening != nil {
-				e.ended = true // the successor starts as soon as it is open
+			} else if keepNext {
+				e.ended = true // a successor still opening (or queued later) starts when it is open
 			}
 		}
 		return

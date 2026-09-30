@@ -1256,3 +1256,131 @@ func TestEngineReplaceOfANonCurrentTrackIsRefused(t *testing.T) {
 	expectEvent(t, e, EventStarted, 2)
 	expectEvent(t, e, EventEnded, 2)
 }
+
+// A stale Replace pending while the current track ends must not strand the
+// successor: finishCur leaves it queued for the Replace, and the refusal has
+// to start it (or end the queue when there is none).
+func staleReplaceWhileTheTrackEnds(t *testing.T, withNext bool) (*Engine, *fakeOutput) {
+	out := newFakeOutput(300)
+	e := newTestEngine(out)
+	old := newFakeSource(ramp(100, 0), OutputRate)
+	old.block = make(chan struct{})
+	old.readStarted = make(chan struct{})
+	e.Play(Track{ID: 1, Source: old})
+	<-old.readStarted
+	if withNext {
+		e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(200, 5000), OutputRate)})
+	}
+	rep := newFakeSource(ramp(100, 100), OutputRate)
+	e.Replace(7, Track{ID: 3, Source: rep}, func() { // 7 is stale
+		close(old.block)
+		time.Sleep(50 * time.Millisecond)
+	})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			out.consume(1 << 30)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	return e, out
+}
+
+func TestEngineRefusedReplaceStartsTheSuccessor(t *testing.T) {
+	e, _ := staleReplaceWhileTheTrackEnds(t, true)
+	defer e.Close()
+	var failed, started, ended bool
+	for !(failed && started && ended) {
+		ev := nextEvent(t, e)
+		switch {
+		case ev.Kind == EventSeekFailed && ev.TrackID == 3:
+			failed = true
+		case ev.Kind == EventStarted && ev.TrackID == 2:
+			started = true
+		case ev.Kind == EventEnded && ev.TrackID == 2:
+			ended = started
+		case ev.TrackID == 1:
+		default:
+			t.Fatalf("unexpected event %+v", ev)
+		}
+	}
+}
+
+func TestEngineRefusedReplaceWithoutSuccessorEnds(t *testing.T) {
+	e, _ := staleReplaceWhileTheTrackEnds(t, false)
+	defer e.Close()
+	var failed, ended bool
+	for !(failed && ended) {
+		ev := nextEvent(t, e)
+		switch {
+		case ev.Kind == EventSeekFailed && ev.TrackID == 3:
+			failed = true
+		case ev.Kind == EventEnded && ev.TrackID == 1:
+			ended = true
+		case ev.TrackID == 1:
+		default:
+			t.Fatalf("unexpected event %+v", ev)
+		}
+	}
+	// the engine is idle, not wedged: a later QueueNext plays
+	e.QueueNext(Track{ID: 5, Source: newFakeSource(ramp(50, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 5)
+}
+
+// A second Replace for the track whose replacement is still opening is
+// accepted, and the queued successor stays queued.
+func TestEngineReplaceDuringTheReplacementsOpen(t *testing.T) {
+	out := newFakeOutput(300)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(2000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(200, 5000), OutputRate)})
+	time.Sleep(20 * time.Millisecond)
+
+	slow := newFakeSource(ramp(100, 0), OutputRate)
+	slow.openBlock = make(chan struct{})
+	slow.openStarted = make(chan struct{})
+	e.Replace(1, Track{ID: 3, Source: slow}, nil)
+	<-slow.openStarted
+	e.Replace(3, Track{ID: 4, Source: newFakeSource(ramp(100, 100), OutputRate)}, nil)
+	go func() {
+		for i := 0; i < 1000; i++ {
+			out.consume(1 << 30)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	for ev := nextEvent(t, e); ev.TrackID != 4 || ev.Kind != EventStarted; ev = nextEvent(t, e) {
+		if ev.Kind == EventSeekFailed {
+			t.Fatalf("event %+v: the second Replace was refused", ev)
+		}
+	}
+	expectEvent(t, e, EventEnded, 4)
+	expectEvent(t, e, EventStarted, 2)
+}
+
+// A replacement that fails to open with no successor queued yet leaves the
+// engine ready to start the next QueueNext.
+func TestEngineReplaceOpenFailureThenQueueNextStarts(t *testing.T) {
+	out := newFakeOutput(300)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(2000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	bad := newFakeSource(nil, OutputRate)
+	bad.openErr = errBoom
+	e.Replace(1, Track{ID: 3, Source: bad}, nil)
+	ev := nextEvent(t, e)
+	if ev.Kind != EventError || ev.TrackID != 3 {
+		t.Fatalf("event %+v, want the replacement's error", ev)
+	}
+	e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(100, 5000), OutputRate)})
+	go func() {
+		for i := 0; i < 500; i++ {
+			out.consume(1 << 30)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	expectEvent(t, e, EventStarted, 2)
+}
