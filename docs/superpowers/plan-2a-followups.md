@@ -297,3 +297,34 @@ Still open:
 - **Docs:**
   - The README names Alt+Scroll Lock; Scroll Lock alone works too.
   - The README's screenshot folder is the MiSTer one; elsewhere it is `screenshots/` next to the config, or `-screenshots`.
+
+## Plan 4b minors (deferred)
+
+- **Input:**
+  - `Manager.pads` isn't cleared on `Close`, so `HasPad` can stay true after `Close`; this has no effect in practice.
+  - `isGamepad` treats a failed EV_KEY query as a keyboard.
+- **Partial redraws:**
+  - Each damaged rectangle reruns the whole `drawFrame` logic (at most 4 passes). This was measured and is cheap.
+  - `HomeScreen.Handle` syncs before `list.Handle`. If the sync drops the Resume row, the two-row damage would miss the shift. This is thought unreachable.
+  - While playing, a screen with no tick regions (no mini bar, or an unknown duration) redraws in full at every tick.
+  - The verify pass reads the player's state separately from the partial passes. While music plays, `-verify-redraw` can rarely log a one-pixel difference in the progress line. A per-frame state snapshot, like the per-frame clock, would close it.
+  - Missing tests:
+    - the CRT scaler's full-frame fallback;
+    - `Damage` clipped to the canvas;
+    - damage plus dirty;
+    - Now Playing's exact volume keys;
+    - header damage on a title change.
+- **Full resolution:**
+  - An unreadable `res_count` makes every switch time out and flip back. It could fail fast.
+  - `forceExit` skips the size restore, which the launcher's `-restore-console` covers.
+  - A stale `/tmp` state from a crashed run is applied at the next exit.
+  - `Restore` forgets the saved size even when the request fails.
+  - `openFB`'s fallback branches aren't tested. That would need an injectable framebuffer opener.
+- **Hints:**
+  - The sidebar root and the first-run wizard handle B without hinting Back.
+  - The bar under the exit prompt still shows the screen's hints, but it is covered by the overlay.
+  - `NowPlayingScreen.Hints` checks for a nil player only once.
+  - `SidebarRoot.Typing` has no direct test.
+  - The fixtures omit the message, unreachable, feed-with-Resume and search-results screens.
+  - The pixel-change check can't judge whether a label is right.
+  - On a physical keyboard, the typing hints read "Enter Type" and "Tab Delete", with no "Done". They are true but unidiomatic.
