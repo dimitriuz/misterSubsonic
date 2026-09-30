@@ -113,7 +113,9 @@ func restoreConsole() error {
 		// The console is not "restored" to the mode it had: after a crash that
 		// is graphics mode. restoreText sets text mode, and the process ends.
 		if _, err := graphicsMode(); err != nil {
-			log.Printf("console: %v", err)
+			// A size change in text mode crashes the kernel: leave it.
+			log.Printf("console: %v; the saved size is not restored", err)
+			return restoreText()
 		}
 		if err := ctl.Restore(); err != nil {
 			log.Printf("display: %v", err)

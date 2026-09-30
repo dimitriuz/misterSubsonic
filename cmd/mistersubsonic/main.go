@@ -167,9 +167,26 @@ var forceExit = func() {
 // command, because in text mode fbcon redraws its text into the new
 // framebuffer and crashes the kernel. A failed Restore keeps its state file,
 // so the state being there does not mean the size may still change.
+//
+// graphics is whether this run put the console in graphics mode. Without it
+// no size command may be sent at all (a leftover state file could name the
+// current size), so a failed graphicsMode skips the size restore.
 var exitRestore struct {
-	mu   sync.Mutex
-	done bool
+	mu       sync.Mutex
+	done     bool
+	graphics bool
+}
+
+// restoreSize puts the framebuffer size back, only when this run entered
+// graphics mode (exitRestore.mu held by the caller).
+func restoreSize() {
+	if !exitRestore.graphics {
+		log.Printf("display: size restore skipped, this run never entered graphics mode")
+		return
+	}
+	if err := fbControl().Restore(); err != nil {
+		log.Printf("display: %v", err)
+	}
 }
 
 // restoreDisplay is the exit path: the framebuffer gets its old size back
@@ -182,9 +199,7 @@ func restoreDisplay(con *platform.Console) {
 	if exitRestore.done {
 		return
 	}
-	if err := fbControl().Restore(); err != nil {
-		log.Printf("display: %v", err)
-	}
+	restoreSize()
 	if err := con.Restore(); err != nil {
 		log.Printf("console: %v", err)
 	}
@@ -202,9 +217,7 @@ func restoreOnForcedExit() {
 	if exitRestore.done {
 		return
 	}
-	if err := fbControl().Restore(); err != nil {
-		log.Printf("display: %v", err)
-	}
+	restoreSize()
 	if err := restoreText(); err != nil {
 		log.Printf("console: %v", err)
 	}
@@ -288,6 +301,10 @@ func run(f flags) (err error) {
 		con, err := graphicsMode()
 		if err != nil {
 			log.Printf("console: %v (its text may show over the app)", err)
+		} else {
+			exitRestore.mu.Lock()
+			exitRestore.graphics = true
+			exitRestore.mu.Unlock()
 		}
 		// Exit order (defers run last-in first-out, and -restore-console does
 		// the same): the framebuffer is closed (unmapped), then the input is

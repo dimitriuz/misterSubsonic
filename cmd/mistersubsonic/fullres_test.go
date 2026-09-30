@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -176,10 +177,12 @@ func resetExitRestore(t *testing.T) {
 	t.Helper()
 	exitRestore.mu.Lock()
 	exitRestore.done = false
+	exitRestore.graphics = true // the run entered graphics mode, as the size change needs
 	exitRestore.mu.Unlock()
 	t.Cleanup(func() {
 		exitRestore.mu.Lock()
 		exitRestore.done = false
+		exitRestore.graphics = false
 		exitRestore.mu.Unlock()
 	})
 }
@@ -343,5 +346,78 @@ func TestKeeperFailsAtOnceAfterAReset(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(m.ctl.State); string(b) != "960 600\n" {
 		t.Fatalf("the saved size is %q", b)
+	}
+}
+
+// failingConsole makes graphicsMode fail, as when the console can't be opened.
+func failingConsole(t *testing.T, texts *int) {
+	t.Helper()
+	og, or := graphicsMode, restoreText
+	t.Cleanup(func() { graphicsMode, restoreText = og, or })
+	graphicsMode = func() (*platform.Console, error) { return nil, errors.New("no console") }
+	restoreText = func() error { *texts++; return nil }
+}
+
+// A leftover state whose "to" is the current size would resize in text mode
+// if the run never entered graphics mode: no size command then.
+func noSizeCommandFixture(t *testing.T) platform.FBControl {
+	t.Helper()
+	dir := t.TempDir()
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 200 * time.Millisecond}
+	os.WriteFile(c.Cmd, nil, 0o644)
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	answeringMenu(t, c)
+	os.WriteFile(filepath.Join(dir, "width"), []byte("1920\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "height"), []byte("1200\n"), 0o644)
+	old := fbControl
+	fbControl = func() platform.FBControl { return c }
+	t.Cleanup(func() { fbControl = old })
+	return c
+}
+
+func noCommand(t *testing.T, c platform.FBControl, what string) {
+	t.Helper()
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("%s sent a size command without graphics mode: %q", what, b)
+	}
+}
+
+func TestExitRestoreWithoutGraphicsModeSendsNoSizeCommand(t *testing.T) {
+	resetExitRestore(t)
+	exitRestore.mu.Lock()
+	exitRestore.graphics = false
+	exitRestore.mu.Unlock()
+	c := noSizeCommandFixture(t)
+	texts := 0
+	failingConsole(t, &texts)
+	restoreDisplay(nil)
+	noCommand(t, c, "restoreDisplay")
+}
+
+func TestForcedExitWithoutGraphicsModeSendsNoSizeCommand(t *testing.T) {
+	resetExitRestore(t)
+	exitRestore.mu.Lock()
+	exitRestore.graphics = false
+	exitRestore.mu.Unlock()
+	c := noSizeCommandFixture(t)
+	texts := 0
+	failingConsole(t, &texts)
+	restoreOnForcedExit()
+	noCommand(t, c, "restoreOnForcedExit")
+	if texts != 1 {
+		t.Fatalf("restoreText ran %d times, want 1", texts)
+	}
+}
+
+func TestRestoreConsoleWithoutGraphicsModeSendsNoSizeCommand(t *testing.T) {
+	c := noSizeCommandFixture(t)
+	texts := 0
+	failingConsole(t, &texts)
+	if err := restoreConsole(); err != nil {
+		t.Fatal(err)
+	}
+	noCommand(t, c, "restoreConsole")
+	if texts != 1 {
+		t.Fatalf("restoreText ran %d times, want 1", texts)
 	}
 }
