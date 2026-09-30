@@ -131,6 +131,15 @@ func TestSwitchThatIsNeverConfirmed(t *testing.T) {
 	}
 }
 
+// When the old size can't be had back either, the error says both.
+func TestSwitchReportsAFailedWayBack(t *testing.T) {
+	c := fakeMenu(t, true)
+	err := c.Switch(Size{960, 600}, Size{1920, 1200})
+	if err == nil || !strings.Contains(err.Error(), "old size back") {
+		t.Fatalf("error %v doesn't mention the failed way back", err)
+	}
+}
+
 func TestRestoreWithBadState(t *testing.T) {
 	c := fakeMenu(t, false)
 	os.WriteFile(c.State, []byte("junk"), 0o644)

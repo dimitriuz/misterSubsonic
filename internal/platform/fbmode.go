@@ -117,7 +117,9 @@ func (c FBControl) Switch(from, to Size) error {
 		return fmt.Errorf("platform: save the framebuffer size: %w", err)
 	}
 	if err := c.request(to); err != nil {
-		c.request(from)
+		if back := c.request(from); back != nil {
+			err = errors.Join(err, fmt.Errorf("platform: asking for the old size back: %w", back))
+		}
 		os.Remove(c.State)
 		return err
 	}
