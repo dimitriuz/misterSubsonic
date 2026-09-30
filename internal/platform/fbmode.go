@@ -204,8 +204,3 @@ func (c FBControl) Current() (Size, bool) {
 	s := Size{rd("width"), rd("height")}
 	return s, s.W > 0 && s.H > 0
 }
-
-// Resize asks the menu for size to and waits for it, without touching the
-// saved size to restore (Switch saved the original one). For asking again
-// after the menu reset the framebuffer.
-func (c FBControl) Resize(to Size) error { return c.request(to) }

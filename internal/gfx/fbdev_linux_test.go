@@ -128,33 +128,3 @@ func TestPresentRectsUpdatesOnlyTheRectangles(t *testing.T) {
 		t.Fatal("a frame of the wrong size was accepted")
 	}
 }
-
-func TestSameSize(t *testing.T) {
-	old := fbFormat{width: 1920, height: 1200, stride: 7680, bpp: 32}
-	if err := sameSize(old, old); err != nil {
-		t.Fatal(err)
-	}
-	if sameSize(old, fbFormat{width: 960, height: 600, stride: 3840, bpp: 32}) == nil {
-		t.Fatal("a half-size framebuffer accepted")
-	}
-}
-
-func TestReleaseKeepsThePathAndForgetsTheFrame(t *testing.T) {
-	mem := make([]byte, 16)
-	b := &FB{path: "/dev/fb0", mapping: mem, mem: mem, fmt: fbFormat{2, 2, 8, 16}, last: NewCanvas(2, 2)}
-	b.Release()
-	b.Release() // idempotent
-	if b.path != "/dev/fb0" || b.last != nil || b.mem != nil {
-		t.Fatalf("after Release: %+v", b)
-	}
-	if err := b.Present(NewCanvas(2, 2)); err == nil {
-		t.Fatal("Present after Release returned nil")
-	}
-	if !b.Intact() {
-		t.Fatal("a released FB reports damage")
-	}
-	b.path = "/nonexistent/fb"
-	if err := b.Reopen(); err == nil || b.mem != nil {
-		t.Fatalf("Reopen of a missing device: %v", err)
-	}
-}

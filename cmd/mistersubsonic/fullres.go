@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
-	"time"
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/platform"
@@ -34,50 +33,25 @@ func fullSize(fb platform.Size, profileName, dataDir string, enabled bool) (plat
 	return out, true
 }
 
-// remappable is the part of the framebuffer the keeper works on.
-type remappable interface {
-	Blank()
-	Release() error
-	Reopen() error
-}
-
-// keeper notices that the menu reset the framebuffer (a display hotplug
-// makes Main_MiSTer re-initialise video and go back to the half size) and
-// asks for the full size again, the way openFB did. The console is still in
-// graphics mode, so the size change is safe. The size to restore at exit
-// stays the one openFB saved.
-//
-// A request sent while the menu is still re-initialising is ignored, so the
-// keeper waits until res_count has been still for a while, then asks up to
-// several times. check runs on the UI goroutine and blocks it for those few
-// seconds: the UI pauses while the display comes back (audio plays on its
-// own thread and keeps going).
+// keeper notices that the menu reset the framebuffer. On a display
+// reconnect Main_MiSTer re-initialises video, resets the framebuffer to the
+// half size and shows its own background instead of the Linux framebuffer;
+// from then on it ignores framebuffer requests, so nothing the app draws is
+// visible and the full size can't be asked for again. The app quits then, and
+// the user starts it again.
 type keeper struct {
-	ctl  platform.FBControl
-	fb   remappable
-	want platform.Size
-
+	ctl   platform.FBControl
+	want  platform.Size
 	count string
-
-	quiet       time.Duration // res_count unchanged this long: the menu has settled
-	maxQuiet    time.Duration // give up waiting for that after this and try anyway
-	attempts    int           // requests for the wanted size
-	attemptWait time.Duration // how long each waits for the menu to confirm
-	gap         time.Duration // between attempts
-	settle      time.Duration // after the menu confirms, for the driver to report the size
-	poll        time.Duration
 }
 
-func newKeeper(ctl platform.FBControl, fb remappable, want platform.Size) *keeper {
-	return &keeper{ctl: ctl, fb: fb, want: want, count: ctl.ResCount(),
-		quiet: 1500 * time.Millisecond, maxQuiet: 10 * time.Second,
-		attempts: 3, attemptWait: 2 * time.Second, gap: time.Second,
-		settle: time.Second, poll: 20 * time.Millisecond}
+func newKeeper(ctl platform.FBControl, want platform.Size) *keeper {
+	return &keeper{ctl: ctl, want: want, count: ctl.ResCount()}
 }
 
 // check is the UI's WatchDisplay hook. repaint: the framebuffer was
-// reconfigured (and is at the wanted size again), so the whole frame must
-// be drawn. An error means full resolution couldn't be restored.
+// reconfigured but is still the wanted size, so the whole frame must be
+// drawn. An error means the menu took the screen back.
 func (k *keeper) check() (repaint bool, err error) {
 	count := k.ctl.ResCount()
 	if count == k.count {
@@ -88,72 +62,7 @@ func (k *keeper) check() (repaint bool, err error) {
 	if ok && cur == k.want {
 		return true, nil
 	}
-	// Black instead of the scrambled picture while the display recovers
-	// (writes only into our own mapping).
-	k.fb.Blank()
-	k.waitForMenu()
-	err = k.restore()
-	k.count = k.ctl.ResCount()
-	if err != nil {
-		return false, fmt.Errorf("display: the framebuffer was reset to %v and full resolution couldn't be restored: %w", cur, err)
-	}
-	log.Printf("display: the framebuffer was reset to %v; full resolution %v restored", cur, k.want)
-	return true, nil
-}
-
-// waitForMenu returns when res_count hasn't changed for k.quiet, or after
-// k.maxQuiet.
-func (k *keeper) waitForMenu() {
-	start := time.Now()
-	last, since := k.ctl.ResCount(), start
-	for {
-		time.Sleep(k.poll)
-		now := time.Now()
-		if c := k.ctl.ResCount(); c != last {
-			last, since = c, now
-		}
-		if now.Sub(since) >= k.quiet || now.Sub(start) >= k.maxQuiet {
-			return
-		}
-	}
-}
-
-// restore asks for the wanted size up to k.attempts times and remaps the
-// framebuffer. If it fails, the framebuffer is remapped when possible, and
-// the error says when it isn't usable.
-func (k *keeper) restore() error {
-	if err := k.fb.Release(); err != nil {
-		log.Printf("display: releasing the framebuffer: %v", err)
-	}
-	ctl := k.ctl
-	ctl.Wait = k.attemptWait
-	var err error
-	for i := 0; i < k.attempts; i++ {
-		if i > 0 {
-			time.Sleep(k.gap)
-		}
-		if err = ctl.Resize(k.want); err == nil {
-			if err = k.waitForSize(); err == nil {
-				return k.fb.Reopen()
-			}
-		}
-		log.Printf("display: full resolution, attempt %d of %d: %v", i+1, k.attempts, err)
-	}
-	if rerr := k.fb.Reopen(); rerr != nil {
-		err = fmt.Errorf("%w; the framebuffer is not usable: %v", err, rerr)
-	}
-	return err
-}
-
-func (k *keeper) waitForSize() error {
-	for deadline := time.Now().Add(k.settle); ; time.Sleep(k.poll) {
-		if s, ok := k.ctl.Current(); ok && s == k.want {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("the driver still reports another size than %v", k.want)
-		}
-	}
+	return false, fmt.Errorf("display: the display was reconnected and the MiSTer menu took the screen back (framebuffer reset to %v); quitting, start MiSTer Subsonic again", cur)
 }
 
 // openFB opens the framebuffer, switched to the full output resolution when
@@ -180,7 +89,7 @@ func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, *keeper, 
 	if fb, err = gfx.OpenFB(path); err == nil {
 		if w, h := fb.Size(); w == to.W && h == to.H {
 			log.Printf("display: framebuffer %v, full resolution (was %v)", to, from)
-			return fb, newKeeper(ctl, fb, to), nil
+			return fb, newKeeper(ctl, to), nil
 		}
 		log.Printf("display: asked for %v, got %dx%d; keeping %v", to, w, h, from)
 		fb.Close()

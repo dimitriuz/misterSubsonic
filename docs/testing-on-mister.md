@@ -82,8 +82,11 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     mistersubsonic)` over ssh, `cat /sys/module/MiSTer_fb/parameters/mode`
     shows 960 600 again and the menu and other scripts look as before. The
     launcher's closing message reads correctly. While the app runs, unplug and
-    replug the display (or power-cycle the TV): within about 2 s the picture is
-    back at full resolution, not scrambled or doubled.
+    replug the display (or power-cycle the TV): the MiSTer menu takes the screen
+    back, and within about 2 s the app quits (the music stops) with the
+    launcher's closing message; no scrambled picture stays and starting the app
+    again gives full resolution. `log.txt` says the display was reconnected and
+    has no false "didn't switch" error at exit.
 23. **Smooth browsing.** Hold the D-pad in a cover grid and in a long list
     (Artists): the focus keeps up. The progress bar and a scrolling title move
     smoothly.
