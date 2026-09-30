@@ -123,4 +123,13 @@ This MiSTer: HDMI at `video_mode=1920,1200,60`, so the framebuffer is 960×600×
 
 **Screenshots** (`ui.test -test.bench Screenshot`): saving a PNG takes 0.21 s at 960×600 and 0.68 s at 1920×1080, off the UI goroutine. The MiSTer Companion remote waits up to 6 s.
 
-**On the TV:** pending. Run `docs/testing-on-mister.md` items 3, 19, 20 and 21 and record them here.
+**On the TV (2026-09-30, build 83bd059, the user's report):**
+- **Screenshots (item 21):** work. Print Screen saved a 960×600 PNG in `/media/fat/screenshots/MiSTer_Subsonic/`. The menu's own screenshot of a Linux app is 1920×1200 noise, because it saves the output buffer, not the framebuffer.
+- **Sharpness (item 3):** still blurry next to MiSTerHiFi and MiSTerFin. MiSTerFin draws an even smaller picture (its log says `fb: 640x288 (real 960x600)`), but with pre-rendered bitmap fonts, whose hard edges survive the 2× upscale.
+- **Font test card (a throwaway test program, `vmode -r`):**
+  - The menu accepts `vmode -r 1920 1200 rgb32`: the framebuffer becomes 1920×1200, and `vmode -r 960 600 rgb32` puts it back. `vmode` exits 1 even when it works.
+  - At full resolution the current smooth rendering looks best, better than hinted, higher-contrast or unsmoothed text.
+  - Plan 4b therefore draws at the output resolution.
+- **Now Playing's small volume indicator:** the user doesn't like it. Plan 4b removes it and keeps the volume panel.
+- **Hotkey hints:** the user wants hints for the gamepad and keyboard on every screen (Plan 4b).
+- **Media keys and the volume panel (items 19–20):** not reported yet.
