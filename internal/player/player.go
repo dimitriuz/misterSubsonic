@@ -19,6 +19,9 @@ import (
 // Engine is the subset of *audio.Engine the player uses.
 type Engine interface {
 	Play(t audio.Track)
+	// Replace swaps the current track for t and keeps the queued next one.
+	// prep runs first (see audio.Engine.Replace).
+	Replace(t audio.Track, prep func())
 	QueueNext(t audio.Track)
 	ClearNext()
 	Stop()
@@ -480,7 +483,9 @@ func (p *Player) Seek(pos time.Duration) {
 			return
 		}
 		if seeksByReopening(p.curSrc, song) {
-			p.reopenAt(pos) // I2: use reopenAt to preserve listen state and pause
+			if !p.retargetAt(song, pos) {
+				p.reopenAt(pos) // I2: use reopenAt to preserve listen state and pause
+			}
 			return
 		}
 		// R16: fire and forget. A failure (e.g. ErrNotCurrent while the
@@ -739,6 +744,31 @@ func (p *Player) reopenAt(offset time.Duration) {
 		p.setStatus(Loading)
 	}
 	p.openAsync(id, song, offset, false)
+}
+
+// retargetAt seeks the current track within the stream it already has open,
+// if that holds the target: the engine swaps in a decoder on the same stream
+// and the queued successor stays. It reports false when the stream doesn't
+// hold it (or isn't one that can): the caller reopens.
+func (p *Player) retargetAt(song subsonic.Song, offset time.Duration) bool {
+	rt, ok := p.curSrc.Source.(retargeter)
+	if !ok {
+		return false
+	}
+	op, prep, ok := rt.retarget(song, offset)
+	if !ok {
+		return false
+	}
+	p.seq++
+	id := p.seq
+	p.curID, p.curSrc = id, op
+	p.position, p.lastPos = offset, offset
+	p.hasOpenSeek = false
+	if p.status != Paused {
+		p.setStatus(Loading)
+	}
+	p.o.Engine.Replace(p.track(id, song, op), prep)
+	return true
 }
 
 func (p *Player) openAsync(id uint64, song subsonic.Song, offset time.Duration, next bool) {

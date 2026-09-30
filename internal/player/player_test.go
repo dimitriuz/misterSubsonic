@@ -752,6 +752,63 @@ func TestSeekingAnMP3ReopensNearTheTarget(t *testing.T) {
 	}
 }
 
+// A seek inside what the stream already holds swaps in a decoder on the same
+// stream and keeps the queued successor; a seek beyond it reopens as before.
+func TestSeekingAnMP3InsideTheStreamWindowKeepsTheNextTrack(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.window = func(at time.Duration) bool { return at < 200*time.Second }
+	q := songs(2, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 285*time.Second)
+	h.waitFor("successor queued", func() bool { return h.eng.queueCount() == 1 })
+	opens := len(h.opener.callList())
+
+	h.p.Seek(100 * time.Second)
+	h.waitFor("replace", func() bool { return len(h.eng.replaceList()) == 1 })
+	tr := h.eng.replaceList()[0]
+	if tr.Offset != 100*time.Second || tr.ID == a.ID || tr.Format != audio.FormatMP3 {
+		t.Fatalf("replacement = %+v, want a new track starting at 100s", tr)
+	}
+	if n, c := h.eng.playCount(), h.eng.clearCount(); n != 1 || c != 0 {
+		t.Fatalf("plays %d, clears %d: the seek must not restart playback or drop the successor", n, c)
+	}
+	if n := len(h.opener.callList()); n != opens || len(h.eng.seekList()) != 0 {
+		t.Fatalf("opens %d -> %d, engine seeks %v: the stream should be reused", opens, n, h.eng.seekList())
+	}
+	if h.p.State().NextIndex != 1 {
+		t.Fatal("the successor is no longer next")
+	}
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: tr.ID}
+	h.waitFor("playing", func() bool { return h.p.State().Status == Playing })
+	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: tr.ID}
+	h.waitFor("handover to the queued successor", func() bool { return h.p.State().Index == 1 })
+	if n := len(h.opener.callList()); n != opens {
+		t.Fatalf("the successor was opened again (%d opens)", n)
+	}
+
+}
+
+func TestSeekingAnMP3BeyondTheStreamWindowReopens(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.window = func(at time.Duration) bool { return at < 200*time.Second }
+	q := songs(2, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 285*time.Second)
+	h.waitFor("successor queued", func() bool { return h.eng.queueCount() == 1 })
+	h.p.Seek(250 * time.Second)
+	h.waitFor("reopen", func() bool { return h.eng.playCount() == 2 })
+	if last := h.opener.callList()[len(h.opener.callList())-1]; last.id != "sa" || last.offset != 250*time.Second {
+		t.Fatalf("reopen call = %+v", last)
+	}
+	if n := len(h.eng.replaceList()); n != 0 || h.eng.clearCount() != 1 {
+		t.Fatalf("replaces %d, clears %d; want a plain reopen that drops the successor", n, h.eng.clearCount())
+	}
+}
+
 // A seek that lands while a sized MP3 is still opening reopens it at the
 // target: the open's stream starts at its own offset, so the engine can't
 // seek it (a seek to 0 would even be dropped).

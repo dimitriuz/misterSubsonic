@@ -162,6 +162,28 @@ func (r *Reader) Buffered() int64 {
 	return r.hi - r.pos
 }
 
+// Holds reports whether byte off is in memory, so that seeking there starts
+// no request (unless the window moves on first).
+func (r *Reader) Holds(off int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.closed && off >= r.lo && off < r.hi
+}
+
+// SeekIfBuffered moves the read position to off if that byte is in memory,
+// so it never starts a request, and reports whether it did. A Read waiting
+// for data wakes and continues from there.
+func (r *Reader) SeekIfBuffered(off int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || off < r.lo || off >= r.hi {
+		return false
+	}
+	r.pos = off
+	r.cond.Broadcast()
+	return true
+}
+
 // Promote lifts the prefetch limit and grows the ring to the full window.
 func (r *Reader) Promote() {
 	r.mu.Lock()
@@ -492,6 +514,10 @@ func (r *Reader) copyBody(gen int, body io.Reader, reqCancel context.CancelFunc,
 			r.mu.Unlock()
 			return progressed, errStale
 		}
+		// The read below may overwrite everything under effectiveLo, so
+		// those bytes are gone from now on: Holds and a seek back there must
+		// not count on them while the lock is released.
+		r.lo = r.effectiveLo()
 		room := r.room()
 		r.mu.Unlock()
 

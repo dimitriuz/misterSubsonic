@@ -1085,3 +1085,146 @@ func TestEngineCloseDuringDoStopMissesNoSource(t *testing.T) {
 		t.Error("the Play's source was left open")
 	}
 }
+
+// Replace swaps the current track like Play but keeps the queued successor,
+// so a seek that reopens the current song doesn't cost the gapless next one.
+func TestEngineReplaceKeepsTheQueuedSuccessor(t *testing.T) {
+	out := newFakeOutput(300) // small: the tracks stay mid-decode
+	e := newTestEngine(out)
+	defer e.Close()
+
+	next := newFakeSource(ramp(400, 5000), OutputRate)
+	next.openStarted = make(chan struct{})
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(2000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	e.QueueNext(Track{ID: 2, Source: next})
+	<-next.openStarted
+	time.Sleep(20 * time.Millisecond) // let it finish opening
+
+	ran := false
+	e.Replace(Track{ID: 3, Source: newFakeSource(ramp(500, 100), OutputRate)}, func() { ran = true })
+	if !ran {
+		t.Fatal("prep did not run before Replace returned")
+	}
+	expectEvent(t, e, EventStarted, 3)
+	playOut(t, out, 300+500+400)
+	expectEvent(t, e, EventEnded, 3)
+	expectEvent(t, e, EventStarted, 2)
+	expectEvent(t, e, EventEnded, 2)
+}
+
+// A replacement that can't open hands over to the successor instead of
+// leaving the engine silent with it queued.
+func TestEngineReplaceOpenFailureContinuesIntoTheSuccessor(t *testing.T) {
+	out := newFakeOutput(300)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(2000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(200, 5000), OutputRate)})
+	time.Sleep(20 * time.Millisecond)
+
+	bad := newFakeSource(nil, OutputRate)
+	bad.openErr = errBoom
+	e.Replace(Track{ID: 3, Source: bad}, nil)
+	var sawErr, sawStart bool
+	for !sawErr || !sawStart {
+		ev := nextEvent(t, e)
+		switch {
+		case ev.Kind == EventError && ev.TrackID == 3 && ev.Err == errBoom:
+			sawErr = true
+		case ev.Kind == EventStarted && ev.TrackID == 2:
+			sawStart = true
+		default:
+			t.Fatalf("unexpected event %+v", ev)
+		}
+		playOut(t, out, 0)
+	}
+	playOut(t, out, 200)
+	expectEvent(t, e, EventEnded, 2)
+}
+
+// Replace, like Play, doesn't wait for a stalled read of the old track.
+func TestEngineReplaceInterruptsStalledRead(t *testing.T) {
+	out := newFakeOutput(100000)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	stalled := newFakeSource(ramp(1000, 0), OutputRate)
+	stalled.block = make(chan struct{})
+	e.Play(Track{ID: 1, Source: stalled})
+	expectEvent(t, e, EventStarted, 1)
+	e.Replace(Track{ID: 2, Source: newFakeSource(ramp(100, 0), OutputRate)}, nil)
+	expectEvent(t, e, EventStarted, 2)
+	if !stalled.isClosed() {
+		t.Fatal("stalled source was not closed")
+	}
+}
+
+// Same, when the successor is still opening as the replacement fails: it
+// starts as soon as it is open.
+func TestEngineReplaceFailureBeforeTheSuccessorOpenedStartsItLater(t *testing.T) {
+	out := newFakeOutput(300)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(2000, 0), OutputRate)})
+	expectEvent(t, e, EventStarted, 1)
+	next := newFakeSource(ramp(200, 5000), OutputRate)
+	next.openBlock = make(chan struct{})
+	next.openStarted = make(chan struct{})
+	e.QueueNext(Track{ID: 2, Source: next})
+	<-next.openStarted
+
+	bad := newFakeSource(nil, OutputRate)
+	bad.openErr = errBoom
+	e.Replace(Track{ID: 3, Source: bad}, nil)
+	ev := nextEvent(t, e)
+	if ev.Kind != EventError || ev.TrackID != 3 {
+		t.Fatalf("event %+v, want the replacement's error", ev)
+	}
+	close(next.openBlock)
+	go func() {
+		for i := 0; i < 500; i++ {
+			out.consume(1 << 30)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	expectEvent(t, e, EventStarted, 2)
+}
+
+// If the old track runs out between prep and the swap (prep moved its
+// stream to the end, say), the successor must not start in its place only to
+// be dropped by the swap.
+func TestEngineReplaceWhileTheOldTrackEndsKeepsTheSuccessor(t *testing.T) {
+	out := newFakeOutput(300)
+	e := newTestEngine(out)
+	defer e.Close()
+
+	old := newFakeSource(ramp(100, 0), OutputRate)
+	old.block = make(chan struct{})
+	old.readStarted = make(chan struct{})
+	e.Play(Track{ID: 1, Source: old})
+	<-old.readStarted
+	next := newFakeSource(ramp(200, 5000), OutputRate)
+	e.QueueNext(Track{ID: 2, Source: next}) // waits in the queue behind the blocked read
+
+	e.Replace(Track{ID: 3, Source: newFakeSource(ramp(100, 100), OutputRate)}, func() {
+		close(old.block)                  // the old track reads on and ends
+		time.Sleep(50 * time.Millisecond) // before Replace's command is queued
+	})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			out.consume(1 << 30)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	for ev := nextEvent(t, e); ev.TrackID != 3; ev = nextEvent(t, e) {
+		if ev.TrackID != 1 {
+			t.Fatalf("event %+v before the replacement started", ev) // the old track's own may show
+		}
+	}
+	expectEvent(t, e, EventEnded, 3)
+	expectEvent(t, e, EventStarted, 2)
+}

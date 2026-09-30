@@ -22,6 +22,7 @@ type seekCall struct {
 type fakeEngine struct {
 	mu        sync.Mutex
 	played    []audio.Track
+	replaced  []audio.Track // Replace calls
 	queued    []audio.Track
 	clears    int
 	stops     int
@@ -44,6 +45,15 @@ func (e *fakeEngine) Play(t audio.Track) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.played = append(e.played, t)
+	e.posID, e.pos, e.posOK = t.ID, t.Offset, true
+}
+func (e *fakeEngine) Replace(t audio.Track, prep func()) {
+	if prep != nil {
+		prep()
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.replaced = append(e.replaced, t)
 	e.posID, e.pos, e.posOK = t.ID, t.Offset, true
 }
 func (e *fakeEngine) QueueNext(t audio.Track) {
@@ -117,7 +127,13 @@ func (e *fakeEngine) lastPlayed() audio.Track {
 	defer e.mu.Unlock()
 	return e.played[len(e.played)-1]
 }
-func (e *fakeEngine) playCount() int  { e.mu.Lock(); defer e.mu.Unlock(); return len(e.played) }
+func (e *fakeEngine) playCount() int { e.mu.Lock(); defer e.mu.Unlock(); return len(e.played) }
+func (e *fakeEngine) replaceList() []audio.Track {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]audio.Track(nil), e.replaced...)
+}
+func (e *fakeEngine) clearCount() int { e.mu.Lock(); defer e.mu.Unlock(); return e.clears }
 func (e *fakeEngine) queueCount() int { e.mu.Lock(); defer e.mu.Unlock(); return len(e.queued) }
 
 type scrobbleCall struct {
@@ -193,6 +209,21 @@ func (s *fakeSource) Close() error                   { s.mu.Lock(); s.closed = t
 func (s *fakeSource) Promote()                       { s.mu.Lock(); s.promoted = true; s.mu.Unlock() }
 func (s *fakeSource) isPromoted() bool               { s.mu.Lock(); defer s.mu.Unlock(); return s.promoted }
 
+// fakeStreamSource is a sized MP3's stream that can seek within itself, as
+// NewOpener's do: retarget answers for positions inside window.
+type fakeStreamSource struct {
+	fakeSource
+	window func(time.Duration) bool
+	preps  atomic.Int32
+}
+
+func (s *fakeStreamSource) retarget(_ subsonic.Song, at time.Duration) (Opened, func(), bool) {
+	if !s.window(at) {
+		return Opened{}, nil, false
+	}
+	return Opened{Source: &fakeSource{song: s.song}, Format: audio.FormatMP3, Offset: at}, func() { s.preps.Add(1) }, true
+}
+
 type openCall struct {
 	id       subsonic.ID
 	offset   time.Duration
@@ -204,6 +235,9 @@ type fakeOpener struct {
 	calls []openCall
 	fail  map[subsonic.ID]bool
 	gate  chan struct{} // if set, open blocks (after recording the call) until it is closed
+	// window, if set, makes sized MP3s open as streams that seek themselves
+	// within it (see fakeStreamSource).
+	window func(time.Duration) bool
 }
 
 func (o *fakeOpener) open(_ context.Context, s subsonic.Song, offset time.Duration, prefetch bool) (Opened, error) {
@@ -221,6 +255,9 @@ func (o *fakeOpener) open(_ context.Context, s subsonic.Song, offset time.Durati
 	}
 	_, f, transcoded := PlanStream(s, StreamSettings{TranscodeFormat: "mp3", TranscodeBitrate: 320})
 	op := Opened{Source: &fakeSource{song: s.ID}, Format: f, Transcoded: transcoded}
+	if o.window != nil && f == audio.FormatMP3 && s.Size > 0 && s.Duration > 0 && !prefetch {
+		op.Source = &fakeStreamSource{fakeSource: fakeSource{song: s.ID}, window: o.window}
+	}
 	if transcoded || (f == audio.FormatMP3 && s.Size > 0 && s.Duration > 0) {
 		op.Offset = offset // as NewOpener starts these at offset
 	}

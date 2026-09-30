@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"mistersubsonic/internal/audio"
@@ -81,12 +82,20 @@ func NewOpener(c *subsonic.Client, st StreamSettings) Opener {
 			return Opened{}, err
 		}
 		var src io.ReadSeeker = r
-		if !transcoded && offset > 0 && f == audio.FormatMP3 {
+		if !transcoded && f == audio.FormatMP3 && s.Size > 0 && s.Duration > 0 {
 			// An MP3 without a seek table seeks by decoding from the start,
 			// which takes seconds on the MiSTer: start near the target instead.
-			if base, ok := mp3Offset(r, s, offset); ok {
-				if _, err := r.Seek(base, io.SeekStart); err == nil {
-					src, start = &fromOffset{r: r, base: base}, offset
+			layout := probeMP3(r)
+			base, ok := int64(0), false
+			if offset > 0 {
+				base, ok = layout.offset(s, offset)
+			}
+			if _, err := r.Seek(base, io.SeekStart); err == nil && (ok || offset == 0) {
+				m := &mp3Stream{r: r, layout: layout}
+				m.refs.Store(1)
+				src = &fromOffset{s: m, base: base, placed: true}
+				if ok {
+					start = offset
 				}
 			} else {
 				r.Seek(0, io.SeekStart)
@@ -96,48 +105,85 @@ func NewOpener(c *subsonic.Client, st StreamSettings) Opener {
 	}
 }
 
-// mp3Offset estimates where offset falls in the MP3 r of s.Size bytes lasting
-// s.Duration: after the ID3v2 tag, in proportion to time. That is exact for
-// a constant bitrate and close for a variable one. It reads the first bytes
-// of r to find the tag.
-func mp3Offset(r io.Reader, s subsonic.Song, offset time.Duration) (int64, bool) {
-	d := time.Duration(s.Duration) * time.Second
-	if s.Size <= 0 || d <= 0 {
-		return 0, false
+// mp3Stream is an MP3's stream shared by the sources of successive seeks:
+// it closes with the last of them.
+type mp3Stream struct {
+	r      *stream.Reader
+	layout mp3Layout
+	refs   atomic.Int32
+}
+
+// fromOffset shows an mp3Stream from byte base on as if it began there, so
+// the decoder starts at the estimated seek point (MP3 frames resync on their
+// own).
+type fromOffset struct {
+	s      *mp3Stream
+	base   int64
+	placed bool // the stream is at base or beyond; only the engine's goroutine touches it
+	closed atomic.Bool
+}
+
+// place moves a source made by retarget to its base on first use, when the
+// source before it has been dropped and no longer reads.
+func (f *fromOffset) place() error {
+	if f.closed.Load() {
+		return stream.ErrClosed
 	}
-	var h [10]byte
-	tag := int64(0)
-	if _, err := io.ReadFull(r, h[:]); err == nil && string(h[:3]) == "ID3" {
-		size := int64(h[6]&0x7F)<<21 | int64(h[7]&0x7F)<<14 | int64(h[8]&0x7F)<<7 | int64(h[9]&0x7F)
-		tag = 10 + size
-		if h[5]&0x10 != 0 {
-			tag += 10 // a footer
+	if !f.placed {
+		f.placed = true
+		if !f.s.r.SeekIfBuffered(f.base) {
+			_, err := f.s.r.Seek(f.base, io.SeekStart)
+			return err
 		}
 	}
-	if tag >= s.Size {
-		return 0, false
+	return nil
+}
+
+func (f *fromOffset) Read(p []byte) (int, error) {
+	if err := f.place(); err != nil {
+		return 0, err
 	}
-	off := tag + int64(float64(s.Size-tag)*float64(offset)/float64(d))
-	return min(off, s.Size-1), true
+	return f.s.r.Read(p)
 }
 
-// fromOffset shows a stream from byte base on as if it began there, so the
-// decoder starts at the estimated seek point (MP3 frames resync on their own).
-type fromOffset struct {
-	r    *stream.Reader
-	base int64
+func (f *fromOffset) Close() error {
+	if f.closed.CompareAndSwap(false, true) && f.s.refs.Add(-1) == 0 {
+		return f.s.r.Close()
+	}
+	return nil
 }
 
-func (f *fromOffset) Read(p []byte) (int, error) { return f.r.Read(p) }
-func (f *fromOffset) Close() error               { return f.r.Close() }
-func (f *fromOffset) Promote()                   { f.r.Promote() }
+func (f *fromOffset) Promote() { f.s.r.Promote() }
 
 func (f *fromOffset) Seek(off int64, whence int) (int64, error) {
+	if err := f.place(); err != nil {
+		return 0, err
+	}
 	if whence == io.SeekStart {
 		off += f.base
 	}
-	abs, err := f.r.Seek(off, whence)
+	abs, err := f.s.r.Seek(off, whence)
 	return abs - f.base, err
+}
+
+// retargeter is a source that can move to another position of its stream
+// without opening it again.
+type retargeter interface {
+	// retarget returns the song at position at as a new Opened over the same
+	// stream, if the stream holds that byte. The old source stays valid until
+	// closed. prep, run right before the engine swaps the two, moves the
+	// stream so a read of the old source that is waiting for data wakes.
+	retarget(s subsonic.Song, at time.Duration) (o Opened, prep func(), ok bool)
+}
+
+func (f *fromOffset) retarget(s subsonic.Song, at time.Duration) (Opened, func(), bool) {
+	base, ok := f.s.layout.offset(s, at)
+	if !ok || !f.s.r.Holds(base) {
+		return Opened{}, nil, false
+	}
+	f.s.refs.Add(1)
+	return Opened{Source: &fromOffset{s: f.s, base: base}, Format: audio.FormatMP3, Offset: at},
+		func() { f.s.r.SeekIfBuffered(base) }, true
 }
 
 // ReplayGainFactor converts the song's ReplayGain to a linear factor for

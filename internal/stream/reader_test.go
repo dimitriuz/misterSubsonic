@@ -158,6 +158,93 @@ func TestSeekInsideWindowUsesNoNewRequest(t *testing.T) {
 	}
 }
 
+func TestSeekIfBufferedOnlyMovesInsideTheBuffer(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.WindowBytes = 1 << 20
+	r := open(t, s.URL, o)
+	checkBytes(t, readAt(t, r, 0, 100<<10), 0)
+	deadline := time.Now().Add(2 * time.Second)
+	for r.Buffered() < 512<<10 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !r.SeekIfBuffered(400 << 10) {
+		t.Fatal("400 KiB is buffered but the seek said no")
+	}
+	buf := make([]byte, 100)
+	io.ReadFull(r, buf)
+	checkBytes(t, buf, 400<<10)
+	if r.SeekIfBuffered(6 << 20) {
+		t.Fatal("6 MiB is beyond the window but the seek said yes")
+	}
+	if r.SeekIfBuffered(-1) {
+		t.Fatal("a negative offset is not buffered")
+	}
+	io.ReadFull(r, buf) // the refused seek left the position alone
+	checkBytes(t, buf, 400<<10+100)
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("%d requests, want 1", n)
+	}
+	r.Close()
+	if r.SeekIfBuffered(400 << 10) {
+		t.Fatal("a closed reader seeks")
+	}
+}
+
+// A fetch in flight may overwrite what lies more than BehindBytes behind the
+// read position, so those bytes no longer count as held.
+func TestHoldsLeavesOutWhatAFetchInFlightMayOverwrite(t *testing.T) {
+	const size = 64 << 10
+	part := func(from, to int) []byte {
+		b := make([]byte, to-from)
+		for i := range b {
+			b[i] = pattern(int64(from + i))
+		}
+		return b
+	}
+	release := make(chan struct{})
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n != 1 {
+			return false
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(size))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Write(part(0, 8<<10))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+			w.Write(part(8<<10, size))
+		case <-r.Context().Done():
+		}
+		return true
+	})
+	o := testOptions()
+	o.WindowBytes, o.BehindBytes, o.StallTimeout = 8<<10, 2<<10, 5*time.Second
+	r := open(t, s.URL, o)
+	checkBytes(t, readAt(t, r, 0, 4<<10), 0)
+	// The ring is full, so the fetcher now has room for the 2 KiB that lie
+	// more than BehindBytes behind the reader, and waits for the server.
+	deadline := time.Now().Add(2 * time.Second)
+	for r.Holds(1<<10) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if r.Holds(1<<10) || r.SeekIfBuffered(1<<10) {
+		t.Fatal("byte 1024 is about to be overwritten, but the reader still counts it as held")
+	}
+	close(release)
+	if !r.SeekIfBuffered(3 << 10) {
+		t.Fatal("byte 3072 is within BehindBytes and held, but the seek said no")
+	}
+	buf := make([]byte, 8<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, 3<<10)
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("%d requests, want 1", n)
+	}
+}
+
 func TestSeekFarIntoHugeFileUsesRange(t *testing.T) {
 	const size = 3 << 30 // 3 GiB, never materialised
 	s := newServer(t, size, nil)
