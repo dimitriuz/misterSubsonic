@@ -26,6 +26,7 @@ func (s *SettingsScreen) Enter(a *App)  {}
 
 func (s *SettingsScreen) Handle(a *App, e input.Event) bool {
 	if s.list.Handle(e, len(settingsItems)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press || e.Button != input.BtnA {
@@ -77,6 +78,7 @@ func (s *SettingsListScreen) Enter(a *App)  {}
 func (s *SettingsListScreen) Handle(a *App, e input.Event) bool {
 	rows := s.rows(a)
 	if s.list.Handle(e, len(rows)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind == input.Release || len(rows) == 0 {
@@ -159,8 +161,8 @@ func (a *App) setVolume(db float64) {
 // setMuted turns the sound off or back on (spec §6). It isn't saved, so the
 // app always starts with the sound on.
 func (a *App) setMuted(on bool) {
-	a.muted, a.dirty = on, true
-	a.showVolume()
+	a.muted = on
+	a.showVolume() // keys that show it elsewhere too (Settings) redraw it all
 	if pl := a.Player(); pl != nil {
 		pl.SetMuted(on)
 	}
@@ -269,6 +271,7 @@ func (s *ServersScreen) servers(a *App) []config.Server {
 func (s *ServersScreen) Handle(a *App, e input.Event) bool {
 	srvs := s.servers(a)
 	if s.list.Handle(e, len(srvs)+1) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press {

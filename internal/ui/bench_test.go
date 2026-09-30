@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"mistersubsonic/internal/gfx"
+	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/subsonic"
 )
 
 // BenchmarkRepaint measures a full frame: draw the screen and scale it to the
@@ -50,6 +52,7 @@ func BenchmarkRepaint(b *testing.B) {
 		b.Run(c.name, func(b *testing.B) {
 			t := &testing.T{}
 			ta := newTestApp(t, c.prof)
+			ta.verify = false
 			ta.o.Display = nullDisplay{c.fbW, c.fbH} // the framebuffer's pack is measured in gfx
 			ta.scaler = nil
 			if c.prof.W != c.fbW || c.prof.H != c.fbH {
@@ -103,6 +106,88 @@ func BenchmarkScreenshot(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
+		})
+	}
+}
+
+// BenchmarkPartial measures frames at the full resolution of a 1920x1200
+// display (Plan 4b): a full frame, then the partial frames that make
+// browsing smooth. Packing the rectangles into the framebuffer is
+// BenchmarkPackRects in gfx.
+//
+//	./ui.test -test.run '^$' -test.bench Partial -test.benchtime 50x
+func BenchmarkPartial(b *testing.B) {
+	down := input.Event{Button: input.BtnDown, Kind: input.Press}
+	up := input.Event{Button: input.BtnUp, Kind: input.Press}
+	right := input.Event{Button: input.BtnRight, Kind: input.Press}
+	left := input.Event{Button: input.BtnLeft, Kind: input.Press}
+	albums := func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }
+	cases := []struct {
+		name   string
+		screen func(ta *testApp) Screen
+		step   func(ta *testApp, i int)
+	}{
+		{"full-albums", albums, func(ta *testApp, i int) { ta.dirty = true }},
+		{"move-grid", albums, func(ta *testApp, i int) {
+			ta.dispatch([]input.Event{right, left}[i%2])
+		}},
+		{"move-list", func(ta *testApp) Screen { return NewGenresScreen() }, func(ta *testApp, i int) {
+			ta.dispatch([]input.Event{down, up}[i%2])
+		}},
+		{"scroll-list", func(ta *testApp) Screen { return NewGenresScreen() }, func(ta *testApp, i int) {
+			ta.dispatch(down) // at the bottom of the view every step scrolls
+		}},
+		{"tick-nowplaying", func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() }, func(ta *testApp, i int) {
+			ta.pl.st.Position += progressTick
+			ta.now = ta.now.Add(progressTick)
+			ta.onWake()
+		}},
+		{"marquee", func(ta *testApp) Screen {
+			ta.lib.albums[0].Name = "A Rather Long Album Title That Will Need Truncating Somewhere"
+			return albums(ta)
+		}, func(ta *testApp, i int) {
+			ta.now = ta.now.Add(marqueeFrame)
+			ta.onWake()
+		}},
+	}
+	p := PickProfile(1920, 1200, "auto")
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			t := &testing.T{}
+			ta := newTestApp(t, p)
+			ta.verify = false
+			ta.o.Display = nullDisplay{p.W, p.H}
+			for i := 0; i < 40; i++ {
+				ta.lib.albums = append(ta.lib.albums, ta.lib.albums[i%3])
+			}
+			for i := range 2000 { // a long list to scroll
+				ta.lib.genres = append(ta.lib.genres, subsonic.Genre{Name: fmt.Sprintf("Genre %d", i), AlbumCount: i})
+			}
+			ta.Push(NewHomeScreen())
+			ta.Push(c.screen(ta))
+			ta.settle(t)
+			if c.name == "scroll-list" {
+				for range 60 { // to the bottom of the view
+					ta.dispatch(down)
+				}
+			}
+			if c.name == "marquee" {
+				ta.now = ta.now.Add(2 * marqueeDelay)
+				ta.settle(t)
+			}
+			ta.settle(t)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				ta.dirty, ta.damage = false, ta.damage[:0]
+				c.step(ta, i)
+				if !ta.redrawDue() {
+					b.Fatal("the step changed nothing")
+				}
+				if err := ta.render(); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(b.Elapsed().Microseconds())/float64(b.N)/1000, "ms/frame")
 		})
 	}
 }

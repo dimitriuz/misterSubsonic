@@ -45,9 +45,9 @@ func TestVolumePanelHides(t *testing.T) {
 		t.Fatal("the panel went while the key repeated")
 	}
 	ta.now = ta.now.Add(100 * time.Millisecond)
-	ta.dirty = false
+	ta.clean()
 	ta.onWake()
-	if !ta.volumeUntil.IsZero() || !ta.dirty {
+	if !ta.volumeUntil.IsZero() || !ta.redrawDue() {
 		t.Fatal("the panel didn't go, or the screen wasn't redrawn without it")
 	}
 }

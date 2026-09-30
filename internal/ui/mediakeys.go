@@ -28,10 +28,12 @@ func (a *App) mediaKey(e input.Event) bool {
 			step = -step
 		}
 		a.setVolume(a.volumeDB() + step)
+		a.exact = a.onlyPanelShowsVolume()
 	case input.BtnMute:
 		if e.Kind == input.Press {
 			a.toggleMute()
 		}
+		a.exact = a.onlyPanelShowsVolume()
 	case input.BtnPlayPause:
 		if pl != nil && e.Kind == input.Press {
 			pl.TogglePause()
@@ -68,6 +70,13 @@ func (a *App) mediaKey(e input.Event) bool {
 	default:
 		return false
 	}
-	a.dirty = true
-	return true
+	return true // dispatch redraws what changed
+}
+
+// onlyPanelShowsVolume reports whether a volume change shows on screen only
+// in the volume panel (whose area it damages), so nothing else needs a
+// redraw. Settings lists show the level in a row too.
+func (a *App) onlyPanelShowsVolume() bool {
+	_, settings := a.Top().(*SettingsListScreen)
+	return !settings
 }

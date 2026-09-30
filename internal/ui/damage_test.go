@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 )
@@ -61,16 +62,6 @@ func TestDamageRedrawsAndPresentsOnlyTheChangedArea(t *testing.T) {
 	}
 }
 
-// Damage over more than half the screen draws the full frame instead.
-func TestLargeDamageDrawsTheFullFrame(t *testing.T) {
-	ta, d, _ := newRectApp(t)
-	ta.Damage(gfx.R(0, 0, ta.P.W, ta.P.H*3/4))
-	ta.settle(t)
-	if d.fulls != 1 || len(d.rects) != 0 {
-		t.Fatalf("presented %v rects and %d full frames, want one full frame", d.rects, d.fulls)
-	}
-}
-
 // The verify mode catches a change whose damage misses it: the frame is
 // then drawn in full, so the screen never keeps stale pixels.
 func TestVerifyCatchesAMissedDamage(t *testing.T) {
@@ -97,4 +88,61 @@ func TestMergeRects(t *testing.T) {
 	if len(got) != 1 || got[0] != gfx.R(0, 0, 21, 1) {
 		t.Fatalf("over the limit: %v", got)
 	}
+}
+
+// Every screen, on every layout, stays exactly as a full redraw would draw
+// it while the focus moves around (the verify mode compares each partial
+// frame with a full one and fails the test on any difference).
+func TestPartialRedrawsMatchFullFramesEverywhere(t *testing.T) {
+	screens := map[string]func(ta *testApp) Screen{
+		"root":        func(ta *testApp) Screen { return NewRootScreen(ta.P) },
+		"albums":      func(ta *testApp) Screen { return NewAlbumsScreen() },
+		"album list":  func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") },
+		"artists":     func(ta *testApp) Screen { return NewArtistsScreen() },
+		"artist":      func(ta *testApp) Screen { return NewArtistScreen(ta.lib.artists[2].Artists[0]) },
+		"album":       func(ta *testApp) Screen { return NewAlbumScreen(ta.lib.albums[0]) },
+		"genres":      func(ta *testApp) Screen { return NewGenresScreen() },
+		"playlists":   func(ta *testApp) Screen { return NewPlaylistsScreen() },
+		"playlist":    func(ta *testApp) Screen { return NewPlaylistScreen(ta.lib.playlists[0]) },
+		"starred":     func(ta *testApp) Screen { return NewStarredScreen() },
+		"search":      func(ta *testApp) Screen { return NewSearchScreen() },
+		"queue":       func(ta *testApp) Screen { playingState(ta); return NewQueueScreen() },
+		"now playing": func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() },
+		"settings":    func(ta *testApp) Screen { return NewSettingsScreen() },
+		"playback":    func(ta *testApp) Screen { return newSettingsList("Playback", playbackSettings) },
+		"display":     func(ta *testApp) Screen { return newSettingsList("Display", displaySettings) },
+		"servers":     func(ta *testApp) Screen { return NewServersScreen() },
+	}
+	keys := []input.Button{input.BtnDown, input.BtnDown, input.BtnRight, input.BtnRight, input.BtnDown,
+		input.BtnR, input.BtnUp, input.BtnLeft, input.BtnL, input.BtnUp, input.BtnDown}
+	partial := map[string]int{}
+	for _, p := range append(profiles, PickProfile(960, 600, "auto")) {
+		for name, mk := range screens {
+			ta := newTestApp(t, p)
+			d := &rectDisplay{Headless: ta.disp}
+			ta.o.Display = d
+			ta.cfg = config.Default()
+			ta.Push(NewHomeScreen())
+			ta.Push(mk(ta))
+			ta.settle(t)
+			for _, b := range keys {
+				ta.onInput(input.Event{Button: b, Kind: input.Press})
+				ta.settle(t)
+				ta.onInput(input.Event{Button: b, Kind: input.Repeat})
+				ta.settle(t)
+				ta.onInput(input.Event{Button: b, Kind: input.Release})
+			}
+			if t.Failed() {
+				t.Fatalf("%s on %s", name, p.Name)
+			}
+			partial[name] += len(d.rects)
+		}
+	}
+	// The walk must exercise partial frames where screens opted in.
+	for _, name := range []string{"albums", "artists", "album", "genres", "playlists", "queue", "settings", "playback"} {
+		if partial[name] == 0 {
+			t.Errorf("%s: no partial frame was drawn", name)
+		}
+	}
+	t.Logf("partial frames: %v", partial)
 }

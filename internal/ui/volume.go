@@ -24,7 +24,17 @@ func volumeLevel(db float64) float64 { return max(0, min(1, (db+60)/60)) }
 // showVolume brings up the panel (again) for volumeShowTime.
 func (a *App) showVolume() {
 	a.volumeUntil = a.o.Now().Add(volumeShowTime)
-	a.dirty = true
+	a.Damage(a.volumePanelRect())
+}
+
+// volumePanelRect is where the volume panel is drawn: centred under the
+// header, sized for the widest label ("Muted").
+func (a *App) volumePanelRect() gfx.Rect {
+	p, f := a.P, a.F.Body
+	icon := f.Height()
+	pad := p.Margin / 2
+	w := pad + icon + pad + max(p.W/4, 6*icon) + pad + f.Measure("Muted") + pad
+	return gfx.R((p.W-w)/2, p.SafeY+p.HeaderH+p.Margin/2, w, icon+2*pad)
 }
 
 // drawSpeaker draws a speaker filling the square r: the box and cone, then
@@ -139,9 +149,7 @@ func (a *App) drawVolumePanel(c *gfx.Canvas) {
 	barW := max(p.W/4, 6*icon)
 	labelW := f.Measure("Muted")
 	pad := p.Margin / 2
-	w := pad + icon + pad + barW + pad + labelW + pad
-	h := icon + 2*pad
-	panel := gfx.R((p.W-w)/2, p.SafeY+p.HeaderH+p.Margin/2, w, h)
+	panel := a.volumePanelRect()
 	fillRoundRect(c, panel, pad, colPanel.WithAlpha(0xF0))
 	x := panel.X + pad
 	drawSpeaker(c, gfx.R(x, panel.Y+pad, icon, icon), level, a.muted, colText)

@@ -31,6 +31,7 @@ func (s *MenuScreen) Handle(a *App, e input.Event) bool {
 		return false // volume, play/pause and the rest work under the menu
 	}
 	if s.list.Handle(e, len(s.entries)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press {

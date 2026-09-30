@@ -96,6 +96,7 @@ func (s *HomeScreen) Handle(a *App, e input.Event) bool {
 	s.sync(a)
 	items := s.items()
 	if s.list.Handle(e, len(items)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press || e.Button != input.BtnA || len(items) == 0 {
@@ -254,6 +255,7 @@ func (s *GenresScreen) Enter(a *App) {
 
 func (s *GenresScreen) Handle(a *App, e input.Event) bool {
 	if s.list.Handle(e, len(s.genres)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press || e.Button != input.BtnA {
