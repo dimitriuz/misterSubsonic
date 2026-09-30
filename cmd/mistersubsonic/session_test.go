@@ -215,6 +215,61 @@ func TestServerDirKeepsAnOldFolder(t *testing.T) {
 	}
 }
 
+func mkLegacy(t *testing.T, m *sessions, folder, marker string) string {
+	t.Helper()
+	d := filepath.Join(m.dataDir, "servers", folder)
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if marker != "" {
+		os.WriteFile(filepath.Join(d, ".server"), []byte(marker), 0o644)
+	}
+	return d
+}
+
+// An old "Home" folder goes to the first server that asks, and is marked.
+func TestServerDirLegacyFolderBelongsToTheFirstClaimer(t *testing.T) {
+	m := &sessions{dataDir: t.TempDir()}
+	old := mkLegacy(t, m, "Home", "")
+	if got := m.serverDir("Home"); got != old {
+		t.Fatalf("serverDir(Home) = %q, want %q", got, old)
+	}
+	if b, _ := os.ReadFile(filepath.Join(old, ".server")); string(b) != "Home" {
+		t.Fatalf("marker %q, want Home", b)
+	}
+	if got := m.serverDir("Home"); got != old {
+		t.Fatalf("the owner lost its folder: %q", got)
+	}
+	// "home" must not inherit it. The test filesystem is case-sensitive, so
+	// exFAT is simulated: the folder the card would hand to "home" is one
+	// named "home" whose marker names "Home".
+	folded := mkLegacy(t, m, "home", "Home")
+	if got := m.serverDir("home"); got == folded || got == old {
+		t.Fatalf("serverDir(home) = %q shares the folder of Home", got)
+	}
+}
+
+func TestServerDirSanitizedTwinsDoNotShareAnOldFolder(t *testing.T) {
+	m := &sessions{dataDir: t.TempDir()}
+	old := mkLegacy(t, m, "a_b", "")
+	if got := m.serverDir("a/b"); got != old {
+		t.Fatalf("first claimer got %q, want %q", got, old)
+	}
+	got := m.serverDir("a_b")
+	if got == old || !strings.HasPrefix(filepath.Base(got), "a_b-") {
+		t.Fatalf("second claimer got %q, want a hashed folder", got)
+	}
+}
+
+func TestServerDirMarkerNamingAnotherServer(t *testing.T) {
+	m := &sessions{dataDir: t.TempDir()}
+	old := mkLegacy(t, m, "x", "someone else")
+	got := m.serverDir("x")
+	if got == old || !strings.HasPrefix(filepath.Base(got), "x-") {
+		t.Fatalf("serverDir = %q, want a hashed folder", got)
+	}
+}
+
 // slowStops makes every stop wait for release (or, if release is nil, d).
 func slowStops(m *sessions, release chan struct{}, d time.Duration) {
 	m.beforeStop = func(*session) {

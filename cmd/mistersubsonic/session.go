@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -181,7 +183,7 @@ func (m *sessions) serverDir(name string) string {
 	}
 	servers := filepath.Join(m.dataDir, "servers")
 	dir := filepath.Join(servers, safe)
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+	if !claimLegacy(dir, name) {
 		h := sha1.Sum([]byte(name))
 		dir = filepath.Join(servers, safe+"-"+hex.EncodeToString(h[:4]))
 	}
@@ -189,6 +191,37 @@ func (m *sessions) serverDir(name string) string {
 		log.Printf("server data folder %s: %v", dir, err)
 	}
 	return dir
+}
+
+// claimLegacy says whether name may use the old bare folder dir. The folder
+// has an owner marker (.server, the exact server name); a folder without one
+// predates this version and goes to the first server that asks, which writes
+// the marker. Any other name (one that sanitizes alike, or differs only in
+// case on a case-folding card) gets its own hashed folder.
+func claimLegacy(dir, name string) bool {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("server data folder %s: %v", dir, err)
+		}
+		return false
+	}
+	if !fi.IsDir() {
+		return false
+	}
+	marker := filepath.Join(dir, ".server")
+	owner, err := os.ReadFile(marker)
+	switch {
+	case err == nil:
+		return string(owner) == name
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.WriteFile(marker, []byte(name), 0o644); err != nil {
+			log.Printf("server data folder %s: writing the owner marker: %v", dir, err)
+		}
+		return true
+	}
+	log.Printf("server data folder %s: reading the owner marker: %v", dir, err)
+	return false
 }
 
 // stop ends a session: the player saves its queue and stops the engine,

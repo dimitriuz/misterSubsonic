@@ -193,7 +193,12 @@ func TestFailedEvictionWalkKeepsTheSize(t *testing.T) {
 	defer func() { walkDir = old }()
 	before := d.Size()
 	d.Put("g", bytes.Repeat([]byte{1}, 150))
-	if got := d.Size(); got < before {
-		t.Fatalf("size fell to %d (was %d) after a failed walk", got, before)
+	if got := d.Size(); got != before+150 {
+		t.Fatalf("size %d after a failed walk, want %d", got, before+150)
+	}
+	for _, k := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		if _, err := os.Stat(d.path(k)); err != nil {
+			t.Errorf("entry %s lost after a failed walk: %v", k, err)
+		}
 	}
 }
