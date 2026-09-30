@@ -52,7 +52,7 @@ var playModes = []struct {
 
 // Release flushes a seek target the throttle held back.
 func (s *NowPlayingScreen) Release(a *App, b input.Button) {
-	if (b == input.BtnLeft || b == input.BtnRight) && s.unsent && s.song == s.curID(a.Player().State()) {
+	if (b == input.BtnLeft || b == input.BtnRight || b == input.BtnSeekBack || b == input.BtnSeekFwd) && s.unsent && s.song == s.curID(a.Player().State()) {
 		s.send(a.Player(), a.o.Now())
 		a.dirty = true
 	}
@@ -99,12 +99,17 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 	pl := a.Player()
 	st := pl.State()
 	switch e.Button {
+	case input.BtnSeekBack, input.BtnSeekFwd:
+		if !a.hasCurrent() {
+			return false
+		}
+		fallthrough
 	case input.BtnLeft, input.BtnRight:
 		step := seekStep
 		if e.Kind == input.Repeat {
 			step = seekHoldStep
 		}
-		if e.Button == input.BtnLeft {
+		if e.Button == input.BtnLeft || e.Button == input.BtnSeekBack {
 			step = -step
 		}
 		now := a.o.Now()

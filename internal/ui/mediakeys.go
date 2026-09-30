@@ -8,16 +8,8 @@ import (
 
 // mediaKey handles a multimedia keyboard's (or remote's) media keys, on
 // every screen: volume (held to repeat), play/pause, next and previous
-// track, and seeking. It reports whether e was one.
+// track, and seeking. It reports whether e was one. Releases never get here.
 func (a *App) mediaKey(e input.Event) bool {
-	if e.Kind == input.Release {
-		switch e.Button {
-		case input.BtnVolUp, input.BtnVolDown, input.BtnPlayPause, input.BtnNextTrack,
-			input.BtnPrevTrack, input.BtnSeekFwd, input.BtnSeekBack:
-			return true
-		}
-		return false
-	}
 	pl := a.Player()
 	switch e.Button {
 	case input.BtnVolUp, input.BtnVolDown:
@@ -39,7 +31,12 @@ func (a *App) mediaKey(e input.Event) bool {
 			}
 		}
 	case input.BtnSeekFwd, input.BtnSeekBack:
+		now := a.o.Now()
+		if e.Kind == input.Repeat && now.Sub(a.mediaSeekAt) < seekEvery {
+			break // a held key: at most one Seek per seekEvery (each can open a stream)
+		}
 		if pl != nil && a.hasCurrent() {
+			a.mediaSeekAt = now
 			st := pl.State()
 			step := seekStep
 			if e.Kind == input.Repeat {

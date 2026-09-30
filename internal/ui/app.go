@@ -152,6 +152,7 @@ const (
 type App struct {
 	volumePending bool // the volume changed with no player: apply it on the next Connected
 	pendingDB     float64
+	mediaSeekAt   time.Time // the last seek by a media key outside Now Playing
 	o             Options
 	P             Profile
 	F             Fonts

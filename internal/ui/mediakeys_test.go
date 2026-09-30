@@ -44,7 +44,7 @@ func TestMediaKeysActEverywhere(t *testing.T) {
 		t.Fatalf("seek to %v", ta.pl.seekPos)
 	}
 	ta.press(input.BtnSeekBack)
-	if ta.pl.seekPos != time.Minute-seekStep {
+	if ta.pl.seekPos != time.Minute { // the player is at +10 s by now
 		t.Fatalf("seek back to %v", ta.pl.seekPos)
 	}
 	if s, ok := ta.Top().(*SearchScreen); !ok || len(s.query) != 0 {
@@ -59,8 +59,64 @@ func TestMediaKeysWithoutAQueue(t *testing.T) {
 	for _, b := range []input.Button{input.BtnPlayPause, input.BtnNextTrack, input.BtnPrevTrack, input.BtnSeekFwd} {
 		ta.press(b)
 	}
-	if slices.Contains(ta.pl.calls, "next") || slices.Contains(ta.pl.calls, "seek") {
-		t.Fatalf("player calls %v with no queue", ta.pl.calls)
+	if !slices.Equal(ta.pl.calls, []string{"toggle"}) {
+		t.Fatalf("player calls %v with no queue, want only the play/pause toggle", ta.pl.calls)
+	}
+}
+
+func countCalls(ta *testApp, call string) int {
+	n := 0
+	for _, c := range ta.pl.calls {
+		if c == call {
+			n++
+		}
+	}
+	return n
+}
+
+// A held seek key sends a few Seeks a second, not one per repeat, on Now
+// Playing and elsewhere, and still gets where the hold leads.
+func TestHeldMediaSeekIsThrottled(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		top  func() Screen
+	}{
+		{"nowplaying", func() Screen { return NewNowPlayingScreen() }},
+		{"other", func() Screen { return NewSearchScreen() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ta, _ := connectedApp(t)
+			playingState(ta)
+			ta.pl.st.Position = 0
+			ta.Push(tc.top())
+			ta.pl.calls = nil
+			ta.onInput(input.Event{Button: input.BtnSeekFwd, Kind: input.Press})
+			for range 20 { // 0.9 s of repeats every 45 ms
+				ta.now = ta.now.Add(45 * time.Millisecond)
+				ta.onInput(input.Event{Button: input.BtnSeekFwd, Kind: input.Repeat})
+			}
+			ta.onInput(input.Event{Button: input.BtnSeekFwd, Kind: input.Release})
+			if n := countCalls(ta, "seek"); n < 2 || n > 5 {
+				t.Fatalf("%d seeks for a 0.9 s hold, want a few", n)
+			}
+			if ta.pl.seekPos <= seekStep {
+				t.Fatalf("the hold got only to %v", ta.pl.seekPos)
+			}
+		})
+	}
+}
+
+// Seeking stops a second short of the track's end, on every screen.
+func TestMediaSeekStopsBeforeTheEnd(t *testing.T) {
+	for _, top := range []Screen{NewNowPlayingScreen(), NewSearchScreen()} {
+		ta, _ := connectedApp(t)
+		playingState(ta)
+		ta.Push(top)
+		ta.pl.st.Position = 235 * time.Second // the track is 240 s
+		ta.press(input.BtnSeekFwd)
+		if want := 239 * time.Second; ta.pl.seekPos != want {
+			t.Fatalf("%T: seek to %v, want %v", top, ta.pl.seekPos, want)
+		}
 	}
 }
 
