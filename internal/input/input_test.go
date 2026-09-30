@@ -211,6 +211,7 @@ func TestMediaKeys(t *testing.T) {
 		keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
 		keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
 		keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
+		keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot,
 	} {
 		got := tr.handle(evKey, code, 1)
 		if len(got) != 1 || got[0].Button != want || got[0].Kind != Press || got[0].Rune != 0 {

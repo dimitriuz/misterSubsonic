@@ -226,3 +226,16 @@ func TestShutdownDeadlineIsStoppedAfterACleanExit(t *testing.T) {
 	case <-time.After(400 * time.Millisecond):
 	}
 }
+
+func TestScreenshotDir(t *testing.T) {
+	for _, c := range []struct{ flag, display, data, want string }{
+		{"auto", "fbdev", "/media/fat/mistersubsonic", "/media/fat/screenshots/MiSTer_Subsonic"},
+		{"auto", "viewer", "/home/u/mss", "/home/u/mss/screenshots"},
+		{"/tmp/shots", "fbdev", "/media/fat/mistersubsonic", "/tmp/shots"},
+		{"", "fbdev", "/media/fat/mistersubsonic", ""},
+	} {
+		if got := screenshotDir(c.flag, c.display, c.data); got != c.want {
+			t.Errorf("screenshotDir(%q, %q, %q) = %q, want %q", c.flag, c.display, c.data, got, c.want)
+		}
+	}
+}

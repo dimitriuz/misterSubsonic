@@ -33,10 +33,15 @@ const (
 	BtnPrevTrack
 	BtnSeekFwd
 	BtnSeekBack
+
+	// BtnScreenshot saves the screen as a PNG (Print Screen, or Scroll Lock,
+	// which MiSTer tools such as the Companion remote send with Alt).
+	BtnScreenshot
 )
 
 var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start", "queue", "mute",
-	"volup", "voldown", "playpause", "next", "prev", "ffwd", "rewind"}
+	"volup", "voldown", "playpause", "next", "prev", "ffwd", "rewind",
+	"screenshot"}
 
 func (b Button) String() string {
 	if int(b) < len(buttonNames) {

@@ -100,6 +100,8 @@ type Options struct {
 	ConfigErr  error
 	AudioErr   error  // the sound device couldn't be opened
 	Version    string // shown in Settings → About
+	// ScreenshotDir is where the screenshot button saves PNGs ("": off).
+	ScreenshotDir string
 	// Connect starts a connection to cfg's active server, off the UI
 	// goroutine, replacing any previous one; it answers with
 	// a.Connected or a.ConnectFailed (through a.Post).
@@ -193,6 +195,7 @@ type App struct {
 
 	muted       bool      // the sound is off (not saved: the app starts with sound)
 	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
+	shooting    bool      // a screenshot is being saved
 	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten bool      // the last check found the screen drawn over
 }
@@ -536,6 +539,14 @@ func (a *App) onPlayer(ev player.Event) {
 }
 
 func (a *App) onInput(e input.Event) {
+	if e.Button == input.BtnScreenshot {
+		// On every screen, the screensaver too: it captures the frame as
+		// it is, so it neither wakes the screen nor counts as activity.
+		if e.Kind == input.Press {
+			a.screenshot()
+		}
+		return
+	}
 	now := a.o.Now()
 	a.lastInput = now
 	if a.wake() && e.Kind == input.Press {

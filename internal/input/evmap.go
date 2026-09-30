@@ -18,17 +18,19 @@ const (
 
 // Keyboard and gamepad key codes (linux/input-event-codes.h).
 const (
-	keyEsc       = 1
-	keyBackspace = 14
-	keyTab       = 15
-	keyQ         = 16
-	keyEnter     = 28
-	keyLShift    = 42
-	keyN         = 49
-	keyM         = 50
-	keyRShift    = 54
-	keySpace     = 57
-	keyPageUp    = 104
+	keyEsc        = 1
+	keyBackspace  = 14
+	keyTab        = 15
+	keyQ          = 16
+	keyEnter      = 28
+	keyLShift     = 42
+	keyN          = 49
+	keyM          = 50
+	keyRShift     = 54
+	keySpace      = 57
+	keyScrollLock = 70
+	keySysRq      = 99
+	keyPageUp     = 104
 
 	// Media keys.
 	keyMute         = 113
@@ -73,6 +75,7 @@ var DefaultKeys = map[uint16]Button{
 	keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
 	keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
 	keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
+	keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot,
 
 	btnEast: BtnA, btnSouth: BtnB, btnNorth: BtnX, btnWest: BtnY,
 	btnTL: BtnL, btnTR: BtnR, btnSelect: BtnSelect, btnStart: BtnStart,

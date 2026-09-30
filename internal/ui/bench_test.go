@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 
 	"mistersubsonic/internal/gfx"
@@ -82,3 +83,24 @@ type nullDisplay struct{ w, h int }
 func (d nullDisplay) Size() (int, int)          { return d.w, d.h }
 func (d nullDisplay) Present(*gfx.Canvas) error { return nil }
 func (d nullDisplay) Close() error              { return nil }
+
+// BenchmarkScreenshot measures saving a frame as a PNG (off the UI
+// goroutine in the app), at the MiSTer's usual framebuffer sizes:
+//
+//	./ui.test -test.run '^$' -test.bench Screenshot -test.benchtime 5x
+func BenchmarkScreenshot(b *testing.B) {
+	for _, s := range []struct{ w, h int }{{960, 600}, {1920, 1080}} {
+		b.Run(fmt.Sprintf("%dx%d", s.w, s.h), func(b *testing.B) {
+			ta := newTestApp(&testing.T{}, scaleProfile(ProfileHDMI, s.w, s.h))
+			ta.Push(newSidebarRoot())
+			ta.settle(&testing.T{})
+			dir := b.TempDir()
+			b.ResetTimer()
+			for i := range b.N {
+				if _, err := saveScreenshot(dir, fmt.Sprint(i), ta.canvas); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

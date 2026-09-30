@@ -31,6 +31,7 @@ var buttons = map[string]input.Button{
 	"queue": input.BtnQueue, "mute": input.BtnMute,
 	"volup": input.BtnVolUp, "voldown": input.BtnVolDown, "playpause": input.BtnPlayPause,
 	"next": input.BtnNextTrack, "prev": input.BtnPrevTrack, "ffwd": input.BtnSeekFwd, "rewind": input.BtnSeekBack,
+	"screenshot": input.BtnScreenshot,
 }
 
 // Viewer is a gfx.Display that browsers watch.
