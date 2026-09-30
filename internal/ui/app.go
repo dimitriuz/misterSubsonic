@@ -192,6 +192,7 @@ type App struct {
 	confirm    bool      // exit confirmation shown
 
 	muted       bool      // the sound is off (not saved: the app starts with sound)
+	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
 	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten bool      // the last check found the screen drawn over
 }
@@ -447,6 +448,9 @@ func (a *App) untilWake() time.Duration {
 	consider(a.mqWake)
 	consider(a.saveAt)
 	consider(a.checkAt)
+	if !a.volumeUntil.IsZero() {
+		consider(a.volumeUntil)
+	}
 	consider(a.saverDue())
 	if a.saver {
 		consider(now.Add(saverStep)) // the drift; nothing else moves
@@ -504,6 +508,9 @@ func (a *App) onWake() {
 		a.saveConfig()
 	}
 	a.checkScreen(now)
+	if !a.volumeUntil.IsZero() && !now.Before(a.volumeUntil) {
+		a.volumeUntil, a.dirty = time.Time{}, true // the panel goes
+	}
 	if a.animate || (!a.mqWake.IsZero() && !now.Before(a.mqWake)) {
 		a.dirty = true
 	}
@@ -673,6 +680,7 @@ func (a *App) render() error {
 		a.mq = marquee{}
 	}
 	a.drawToasts(c)
+	a.drawVolumePanel(c)
 	if a.confirm {
 		a.drawConfirm(c)
 	}

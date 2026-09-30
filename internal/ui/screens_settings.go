@@ -141,6 +141,7 @@ func (a *App) setVolume(db float64) {
 		a.setMuted(false) // changing the volume brings the sound back
 	}
 	db = math.Max(-60, math.Min(0, math.Round(db)))
+	a.showVolume()
 	if pl := a.Player(); pl != nil {
 		pl.SetVolumeDB(db)
 	} else {
@@ -153,19 +154,13 @@ func (a *App) setVolume(db float64) {
 // app always starts with the sound on.
 func (a *App) setMuted(on bool) {
 	a.muted, a.dirty = on, true
+	a.showVolume()
 	if pl := a.Player(); pl != nil {
 		pl.SetMuted(on)
 	}
 }
 
-func (a *App) toggleMute() {
-	a.setMuted(!a.muted)
-	if a.muted {
-		a.Toast("Muted")
-	} else {
-		a.Toast("Sound on")
-	}
-}
+func (a *App) toggleMute() { a.setMuted(!a.muted) } // the volume panel shows it
 
 // volumeText is the volume as shown: "Muted" while the sound is off.
 func (a *App) volumeText(db float64) string {
