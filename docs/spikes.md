@@ -163,8 +163,16 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
 - **The framebuffer copy stays a `copy`.** A 32-bit store loop was 30% slower (11.2 against 8.7 ms in the same test).
 - **No size threshold for partial frames.** A partial frame measured never slower than a full one, even at 92% of the screen, so any damaged area is drawn partially.
 
-**Full resolution:** the menu accepts `fb_cmd1 8888 1 1920 1200` (the font test card, see "Plan 4 on the MiSTer"). The app's switch and restore were tested against a fake command pipe; on the TV: pending.
+**Full resolution:** the menu accepts `fb_cmd1 8888 1 1920 1200` (the font test card, see "Plan 4 on the MiSTer"). The app's switch and restore were tested against a fake command pipe, then on the TV (below).
 
-- The first TV run (build 8379160) switched to 1920x1200 and the kernel oopsed in fbcon (`sys_imageblit`), because the console was still in text mode during the switch. The app now enters graphics mode before switching and keeps it until the size is back.
-
-**On the TV:** pending. Run `docs/testing-on-mister.md` items 3 and 22–25 and record them here.
+**On the TV (2026-09-30, the user's report):**
+- **First run (build 8379160):** the switch to 1920×1200 worked, then the kernel oopsed in fbcon (`sys_imageblit`): the console was still in text mode while the size changed. Fixed in b421a7c: the console enters graphics mode before the switch and stays in it until the size is back. b0c9575 skips the switch if graphics mode can't be entered.
+- **Build b0c9575:**
+  - **Full resolution (items 3, 22):** works; `log.txt` shows "framebuffer 1920x1200, full resolution (was 960x600)". Text is as sharp as MiSTerHiFi, and exit returns to the menu correctly.
+  - **Smooth browsing (item 23):** OK.
+  - **Gamepad R on an 8BitDo M30 (X-input, `045e:028e`):** didn't work. Its MiSTer map sends R as an analog axis (`0x305` = `ABS_Z` high), which the map reader skipped. Fixed in d2d8336, which decodes axis entries the way Main_MiSTer does.
+  - **Screenshot:** the home feed's next row of covers overflowed onto the mini bar. Fixed in f9b9027: screens are clipped to their own area.
+  - **Exit:** the user asked for it in the main menu (6ec2cc5).
+- **Build f9b9027:** all of the above works: R on the M30, Exit in the main menu, no overflow, and the hints (item 24).
+- **Not run:** the `kill -9` restore (item 22) and the `-verify-redraw` run (item 25).
+- **Caution for tools:** reading `/dev/fb0` with `read()` (`head`, `dd`, `cat`) while the app is at full resolution oopses the kernel (`mmiocpy`), because the driver's read path keeps the old window. Use the app's own screenshot (Print Screen) instead.
