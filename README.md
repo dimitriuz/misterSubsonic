@@ -92,7 +92,9 @@ the defaults).
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute,
 PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, mute is in
-Settings → Playback; changing the volume turns the sound back on.
+Settings → Playback; changing the volume turns the sound back on. A multimedia keyboard's media
+keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
+fast-forward/rewind to seek.
 
 ## Developing
 

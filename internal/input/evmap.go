@@ -29,12 +29,25 @@ const (
 	keyRShift    = 54
 	keySpace     = 57
 	keyPageUp    = 104
-	keyUp        = 103
-	keyLeft      = 105
-	keyRight     = 106
-	keyPageDown  = 109
-	keyDown      = 108
-	keyKPEnter   = 96
+
+	// Media keys.
+	keyMute         = 113
+	keyVolumeDown   = 114
+	keyVolumeUp     = 115
+	keyNextSong     = 163
+	keyPlayPause    = 164
+	keyPreviousSong = 165
+	keyRewind       = 168
+	keyPlayCD       = 200
+	keyPauseCD      = 201
+	keyPlay         = 207
+	keyFastForward  = 208
+	keyUp           = 103
+	keyLeft         = 105
+	keyRight        = 106
+	keyPageDown     = 109
+	keyDown         = 108
+	keyKPEnter      = 96
 
 	btnSouth  = 0x130
 	btnEast   = 0x131
@@ -57,6 +70,9 @@ var DefaultKeys = map[uint16]Button{
 	keyEnter: BtnA, keyKPEnter: BtnA, keyEsc: BtnB, keyBackspace: BtnB,
 	keyTab: BtnX, keySpace: BtnStart, keyPageUp: BtnL, keyPageDown: BtnR,
 	keyN: BtnY, keyQ: BtnQueue, keyM: BtnMute,
+	keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
+	keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
+	keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
 
 	btnEast: BtnA, btnSouth: BtnB, btnNorth: BtnX, btnWest: BtnY,
 	btnTL: BtnL, btnTR: BtnR, btnSelect: BtnSelect, btnStart: BtnStart,

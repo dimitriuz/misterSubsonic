@@ -14,7 +14,9 @@
 // t= so text fields can use letters that are also buttons.
 const keys = {ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right",
   Enter:"a", NumpadEnter:"a", Escape:"b", Backspace:"b", Tab:"x", KeyN:"y", KeyQ:"queue", KeyM:"mute",
-  PageUp:"l", PageDown:"r", Space:"start", KeyS:"select"};
+  PageUp:"l", PageDown:"r", Space:"start", KeyS:"select",
+  AudioVolumeUp:"volup", AudioVolumeDown:"voldown", AudioVolumeMute:"mute", MediaPlayPause:"playpause",
+  MediaTrackNext:"next", MediaTrackPrevious:"prev"};
 const held = new Set();
 function send(e, down) {
   if (down && (e.ctrlKey || e.altKey || e.metaKey)) return; // leave browser shortcuts alone

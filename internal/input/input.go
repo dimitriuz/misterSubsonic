@@ -24,9 +24,19 @@ const (
 	BtnStart
 	BtnQueue // keyboard only (Q): open the queue
 	BtnMute  // keyboard only (M): mute or unmute
+
+	// Media keys (multimedia keyboards, remotes): they act on every screen.
+	BtnVolUp
+	BtnVolDown
+	BtnPlayPause
+	BtnNextTrack
+	BtnPrevTrack
+	BtnSeekFwd
+	BtnSeekBack
 )
 
-var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start", "queue", "mute"}
+var buttonNames = [...]string{"none", "up", "down", "left", "right", "A", "B", "X", "Y", "L", "R", "select", "start", "queue", "mute",
+	"volup", "voldown", "playpause", "next", "prev", "ffwd", "rewind"}
 
 func (b Button) String() string {
 	if int(b) < len(buttonNames) {
@@ -65,7 +75,8 @@ const (
 // repeats reports whether b auto-repeats when held.
 func repeats(b Button) bool {
 	switch b {
-	case BtnUp, BtnDown, BtnLeft, BtnRight, BtnL, BtnR:
+	case BtnUp, BtnDown, BtnLeft, BtnRight, BtnL, BtnR,
+		BtnVolUp, BtnVolDown, BtnSeekFwd, BtnSeekBack:
 		return true
 	}
 	return false

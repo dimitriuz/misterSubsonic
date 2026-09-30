@@ -580,6 +580,9 @@ func (a *App) dispatch(e input.Event) {
 	if top := a.Top(); top != nil && top.Handle(a, e) {
 		return
 	}
+	if a.mediaKey(e) {
+		return
+	}
 	if e.Kind != input.Press {
 		return
 	}
