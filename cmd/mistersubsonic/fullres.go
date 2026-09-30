@@ -84,3 +84,14 @@ func restoreConsole() error {
 	}
 	return restoreText()
 }
+
+// allowFullRes: changing the framebuffer size while the console is in text
+// mode crashes the kernel (fbcon), so the switch needs graphics mode entered
+// (con is nil when graphicsMode failed).
+func allowFullRes(enabled bool, con *platform.Console) bool {
+	if enabled && con == nil {
+		log.Printf("display: full resolution skipped, the console could not be put in graphics mode")
+		return false
+	}
+	return enabled
+}

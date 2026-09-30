@@ -115,3 +115,16 @@ func TestRestoreConsoleWithoutSavedSizeOnlyRestoresText(t *testing.T) {
 		t.Fatalf("steps %v", steps)
 	}
 }
+
+func TestAllowFullRes(t *testing.T) {
+	con := &platform.Console{}
+	if !allowFullRes(true, con) {
+		t.Error("full resolution refused with the console in graphics mode")
+	}
+	if allowFullRes(true, nil) {
+		t.Error("full resolution allowed with the console still in text mode")
+	}
+	if allowFullRes(false, con) {
+		t.Error("full resolution allowed although disabled")
+	}
+}

@@ -248,7 +248,7 @@ func run(f flags) (err error) {
 				log.Printf("console: %v", err)
 			}
 		}()
-		fb, err := openFB(f.fbdev, profileName, dataDir, cfg.Display.FullResolution)
+		fb, err := openFB(f.fbdev, profileName, dataDir, allowFullRes(cfg.Display.FullResolution, con))
 		if err != nil {
 			return err
 		}
