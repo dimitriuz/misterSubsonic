@@ -257,17 +257,25 @@ func (m *Manager) open(path string) {
 		return
 	}
 	keys := map[uint16]Button{}
+	var axes map[AxisKey]Button
 	if vid, pid, ok := sysfsIDs(path); ok {
 		if mp := findMapFile(m.o.MapDir, vid, pid); mp != "" {
 			if b, err := os.ReadFile(mp); err == nil {
 				if km, err := ParseMisterMap(b); err == nil {
 					keys = km
 				}
+				if am, err := ParseMisterAxes(b); err == nil {
+					axes = am
+				}
 			}
 		}
 	}
 	abs := map[uint16]AbsRange{}
-	for _, c := range []uint16{absX, absY} {
+	calibrate := []uint16{absX, absY}
+	for k := range axes {
+		calibrate = append(calibrate, k.Axis)
+	}
+	for _, c := range calibrate {
 		if r, ok := absRange(f, c); ok {
 			abs[c] = r
 		}
@@ -282,7 +290,7 @@ func (m *Manager) open(path string) {
 		m.pads[path] = true
 		m.mu.Unlock()
 	}
-	m.attach(path, f, newTranslator(keys, abs))
+	m.attach(path, f, newTranslator(keys, abs).withAxes(axes))
 }
 
 // attach registers f and starts its reader.
