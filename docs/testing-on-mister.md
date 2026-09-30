@@ -69,8 +69,7 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     too), mute, play/pause, next, previous, fast-forward and rewind (held too).
     Each works without leaving the screen.
 20. **Volume panel.** Every volume or mute change shows the panel for about
-    1.5 s: speaker, bar and level, or "Muted". Now Playing shows the small
-    speaker and bar in its status line.
+    1.5 s: speaker, bar and level, or "Muted".
 21. **Screenshots.** Press Print Screen, then use the MiSTer Companion
     remote's Capture screenshot button. Each shows "Screenshot saved", adds a
     PNG to `/media/fat/screenshots/MiSTer_Subsonic/`, and the Companion shows
@@ -79,15 +78,24 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     "framebuffer 1920x1200, full resolution (was 960x600)", and the text is as
     sharp as MiSTerHiFi's. After exit, and after `kill -9 $(pidof
     mistersubsonic)` over ssh, `cat /sys/module/MiSTer_fb/parameters/mode`
-    shows 960 600 again and the menu and other scripts look as before.
+    shows 960 600 again and the menu and other scripts look as before. The
+    launcher's closing message reads correctly.
 23. **Smooth browsing.** Hold the D-pad in a cover grid and in a long list
     (Artists): the focus keeps up. The progress bar and a scrolling title move
     smoothly.
 24. **Hints.** Every screen shows a hint bar. It shows A/B/X/Y after a
     gamepad press and Enter/Esc/Tab/N after a key press. Settings → Display →
-    Hints → Off removes it.
-25. **No stale pixels.** Start once over ssh with `-verify-redraw`, browse
-    for a minute, exit: `log.txt` has no "partial redraw differs" line.
+    Hints → Off removes it. Exceptions: the X menu shows only Choose and Close;
+    Now Playing isn't hinted while typing on a keyboard (N types there);
+    Select has no key, so a keyboard shows no Select hint; the screensaver
+    hides the bar; a screen that failed to load hints Retry (A).
+25. **No stale pixels.** Exit the app, then over ssh run
+    `/media/fat/mistersubsonic/mistersubsonic -verify-redraw` (the launcher
+    can't pass flags). If the app doesn't appear on the TV, open the Scripts
+    menu's console first. Play music while you browse, so the progress bar and
+    the mini bar are checked too. Browsing is slower in this mode, because
+    every partial frame is checked against a full one. After a minute, exit:
+    `log.txt` has no "partial redraw differs" line.
 26. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 

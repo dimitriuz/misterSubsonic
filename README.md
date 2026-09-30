@@ -67,8 +67,8 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
     asks the menu for the full size when it starts, and puts the half size back when it exits
     (after a crash too, through the launcher). Nothing is written to the SD card. Set
     `full_resolution = false` under `[display]` in `config.toml` to keep the half size.
-  - Redraws only touch what changed: moving the focus, the progress and scrolling titles cost a
-    few milliseconds even at 1920x1200. Scrolling a long list redraws the list, about 40 ms a
+  - Redraws only touch what changed: a focus move costs about 11-12 ms at 1920x1200, and the
+    progress bar and scrolling titles less. Scrolling a long list redraws the list, about 40 ms a
     step at 1920x1200 (about 25 steps a second).
 - **CRT (15 kHz):** add a `[Menu]` section, for example the 240p mode SAM uses for its CRT
   video:
