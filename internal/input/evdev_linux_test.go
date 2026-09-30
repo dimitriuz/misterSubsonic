@@ -116,3 +116,31 @@ func TestScanPrunesStalePlaceholders(t *testing.T) {
 		t.Fatal("stale placeholder not pruned")
 	}
 }
+
+// A device is a gamepad when its key bits include the joystick or gamepad
+// buttons (BTN_JOYSTICK..BTN_THUMBR, or the D-pad buttons); a keyboard
+// with mouse buttons or media keys is not.
+func TestGamepadKeyBits(t *testing.T) {
+	bits := func(codes ...uint16) []byte {
+		b := make([]byte, keyBitsLen)
+		for _, c := range codes {
+			b[c/8] |= 1 << (c % 8)
+		}
+		return b
+	}
+	for _, c := range []struct {
+		name  string
+		codes []uint16
+		want  bool
+	}{
+		{"keyboard", []uint16{keyEnter, keyEsc, keyVolumeUp, keyPlayPause}, false},
+		{"keyboard with a touchpad's mouse buttons", []uint16{keyEnter, 0x110, 0x111}, false},
+		{"gamepad", []uint16{btnSouth, btnEast, btnStart}, true},
+		{"joystick", []uint16{0x120}, true},
+		{"d-pad buttons only", []uint16{btnDpadUp}, true},
+	} {
+		if got := padKeys(bits(c.codes...)); got != c.want {
+			t.Errorf("%s: padKeys = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

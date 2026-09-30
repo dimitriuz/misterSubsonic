@@ -74,10 +74,10 @@ func TestParseMisterMap(t *testing.T) {
 
 func TestTranslatorKeysAndMapOverride(t *testing.T) {
 	tr := newTranslator(map[uint16]Button{btnSouth: BtnA}, nil)
-	if got := tr.handle(evKey, btnSouth, 1); len(got) != 1 || got[0] != (Event{Button: BtnA, Kind: Press}) {
+	if got := tr.handle(evKey, btnSouth, 1); len(got) != 1 || got[0] != (Event{Button: BtnA, Kind: Press, Pad: true}) {
 		t.Fatalf("mapped south = %v", got)
 	}
-	if got := tr.handle(evKey, btnEast, 1); got[0] != (Event{Button: BtnA, Kind: Press}) {
+	if got := tr.handle(evKey, btnEast, 1); got[0] != (Event{Button: BtnA, Kind: Press, Pad: true}) {
 		t.Fatalf("default east = %v", got)
 	}
 	if got := tr.handle(evKey, keyEnter, 0); got[0] != (Event{Button: BtnA, Kind: Release, Rune: '\n'}) {
@@ -93,22 +93,22 @@ func TestTranslatorKeysAndMapOverride(t *testing.T) {
 
 func TestTranslatorHatAndStick(t *testing.T) {
 	tr := newTranslator(nil, map[uint16]AbsRange{absX: {0, 255}})
-	if got := tr.handle(evAbs, absHat0Y, -1); len(got) != 1 || got[0] != (Event{Button: BtnUp, Kind: Press}) {
+	if got := tr.handle(evAbs, absHat0Y, -1); len(got) != 1 || got[0] != (Event{Button: BtnUp, Kind: Press, Pad: true}) {
 		t.Fatalf("hat up = %v", got)
 	}
-	if got := tr.handle(evAbs, absHat0Y, 1); len(got) != 2 || got[0] != (Event{Button: BtnUp, Kind: Release}) || got[1] != (Event{Button: BtnDown, Kind: Press}) {
+	if got := tr.handle(evAbs, absHat0Y, 1); len(got) != 2 || got[0] != (Event{Button: BtnUp, Kind: Release, Pad: true}) || got[1] != (Event{Button: BtnDown, Kind: Press, Pad: true}) {
 		t.Fatalf("hat up→down = %v", got)
 	}
-	if got := tr.handle(evAbs, absHat0Y, 0); len(got) != 1 || got[0] != (Event{Button: BtnDown, Kind: Release}) {
+	if got := tr.handle(evAbs, absHat0Y, 0); len(got) != 1 || got[0] != (Event{Button: BtnDown, Kind: Release, Pad: true}) {
 		t.Fatalf("hat centre = %v", got)
 	}
 	if got := tr.handle(evAbs, absX, 150); got != nil {
 		t.Fatalf("small stick movement = %v", got)
 	}
-	if got := tr.handle(evAbs, absX, 250); len(got) != 1 || got[0] != (Event{Button: BtnRight, Kind: Press}) {
+	if got := tr.handle(evAbs, absX, 250); len(got) != 1 || got[0] != (Event{Button: BtnRight, Kind: Press, Pad: true}) {
 		t.Fatalf("stick right = %v", got)
 	}
-	if got := tr.handle(evAbs, absX, 128); len(got) != 1 || got[0] != (Event{Button: BtnRight, Kind: Release}) {
+	if got := tr.handle(evAbs, absX, 128); len(got) != 1 || got[0] != (Event{Button: BtnRight, Kind: Release, Pad: true}) {
 		t.Fatalf("stick centre = %v", got)
 	}
 	if got := tr.handle(evAbs, absY, 0); got != nil {
@@ -225,5 +225,44 @@ func TestMediaKeys(t *testing.T) {
 	}
 	if repeats(BtnPlayPause) || repeats(BtnNextTrack) {
 		t.Error("play/pause or next repeats when held")
+	}
+}
+
+// Events say whether a gamepad sent them (buttons at BTN_* codes, sticks
+// and hats) or a keyboard (every KEY_* code, media keys too), so the UI can
+// show the matching hints. Repeats keep the source of the held press.
+func TestEventsSayWhetherAGamepadSentThem(t *testing.T) {
+	tr := newTranslator(map[uint16]Button{btnEast: BtnA}, map[uint16]AbsRange{absX: {0, 255}})
+	for _, c := range []struct {
+		typ, code uint16
+		value     int32
+		pad       bool
+	}{
+		{evKey, keyEnter, 1, false},
+		{evKey, keyVolumeUp, 1, false},
+		{evKey, btnEast, 1, true},
+		{evKey, btnDpadUp, 1, true},
+		{evAbs, absHat0X, -1, true},
+		{evAbs, absX, 0, true},
+	} {
+		got := tr.handle(c.typ, c.code, c.value)
+		if len(got) == 0 {
+			t.Fatalf("%d/%d gave no event", c.typ, c.code)
+		}
+		for _, e := range got {
+			if e.Pad != c.pad {
+				t.Errorf("%d/%d: Pad = %v, want %v", c.typ, c.code, e.Pad, c.pad)
+			}
+		}
+	}
+	var r Repeater
+	now := time.Unix(0, 0)
+	r.Feed(Event{Button: BtnDown, Kind: Press, Pad: true}, now)
+	if got := r.Due(now.Add(RepeatDelay)); len(got) != 1 || !got[0].Pad {
+		t.Fatalf("repeat of a gamepad press = %+v", got)
+	}
+	r.Feed(Event{Button: BtnDown, Kind: Press}, now)
+	if got := r.Due(now.Add(RepeatDelay)); len(got) != 1 || got[0].Pad {
+		t.Fatalf("repeat of a key press = %+v", got)
 	}
 }

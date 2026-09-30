@@ -103,6 +103,7 @@ type Manager struct {
 	mu     sync.Mutex
 	closed bool
 	devs   map[string]*os.File
+	pads   map[string]bool // devices that are gamepads
 }
 
 // NewManager starts scanning immediately.
@@ -116,7 +117,7 @@ func NewManager(o ManagerOptions) *Manager {
 	if o.Rescan <= 0 {
 		o.Rescan = 2 * time.Second
 	}
-	m := &Manager{o: o, events: make(chan Event, 64), quit: make(chan struct{}), devs: map[string]*os.File{}}
+	m := &Manager{o: o, events: make(chan Event, 64), quit: make(chan struct{}), devs: map[string]*os.File{}, pads: map[string]bool{}}
 	m.scan()
 	m.loopWg.Add(1)
 	go m.rescanLoop()
@@ -204,6 +205,36 @@ func hasEventType(f *os.File, typ uint) bool {
 	return bits[typ/8]&(1<<(typ%8)) != 0
 }
 
+// keyBitsLen covers every key code up to KEY_MAX (0x2ff).
+const keyBitsLen = 0x300 / 8
+
+// padKeys reports whether a device's EV_KEY bits include joystick or gamepad
+// buttons (BTN_JOYSTICK 0x120 .. BTN_THUMBR 0x13e) or the D-pad buttons.
+func padKeys(bits []byte) bool {
+	has := func(c uint16) bool { return int(c/8) < len(bits) && bits[c/8]&(1<<(c%8)) != 0 }
+	for c := uint16(0x120); c <= 0x13e; c++ {
+		if has(c) {
+			return true
+		}
+	}
+	return has(btnDpadUp) || has(btnDpadDn) || has(btnDpadL) || has(btnDpadR)
+}
+
+func isGamepad(f *os.File) bool {
+	bits := make([]byte, keyBitsLen)
+	if err := fileIoctlPtr(f, eviocgbit(evKey, keyBitsLen), unsafe.Pointer(&bits[0])); err != nil {
+		return false
+	}
+	return padKeys(bits)
+}
+
+// HasPad reports whether a gamepad is connected.
+func (m *Manager) HasPad() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.pads) > 0
+}
+
 func absRange(f *os.File, code uint16) (AbsRange, bool) {
 	var info [6]int32 // value, minimum, maximum, fuzz, flat, resolution
 	if err := fileIoctlPtr(f, eviocgabs(uintptr(code)), unsafe.Pointer(&info[0])); err != nil {
@@ -246,6 +277,11 @@ func (m *Manager) open(path string) {
 			log.Printf("input: grab %s (%s): %v", path, name, err)
 		}
 	}
+	if isGamepad(f) {
+		m.mu.Lock()
+		m.pads[path] = true
+		m.mu.Unlock()
+	}
 	m.attach(path, f, newTranslator(keys, abs))
 }
 
@@ -275,6 +311,7 @@ func (m *Manager) read(path string, f *os.File, tr *translator) {
 			m.mu.Lock()
 			if m.devs[path] == f {
 				delete(m.devs, path) // unplugged: rescan may pick it up again
+				delete(m.pads, path)
 				f.Close()
 			}
 			m.mu.Unlock()

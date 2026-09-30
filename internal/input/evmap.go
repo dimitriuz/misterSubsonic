@@ -51,6 +51,7 @@ const (
 	keyDown         = 108
 	keyKPEnter      = 96
 
+	btnMisc   = 0x100 // the first BTN_* code: below it are keyboard keys
 	btnSouth  = 0x130
 	btnEast   = 0x131
 	btnNorth  = 0x133
@@ -146,6 +147,15 @@ func newTranslator(keys map[uint16]Button, abs map[uint16]AbsRange) *translator 
 // handle converts a raw event. value: 1 press, 0 release, 2 kernel
 // autorepeat (buttons ignore it, the app repeats them itself; typing repeats).
 func (t *translator) handle(typ, code uint16, value int32) []Event {
+	evs := t.translate(typ, code, value)
+	pad := typ == evAbs || code >= btnMisc // gamepad buttons and sticks; keyboard keys are below BTN_MISC
+	for i := range evs {
+		evs[i].Pad = pad
+	}
+	return evs
+}
+
+func (t *translator) translate(typ, code uint16, value int32) []Event {
 	switch typ {
 	case evKey:
 		b, ok := t.keys[code]
