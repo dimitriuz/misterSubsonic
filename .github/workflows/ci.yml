@@ -22,4 +22,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mister-dev-tools
-          path: bin/arm/
+          path: |
+            bin/arm/
+            !bin/arm/tests/
