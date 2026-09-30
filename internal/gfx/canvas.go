@@ -38,28 +38,53 @@ func (r Rect) Intersect(o Rect) Rect {
 func (r Rect) Inset(d int) Rect { return Rect{r.X + d, r.Y + d, r.W - 2*d, r.H - 2*d} }
 
 // Canvas is an opaque XRGB8888 pixel buffer (0x00RRGGBB, row-major).
+// Drawing writes only inside its clip (the whole canvas unless SetClip
+// narrowed it), so a frame can be redrawn in parts.
 type Canvas struct {
 	W, H int
 	Pix  []uint32
+
+	clip    Rect
+	clipped bool
 }
 
 func NewCanvas(w, h int) *Canvas { return &Canvas{W: w, H: h, Pix: make([]uint32, w*h)} }
 
 func (c *Canvas) Bounds() Rect { return Rect{0, 0, c.W, c.H} }
 
+// Clip is where drawing may write.
+func (c *Canvas) Clip() Rect {
+	if c.clipped {
+		return c.clip
+	}
+	return c.Bounds()
+}
+
+// SetClip limits every drawing call to r (cut to the canvas) until
+// ClearClip.
+func (c *Canvas) SetClip(r Rect) { c.clip, c.clipped = r.Intersect(c.Bounds()), true }
+
+// ClearClip lets drawing write anywhere on the canvas again.
+func (c *Canvas) ClearClip() { c.clipped = false }
+
 func (c *Canvas) At(x, y int) Color { return Color(c.Pix[y*c.W+x]) | 0xFF000000 }
 
-// Clear fills the whole canvas with an opaque color.
+// Clear fills the canvas (its clip, when one is set) with an opaque color.
 func (c *Canvas) Clear(col Color) {
+	if c.clipped {
+		c.Fill(c.clip, col|0xFF000000)
+		return
+	}
 	v := uint32(col) & 0xFFFFFF
-	for i := range c.Pix {
-		c.Pix[i] = v
+	pix := c.Pix // a local slice: indexing c.Pix reloads it on every store (3× slower on the A9)
+	for i := range pix {
+		pix[i] = v
 	}
 }
 
 // Fill paints r, blending when col has alpha < 255.
 func (c *Canvas) Fill(r Rect, col Color) {
-	r = r.Intersect(c.Bounds())
+	r = r.Intersect(c.Clip())
 	a := col.A()
 	if r.Empty() || a == 0 {
 		return
@@ -95,9 +120,9 @@ type Image struct {
 
 func NewImage(w, h int) *Image { return &Image{W: w, H: h, Pix: make([]uint32, w*h)} }
 
-// Blit draws src scaled (nearest neighbour) into dst, clipped to the canvas.
+// Blit draws src scaled (nearest neighbour) into dst, within the clip.
 func (c *Canvas) Blit(src *Image, dst Rect) {
-	clip := dst.Intersect(c.Bounds())
+	clip := dst.Intersect(c.Clip())
 	if clip.Empty() || src == nil || src.W == 0 || src.H == 0 {
 		return
 	}

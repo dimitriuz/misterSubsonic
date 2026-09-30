@@ -27,12 +27,19 @@ func (f fbFormat) validate() error {
 }
 
 // pack writes c (same size as the framebuffer) into mem.
-func (f fbFormat) pack(mem []byte, c *Canvas) {
-	for y := 0; y < f.height; y++ {
-		src := c.Pix[y*c.W : y*c.W+f.width]
-		line := mem[y*f.stride:]
+func (f fbFormat) pack(mem []byte, c *Canvas) { f.packRect(mem, c, Rect{0, 0, f.width, f.height}) }
+
+// packRect writes the part of c inside r into mem, leaving the rest as it is.
+func (f fbFormat) packRect(mem []byte, c *Canvas, r Rect) {
+	r = r.Intersect(Rect{0, 0, f.width, f.height})
+	if r.Empty() {
+		return
+	}
+	for y := r.Y; y < r.Bottom(); y++ {
+		src := c.Pix[y*c.W+r.X : y*c.W+r.Right()]
+		line := mem[y*f.stride+r.X*f.bpp/8:]
 		if f.bpp == 32 && littleEndian {
-			copy(line[:4*f.width], unsafe.Slice((*byte)(unsafe.Pointer(&src[0])), 4*f.width))
+			copy(line[:4*r.W], unsafe.Slice((*byte)(unsafe.Pointer(&src[0])), 4*r.W))
 			continue
 		}
 		if f.bpp == 32 {
