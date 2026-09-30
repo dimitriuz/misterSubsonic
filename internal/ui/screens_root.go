@@ -345,10 +345,11 @@ func (s *FeedScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 			y += resumeH
 			continue
 		}
-		r := s.rows[i]
+		ri := i
 		if s.resume != nil {
-			r = s.rows[i-1]
+			ri-- // entry 0 is the Resume card
 		}
+		r := s.rows[ri]
 		col := colDim
 		if focused {
 			col = colText
