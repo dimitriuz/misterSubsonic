@@ -10,6 +10,12 @@ import (
 	"sync"
 )
 
+// Stand-ins for the tests.
+var (
+	rename   = os.Rename
+	openFile = os.OpenFile
+)
+
 // File is a size-capped log file. It is safe for concurrent use.
 type File struct {
 	mu   sync.Mutex
@@ -17,6 +23,9 @@ type File struct {
 	max  int64
 	f    *os.File
 	size int64
+
+	retryAt int64 // after a failed rotation: the size to try again at
+	closed  bool
 }
 
 // Open appends to the log at path, rotating it when it passes max bytes.
@@ -29,7 +38,7 @@ func Open(path string, max int64) (*File, error) {
 }
 
 func (l *File) open() error {
-	f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := openFile(l.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("logfile: %w", err)
 	}
@@ -43,16 +52,22 @@ func (l *File) open() error {
 }
 
 // Write appends p, rotating first if p would take the file past the cap.
-// A line longer than the cap still goes in whole, into a fresh file.
+// A line longer than the cap still goes in whole, into a fresh file. While
+// the file can't be reopened, lines go to stderr instead and each write
+// tries the file again.
 func (l *File) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.f == nil {
+	if l.closed {
 		return 0, os.ErrClosed
 	}
-	if l.size > 0 && l.size+int64(len(p)) > l.max {
-		if err := l.rotate(); err != nil {
-			return 0, err
+	if l.f == nil && l.open() != nil {
+		return os.Stderr.Write(p)
+	}
+	if l.size > 0 && l.size+int64(len(p)) > l.max && l.size >= l.retryAt {
+		l.rotate()
+		if l.f == nil {
+			return os.Stderr.Write(p)
 		}
 	}
 	n, err := l.f.Write(p)
@@ -60,19 +75,26 @@ func (l *File) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// rotate moves log.txt to log.txt.1. If the rename fails the log goes on
-// growing rather than losing lines.
-func (l *File) rotate() error {
+// rotate moves log.txt to log.txt.1 and starts a new log.txt. If the rename
+// fails the log goes on growing rather than losing lines, and the next try
+// comes when it has grown by the cap again. If the new file can't be opened
+// l.f stays nil.
+func (l *File) rotate() {
+	if err := rename(l.path, l.path+".1"); err != nil {
+		l.retryAt = l.size + l.max
+		return
+	}
+	l.retryAt = 0
 	l.f.Close()
 	l.f = nil
-	os.Rename(l.path, l.path+".1")
-	return l.open()
+	l.open()
 }
 
 // Close closes the file. Later writes fail with os.ErrClosed.
 func (l *File) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.closed = true
 	if l.f == nil {
 		return nil
 	}

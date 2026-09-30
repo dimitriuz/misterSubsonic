@@ -67,3 +67,51 @@ func TestBuildListsNestedFolders(t *testing.T) {
 		t.Fatalf("folders %v", db.Folders)
 	}
 }
+
+func TestCheckBaseURL(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"https://example.com/v1/", "https://example.com/v1/"},
+		{"https://example.com/v1", "https://example.com/v1/"}, // names are appended: it needs the slash
+		{"http://example.com/", "http://example.com/"},
+	} {
+		got, err := checkBaseURL(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("checkBaseURL(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"", "example.com/v1/", "ftp://example.com/", "https:///v1/", "https://example.com/v1/?x=1", "https://example.com/#top", "https://exa mple.com/"} {
+		if got, err := checkBaseURL(bad); err == nil {
+			t.Errorf("checkBaseURL(%q) accepted as %q", bad, got)
+		}
+	}
+}
+
+func TestWriteFileMakesTheParentDir(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "a", "b", "db.json")
+	if err := writeFile(out, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(out); string(b) != "x" {
+		t.Fatalf("got %q", b)
+	}
+	if err := writeFile(out, []byte("y")); err != nil { // a database is replaced
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(out); string(b) != "y" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+func TestWriteFileRefusesANonFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeFile(dir, []byte("x")); err == nil {
+		t.Fatal("overwrote a directory")
+	}
+	link := filepath.Join(t.TempDir(), "db.json")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skip(err)
+	}
+	if err := writeFile(link, []byte("x")); err == nil {
+		t.Fatal("wrote through a link to a directory")
+	}
+}

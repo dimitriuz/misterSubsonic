@@ -76,8 +76,9 @@ deploy: release
 # Audio test binary for on-device checks and benchmarks.
 # Every package's tests are built for ARM too, so 32-bit-only breakage (an
 # int overflow, say) fails here and in CI; the ones run on the device are
-# copied by deploy-dev.
+# copied by deploy-dev. Old test binaries (of removed packages) are cleared first.
 mister-test:
+	rm -rf $(BIN)/arm/tests
 	$(ARM_ENV) $(GO) test -c -o $(BIN)/arm/tests/ ./...
 	cp $(BIN)/arm/tests/audio.test $(BIN)/arm/tests/ui.test $(BIN)/arm/tests/gfx.test $(BIN)/arm/
 	./scripts/check-glibc.sh $(BIN)/arm/audio.test

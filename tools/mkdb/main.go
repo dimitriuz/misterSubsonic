@@ -15,9 +15,11 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -77,6 +79,37 @@ func build(dir, id, baseURL string, ts int64) (*DB, error) {
 	return db, nil
 }
 
+// checkBaseURL returns baseURL with the trailing slash the file names need,
+// or an error if it isn't an http(s) address without a query or fragment.
+func checkBaseURL(baseURL string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("-base-url: %w", err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("-base-url %q: want an http:// or https:// address", baseURL)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("-base-url %q: a query or fragment would break the file names appended to it", baseURL)
+	}
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+	return baseURL, nil
+}
+
+// writeFile writes data to out, making its parent directories. It replaces a
+// file but refuses anything else (a directory, a device).
+func writeFile(out string, data []byte) error {
+	if st, err := os.Stat(out); err == nil && !st.Mode().IsRegular() {
+		return fmt.Errorf("-o %s exists and isn't a file", out)
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(out, data, 0o644)
+}
+
 func main() {
 	dir := flag.String("dir", "bin/release/sdcard", "the SD card tree to describe")
 	id := flag.String("id", "mistersubsonic", "db_id: the section name users put in downloader.ini")
@@ -88,16 +121,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "mkdb: -base-url is required")
 		os.Exit(2)
 	}
+	base, err := checkBaseURL(*baseURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mkdb:", err)
+		os.Exit(2)
+	}
 	if *ts == 0 {
 		*ts = time.Now().Unix()
 	}
-	db, err := build(*dir, *id, *baseURL, *ts)
+	db, err := build(*dir, *id, base, *ts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mkdb:", err)
 		os.Exit(1)
 	}
 	b, _ := json.MarshalIndent(db, "", "  ")
-	if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
+	if err := writeFile(*out, append(b, '\n')); err != nil {
 		fmt.Fprintln(os.Stderr, "mkdb:", err)
 		os.Exit(1)
 	}

@@ -40,7 +40,7 @@ stop_leftovers
 # One launcher at a time. Only the app inherits the lock (fd 9) and holds it
 # while it runs; everything else closes it, so nothing outlives the launcher
 # holding the lock.
-exec 9>"$LOCK"
+exec 9>"$LOCK" || { echo "MiSTer Subsonic can't open its lock file: $LOCK"; exit 1; }
 # BusyBox's flock has no -w: poll with -n.
 locked=
 for ((i = 0; i < LOCK_WAIT; i++)); do
@@ -49,9 +49,29 @@ for ((i = 0; i < LOCK_WAIT; i++)); do
 done
 [ -n "$locked" ] || flock -n 9 || { echo "MiSTer Subsonic is already being started."; exit 1; }
 
+# What the launcher has changed, put back on any way out. A signal during
+# the restore must not cut it short, so it ignores them.
+bgm_stopped=
+sam_disabled=
+restore() {
+	trap '' INT TERM
+	"$APP" -restore-console >/dev/null 2>&1 9>&- # text mode again, even after a crash
+	printf '\033[?25h\033[2J\033[H'          # the cursor back, the screen cleared
+	[ -n "$bgm_stopped" ] && bgm play
+	[ -n "$sam_disabled" ] && "$SAM" enable >/dev/null 2>&1 9>&-
+	return 0
+}
+# INT and TERM go on to the app, which closes cleanly; the launcher then
+# restores as usual. Before the app runs there is nothing to pass them to.
+app=
+forward() {
+	if [ -n "$app" ]; then kill -TERM "$app" 2>/dev/null; else exit 130; fi
+}
+trap restore EXIT
+trap forward INT TERM
+
 # BGM takes commands on its socket. It can't pause: stop it, play it again after.
 bgm() { printf '%s' "$1" | socat -t 2 - "UNIX-CONNECT:$BGM_SOCK" 2>/dev/null 9>&-; }
-bgm_stopped=
 if [ -S "$BGM_SOCK" ]; then
 	status=$(bgm status)
 	if [ -n "$status" ] && [ "$(printf '%s' "$status" | cut -f2)" != disabled ]; then
@@ -61,25 +81,22 @@ if [ -S "$BGM_SOCK" ]; then
 fi
 
 # SAM would start a game over the app once it thinks the MiSTer is idle.
-sam_disabled=
 if [ -x "$SAM" ] && { pidof MiSTer_SAM_MCP >/dev/null || ps | grep -q '[M]iSTer_SAM_MCP'; }; then
 	"$SAM" disable >/dev/null 2>&1 9>&-
 	sam_disabled=1
 fi
 
-restore() {
-	"$APP" -restore-console >/dev/null 2>&1 9>&- # text mode again, even after a crash
-	printf '\033[?25h\033[2J\033[H'          # the cursor back, the screen cleared
-	[ -n "$bgm_stopped" ] && bgm play
-	[ -n "$sam_disabled" ] && "$SAM" enable >/dev/null 2>&1 9>&-
-	return 0
-}
-trap restore EXIT
-trap 'exit 130' INT TERM
-
 printf '\033[?25l' # hide the cursor
-"$APP" "$@"
+# In the background so a signal reaches the trap at once (<&0 keeps its
+# stdin); wait again after each one until the app has really ended.
+"$APP" "$@" <&0 &
+app=$!
+wait "$app"
 code=$?
+while kill -0 "$app" 2>/dev/null; do
+	wait "$app"
+	code=$?
+done
 trap - EXIT
 restore
 if [ "$code" -eq 0 ]; then
