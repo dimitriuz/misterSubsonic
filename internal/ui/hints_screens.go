@@ -17,21 +17,50 @@ var (
 	pageHint    = hkPair(input.BtnL, input.BtnR, "Page")
 )
 
-func (s *AlbumScreen) Hints(*App) []Hint     { return []Hint{playHint, menuHint, shuffleHint} }
-func (s *ArtistScreen) Hints(*App) []Hint    { return []Hint{openHint, menuHint, shuffleHint} }
-func (s *PlaylistScreen) Hints(*App) []Hint  { return []Hint{playHint, menuHint, shuffleHint} }
-func (s *PlaylistsScreen) Hints(*App) []Hint { return []Hint{openHint, menuHint} }
-func (s *GenresScreen) Hints(*App) []Hint    { return []Hint{openHint} }
+// loadHints is a loading screen's list: A retries after a failed load, and
+// nothing is hinted while it loads or when it lists nothing (usable false);
+// the app still adds Back and Now Playing.
+func loadHints(failed, usable bool, normal ...Hint) []Hint {
+	switch {
+	case failed:
+		return []Hint{hk(input.BtnA, "Retry")}
+	case !usable:
+		return nil
+	}
+	return normal
+}
+
+func (s *AlbumScreen) Hints(*App) []Hint {
+	return loadHints(s.album == nil && s.err != nil, s.album != nil, playHint, menuHint, shuffleHint)
+}
+
+func (s *ArtistScreen) Hints(*App) []Hint {
+	return loadHints(s.err != nil, len(s.view.albums) > 0, openHint, menuHint, shuffleHint)
+}
+
+func (s *PlaylistScreen) Hints(*App) []Hint {
+	return loadHints(s.pl == nil && s.err != nil, s.pl != nil, playHint, menuHint, shuffleHint)
+}
+
+func (s *PlaylistsScreen) Hints(*App) []Hint {
+	return loadHints(s.err != nil, len(s.playlists) > 0, openHint, menuHint)
+}
+
+func (s *GenresScreen) Hints(*App) []Hint {
+	return loadHints(s.err != nil, len(s.genres) > 0, openHint)
+}
+
 func (s *HomeScreen) Hints(*App) []Hint      { return []Hint{openHint} }
 func (s *SettingsScreen) Hints(*App) []Hint  { return []Hint{openHint} }
 func (s *AboutScreen) Hints(*App) []Hint     { return nil }
 
 func (s *AlbumListScreen) Hints(*App) []Hint {
-	return []Hint{openHint, menuHint, shuffleHint, pageHint}
+	none := len(s.view.albums) == 0
+	return loadHints(none && s.err != nil, !none, openHint, menuHint, shuffleHint, pageHint)
 }
 
 func (s *ArtistsScreen) Hints(*App) []Hint {
-	return []Hint{openHint, menuHint, hkPair(input.BtnL, input.BtnR, "Letter")}
+	return loadHints(s.err != nil, len(s.view.artists) > 0, openHint, menuHint, hkPair(input.BtnL, input.BtnR, "Letter"))
 }
 
 func (s *NowPlayingScreen) Hints(a *App) []Hint {
@@ -48,7 +77,10 @@ func (s *NowPlayingScreen) Hints(a *App) []Hint {
 		hk(input.BtnX, star), hk(input.BtnY, "Queue"), hk(input.BtnSelect, "Mode")}
 }
 
-func (s *QueueScreen) Hints(*App) []Hint {
+func (s *QueueScreen) Hints(a *App) []Hint {
+	if len(a.Player().State().Queue) == 0 {
+		return []Hint{hk(input.BtnY, "Now Playing")} // Play and Menu have nothing to act on
+	}
 	return []Hint{playHint, menuHint, hk(input.BtnY, "Now Playing")}
 }
 
@@ -102,14 +134,19 @@ func (s *FeedScreen) Hints(*App) []Hint {
 	if s.resume != nil && s.row == 0 { // the Resume card
 		return []Hint{hk(input.BtnA, "Resume")}
 	}
-	return []Hint{openHint, menuHint, shuffleHint}
+	r := s.current()
+	if r == nil {
+		return nil
+	}
+	return loadHints(r.err != nil, len(r.albums) > 0, openHint, menuHint, shuffleHint)
 }
 
 func (s *starredTab) Hints(a *App) []Hint {
+	failed, usable := s.d.err != nil, s.sync() > 0
 	if s.kind == starSong {
-		return []Hint{playHint, menuHint, shuffleHint}
+		return loadHints(failed, usable, playHint, menuHint, shuffleHint)
 	}
-	return []Hint{openHint, menuHint}
+	return loadHints(failed, usable, openHint, menuHint)
 }
 
 // Containers show their focused part's hints.
