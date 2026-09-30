@@ -154,7 +154,7 @@ func (a *App) drawVolumePanel(c *gfx.Canvas) {
 	if a.muted {
 		col = colDim
 	}
-	f.Draw(c, x, panel.Y+pad+(icon+f.Ascent()-f.Descent())/2, label, col, c.Bounds())
+	f.Draw(c, x+(labelW-f.Measure(label))/2, panel.Y+pad+(icon+f.Ascent()-f.Descent())/2, label, col, c.Bounds())
 }
 
 // drawVolumeInline draws the compact indicator at x on the text line at
