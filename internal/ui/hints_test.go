@@ -160,11 +160,11 @@ func TestHintsOnErrorAndEmptyStates(t *testing.T) {
 // Back and Now Playing are added where the screen leaves B and Y to the app.
 func TestCommonHintsAreAddedWhereTheyApply(t *testing.T) {
 	ta := hintApp(t, ProfileHDMI, hintFixtures["album"])
-	if got := hintLabels(ta.screenHints()); got != "Play, Menu, Shuffle, Back" {
+	if got := hintLabels(ta.screenHints()); got != "Play, Back, Menu, Shuffle" {
 		t.Fatalf("album without a queue: %s", got)
 	}
 	playingState(ta)
-	if got := hintLabels(ta.screenHints()); got != "Play, Menu, Shuffle, Back, Now Playing" {
+	if got := hintLabels(ta.screenHints()); got != "Play, Back, Menu, Shuffle, Now Playing" {
 		t.Fatalf("album with a queue: %s", got)
 	}
 	ta.Push(NewNowPlayingScreen())

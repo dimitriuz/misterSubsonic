@@ -140,7 +140,10 @@ func (a *App) screenHints() []Hint {
 	}
 	out := append([]Hint(nil), hs...)
 	if len(a.stack) > 1 && !uses(input.BtnB) {
-		out = append(out, hk(input.BtnB, "Back"))
+		// Right after the first hint, so a narrow bar (CRT) keeps it: the
+		// bar drops what doesn't fit from the right.
+		back := hk(input.BtnB, "Back")
+		out = append(out[:min(1, len(out))], append([]Hint{back}, out[min(1, len(out)):]...)...)
 	}
 	typing := false
 	if t, ok := top.(textTaker); ok {

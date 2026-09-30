@@ -50,9 +50,9 @@ func (s *GenresScreen) Hints(*App) []Hint {
 	return loadHints(s.err != nil, len(s.genres) > 0, openHint)
 }
 
-func (s *HomeScreen) Hints(*App) []Hint      { return []Hint{openHint} }
-func (s *SettingsScreen) Hints(*App) []Hint  { return []Hint{openHint} }
-func (s *AboutScreen) Hints(*App) []Hint     { return nil }
+func (s *HomeScreen) Hints(*App) []Hint     { return []Hint{openHint} }
+func (s *SettingsScreen) Hints(*App) []Hint { return []Hint{openHint} }
+func (s *AboutScreen) Hints(*App) []Hint    { return nil }
 
 func (s *AlbumListScreen) Hints(*App) []Hint {
 	none := len(s.view.albums) == 0
