@@ -24,8 +24,7 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 3. **HDMI.** At 720p, 1080p and a mode above 1080p such as 1920x1200
    (`video_mode`, see the README): the image fills the screen and the text is
    sharp. Covers load in the grids. Scrolling a long list keeps up with a held
-   D-pad. At 1080p the text is sharp, but held scrolling redraws at about 15
-   frames a second: that is expected, not a failure.
+   D-pad, at 1080p and 1920x1200 too.
 4. **CRT.** At 240p and 288p: the CRT layout, with nothing important cut off
    by overscan. Tune the title-safe margins if needed.
 5. **Controllers.** The user's MiSTer mapping works. Unplug the pad while the
@@ -76,7 +75,20 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     remote's Capture screenshot button. Each shows "Screenshot saved", adds a
     PNG to `/media/fat/screenshots/MiSTer_Subsonic/`, and the Companion shows
     the picture.
-22. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+22. **Full resolution.** With `video_mode=1920,1200,60`: `log.txt` says
+    "framebuffer 1920x1200, full resolution (was 960x600)", and the text is as
+    sharp as MiSTerHiFi's. After exit, and after `kill -9 $(pidof
+    mistersubsonic)` over ssh, `cat /sys/module/MiSTer_fb/parameters/mode`
+    shows 960 600 again and the menu and other scripts look as before.
+23. **Smooth browsing.** Hold the D-pad in a cover grid and in a long list
+    (Artists): the focus keeps up. The progress bar and a scrolling title move
+    smoothly.
+24. **Hints.** Every screen shows a hint bar. It shows A/B/X/Y after a
+    gamepad press and Enter/Esc/Tab/N after a key press. Settings → Display →
+    Hints → Off removes it.
+25. **No stale pixels.** Start once over ssh with `-verify-redraw`, browse
+    for a minute, exit: `log.txt` has no "partial redraw differs" line.
+26. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks

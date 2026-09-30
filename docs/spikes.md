@@ -133,3 +133,36 @@ This MiSTer: HDMI at `video_mode=1920,1200,60`, so the framebuffer is 960×600×
 - **Now Playing's small volume indicator:** the user doesn't like it. Plan 4b removes it and keeps the volume panel.
 - **Hotkey hints:** the user wants hints for the gamepad and keyboard on every screen (Plan 4b).
 - **Media keys and the volume panel (items 19–20):** not reported yet.
+
+## Plan 4b on the MiSTer (2026-09-30)
+
+Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `gfx.test -test.bench 'Pack'`); nothing was drawn on the TV.
+
+**A full-frame pass is memory-bound on the Cortex-A9.** A CPU profile of a native 1080p frame had `Canvas.Clear` at 37%, cover `Blit` at 25%, and the framebuffer copy took another 19 ms. `Clear` indexed `c.Pix` inside its loop, which reloads the slice on every store; a local slice made it about 3× faster:
+
+| Full frame (draw only) | Before | After |
+|---|---|---|
+| 960×600 albums / feed | 13.5 / 14.7 ms | 10.7 / 11.8 ms |
+| 1280×720 albums / feed | 22.2 / 22.5 ms | 17.3 / 18.4 ms |
+| 1920×1080 albums / feed | 49.4 / 48.1 ms | 37.3 / 37.6 ms |
+| 1920×1200 albums | 50.2 ms | 38.0 ms |
+
+**Partial frames at 1920×1200** (draw, then the copy of the damaged rectangles):
+
+| Case | Draw | Copy | Total |
+|---|---|---|---|
+| Full frame | 38.0 ms | 21.8 ms | ≈ 60 ms |
+| Focus move in a cover grid (two cells) | 9.7 ms | 2.2 ms | ≈ 12 ms |
+| Focus move in a list (two rows) | 8.6 ms | 2.1 ms | ≈ 11 ms |
+| List scroll step (the list area) | 20.6 ms | ≈ 20 ms | ≈ 41 ms |
+| Progress tick (bar and times) | 0.7 ms | < 1 ms | ≈ 1 ms |
+| Marquee frame (one line) | 1.1 ms | < 1 ms | ≈ 2 ms |
+
+- **Targets** (Plan 4b spec §3.6): focus moves, the tick and the marquee ≤ 10 ms: met for the tick and marquee, and within 2 ms for focus moves. A list scroll step ≤ 40 ms: about 41 ms, where a full frame was ≈ 72 ms before this plan.
+- **Scroll-by-shift was measured and dropped.** Moving a 1640×1000 area up one row takes 15.4 ms, filling it 6.2 ms: on this memory bus shifting pixels costs more than redrawing them.
+- **The framebuffer copy stays a `copy`.** A 32-bit store loop was 30% slower (11.2 against 8.7 ms in the same test).
+- **No size threshold for partial frames.** A partial frame measured never slower than a full one, even at 92% of the screen, so any damaged area is drawn partially.
+
+**Full resolution:** the menu accepts `fb_cmd1 8888 1 1920 1200` (the font test card, see "Plan 4 on the MiSTer"). The app's switch and restore were tested against a fake command pipe; on the TV: pending.
+
+**On the TV:** pending. Run `docs/testing-on-mister.md` items 3 and 22–25 and record them here.
