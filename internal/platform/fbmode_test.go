@@ -208,3 +208,27 @@ func TestResizeKeepsTheSavedSize(t *testing.T) {
 		t.Fatalf("state %q", b)
 	}
 }
+
+// A request for the size the framebuffer already has is done: no command,
+// no wait (the menu doesn't bump res_count for it).
+func TestRequestForTheCurrentSizeIsDone(t *testing.T) {
+	c := fakeMenu(t, true)
+	os.WriteFile(filepath.Join(c.Sys, "width"), []byte("960\n"), 0o644)
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte("600\n"), 0o644)
+	if err := c.Resize(Size{960, 600}); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(c.State, []byte("960 600\n"), 0o644)
+	if err := c.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("commands sent: %q", b)
+	}
+	if _, err := os.Stat(c.State); !os.IsNotExist(err) {
+		t.Fatal("the state file is still there")
+	}
+	if err := c.Resize(Size{1920, 1200}); err == nil { // another size still needs the menu
+		t.Fatal("no error from a deaf menu")
+	}
+}

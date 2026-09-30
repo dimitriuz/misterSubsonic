@@ -133,12 +133,13 @@ func TestAllowFullRes(t *testing.T) {
 }
 
 type fakeFB struct {
-	events   *[]string
-	size     func() platform.Size // what the driver reports at Reopen time
-	want     platform.Size
-	reopenOK bool
+	events  *[]string
+	size    func() platform.Size // what the driver reports at Reopen time
+	want    platform.Size
+	blankAt time.Time
 }
 
+func (f *fakeFB) Blank()         { *f.events = append(*f.events, "blank"); f.blankAt = time.Now() }
 func (f *fakeFB) Release() error { *f.events = append(*f.events, "release"); return nil }
 func (f *fakeFB) Reopen() error {
 	*f.events = append(*f.events, "reopen")
@@ -161,6 +162,12 @@ type keeperMenu struct {
 var fullSz = platform.Size{W: 1920, H: 1200}
 
 func newKeeperMenu(t *testing.T, deaf bool) (*keeperMenu, *keeper) {
+	return newKeeperMenuIgnoring(t, deaf, 0)
+}
+
+// ignore: commands arriving within that time of the start are dropped, like
+// the menu's while it re-initialises video.
+func newKeeperMenuIgnoring(t *testing.T, deaf bool, ignore time.Duration) (*keeperMenu, *keeper) {
 	t.Helper()
 	dir := t.TempDir()
 	m := &keeperMenu{size: fullSz}
@@ -171,6 +178,7 @@ func newKeeperMenu(t *testing.T, deaf bool) (*keeperMenu, *keeper) {
 	os.WriteFile(m.ctl.State, []byte("960 600\n"), 0o644) // as openFB's Switch left it
 	done := make(chan struct{})
 	t.Cleanup(func() { close(done) })
+	start := time.Now()
 	go func() {
 		seen := 0
 		for {
@@ -182,6 +190,9 @@ func newKeeperMenu(t *testing.T, deaf bool) (*keeperMenu, *keeper) {
 			b, _ := os.ReadFile(m.ctl.Cmd)
 			if n := strings.Count(string(b), "\n"); n > seen && !deaf {
 				seen = n
+				if time.Since(start) < ignore {
+					continue
+				}
 				var w, h int
 				txt := strings.TrimSpace(string(b))
 				fmt.Sscanf(txt[strings.LastIndex(txt, "fb_cmd1"):], "fb_cmd1 8888 1 %d %d", &w, &h)
@@ -191,7 +202,10 @@ func newKeeperMenu(t *testing.T, deaf bool) (*keeperMenu, *keeper) {
 		}
 	}()
 	k := newKeeper(m.ctl, m.fb, fullSz)
-	k.settle = 200 * time.Millisecond
+	k.settle = 100 * time.Millisecond
+	k.quiet, k.maxQuiet = 60*time.Millisecond, 2*time.Second
+	k.attempts, k.attemptWait, k.gap = 3, 150*time.Millisecond, 20*time.Millisecond
+	k.poll = 5 * time.Millisecond
 	return m, k
 }
 
@@ -245,7 +259,7 @@ func TestKeeperRestoresFullResolutionAfterAReset(t *testing.T) {
 	if got := m.commands(); got != "fb_cmd1 8888 1 1920 1200" {
 		t.Fatalf("commands %q", got)
 	}
-	if strings.Join(m.events, ",") != "release,reopen" {
+	if strings.Join(m.events, ",") != "blank,release,reopen" {
 		t.Fatalf("events %v", m.events)
 	}
 	if b, _ := os.ReadFile(m.ctl.State); string(b) != "960 600\n" {
@@ -264,12 +278,41 @@ func TestKeeperReportsAMenuThatNeverConfirms(t *testing.T) {
 	if rep || err == nil {
 		t.Fatalf("%v %v", rep, err)
 	}
+	if n := len(strings.Split(m.commands(), "\n")); n != 3 {
+		t.Errorf("%d attempts, want 3", n)
+	}
 	for _, want := range []string{"reset to 960x600", "full resolution couldn't be restored", "not usable"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
 	}
-	if strings.Join(m.events, ",") != "release,reopen" {
+	if strings.Join(m.events, ",") != "blank,release,reopen" {
 		t.Fatalf("events %v", m.events)
+	}
+}
+
+// The menu resets twice in a row and ignores requests while it is busy: the
+// keeper blanks at once, waits for the counter to stay still, and retries.
+func TestKeeperWaitsForTheMenuAndRetries(t *testing.T) {
+	m, k := newKeeperMenuIgnoring(t, false, 250*time.Millisecond)
+	m.set(platform.Size{W: 960, H: 600})
+	m.publish(9)
+	go func() { time.Sleep(100 * time.Millisecond); m.publish(10) }()
+	start := time.Now()
+	rep, err := k.check()
+	if !rep || err != nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if m.fb.blankAt.Sub(start) > 50*time.Millisecond {
+		t.Errorf("blanked after %v, not first", m.fb.blankAt.Sub(start))
+	}
+	if strings.Join(m.events, ",") != "blank,release,reopen" {
+		t.Fatalf("events %v", m.events)
+	}
+	if n := len(strings.Split(m.commands(), "\n")); n < 2 {
+		t.Errorf("%d command(s): no retry was needed?", n)
+	}
+	if time.Since(start) < 160*time.Millisecond {
+		t.Errorf("recovered after %v, before the second reset had settled", time.Since(start))
 	}
 }

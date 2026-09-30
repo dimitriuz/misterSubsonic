@@ -153,7 +153,11 @@ func (c FBControl) Restore() error {
 }
 
 // request sends fb_cmd1 for s (32 bpp) and waits until res_count changes.
+// If the driver already has size s, it is done.
 func (c FBControl) request(s Size) error {
+	if cur, ok := c.Current(); ok && cur == s {
+		return nil // the menu doesn't count a change to the size it already has
+	}
 	count := c.ResCount()
 	f, err := os.OpenFile(c.Cmd, os.O_WRONLY|os.O_APPEND|syscall.O_NONBLOCK, 0) // never block: with no reader a FIFO open fails with ENXIO
 	if err != nil {

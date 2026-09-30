@@ -36,6 +36,7 @@ func fullSize(fb platform.Size, profileName, dataDir string, enabled bool) (plat
 
 // remappable is the part of the framebuffer the keeper works on.
 type remappable interface {
+	Blank()
 	Release() error
 	Reopen() error
 }
@@ -45,16 +46,33 @@ type remappable interface {
 // asks for the full size again, the way openFB did. The console is still in
 // graphics mode, so the size change is safe. The size to restore at exit
 // stays the one openFB saved.
+//
+// A request sent while the menu is still re-initialising is ignored, so the
+// keeper waits until res_count has been still for a while, then asks up to
+// several times. check runs on the UI goroutine and blocks it for those few
+// seconds: the UI pauses while the display comes back (audio plays on its
+// own thread and keeps going).
 type keeper struct {
-	ctl    platform.FBControl
-	fb     remappable
-	want   platform.Size
-	count  string
-	settle time.Duration // how long the driver may take to report the new size
+	ctl  platform.FBControl
+	fb   remappable
+	want platform.Size
+
+	count string
+
+	quiet       time.Duration // res_count unchanged this long: the menu has settled
+	maxQuiet    time.Duration // give up waiting for that after this and try anyway
+	attempts    int           // requests for the wanted size
+	attemptWait time.Duration // how long each waits for the menu to confirm
+	gap         time.Duration // between attempts
+	settle      time.Duration // after the menu confirms, for the driver to report the size
+	poll        time.Duration
 }
 
 func newKeeper(ctl platform.FBControl, fb remappable, want platform.Size) *keeper {
-	return &keeper{ctl: ctl, fb: fb, want: want, count: ctl.ResCount(), settle: time.Second}
+	return &keeper{ctl: ctl, fb: fb, want: want, count: ctl.ResCount(),
+		quiet: 1500 * time.Millisecond, maxQuiet: 10 * time.Second,
+		attempts: 3, attemptWait: 2 * time.Second, gap: time.Second,
+		settle: time.Second, poll: 20 * time.Millisecond}
 }
 
 // check is the UI's WatchDisplay hook. repaint: the framebuffer was
@@ -70,37 +88,72 @@ func (k *keeper) check() (repaint bool, err error) {
 	if ok && cur == k.want {
 		return true, nil
 	}
-	fail := func(err error) (bool, error) {
-		k.count = k.ctl.ResCount()
+	// Black instead of the scrambled picture while the display recovers
+	// (writes only into our own mapping).
+	k.fb.Blank()
+	k.waitForMenu()
+	err = k.restore()
+	k.count = k.ctl.ResCount()
+	if err != nil {
 		return false, fmt.Errorf("display: the framebuffer was reset to %v and full resolution couldn't be restored: %w", cur, err)
 	}
+	log.Printf("display: the framebuffer was reset to %v; full resolution %v restored", cur, k.want)
+	return true, nil
+}
+
+// waitForMenu returns when res_count hasn't changed for k.quiet, or after
+// k.maxQuiet.
+func (k *keeper) waitForMenu() {
+	start := time.Now()
+	last, since := k.ctl.ResCount(), start
+	for {
+		time.Sleep(k.poll)
+		now := time.Now()
+		if c := k.ctl.ResCount(); c != last {
+			last, since = c, now
+		}
+		if now.Sub(since) >= k.quiet || now.Sub(start) >= k.maxQuiet {
+			return
+		}
+	}
+}
+
+// restore asks for the wanted size up to k.attempts times and remaps the
+// framebuffer. If it fails, the framebuffer is remapped when possible, and
+// the error says when it isn't usable.
+func (k *keeper) restore() error {
 	if err := k.fb.Release(); err != nil {
 		log.Printf("display: releasing the framebuffer: %v", err)
 	}
-	if err := k.ctl.Resize(k.want); err != nil {
-		if rerr := k.fb.Reopen(); rerr != nil {
-			err = fmt.Errorf("%w; the framebuffer is not usable: %v", err, rerr)
+	ctl := k.ctl
+	ctl.Wait = k.attemptWait
+	var err error
+	for i := 0; i < k.attempts; i++ {
+		if i > 0 {
+			time.Sleep(k.gap)
 		}
-		return fail(err)
+		if err = ctl.Resize(k.want); err == nil {
+			if err = k.waitForSize(); err == nil {
+				return k.fb.Reopen()
+			}
+		}
+		log.Printf("display: full resolution, attempt %d of %d: %v", i+1, k.attempts, err)
 	}
-	for deadline := time.Now().Add(k.settle); ; time.Sleep(20 * time.Millisecond) {
+	if rerr := k.fb.Reopen(); rerr != nil {
+		err = fmt.Errorf("%w; the framebuffer is not usable: %v", err, rerr)
+	}
+	return err
+}
+
+func (k *keeper) waitForSize() error {
+	for deadline := time.Now().Add(k.settle); ; time.Sleep(k.poll) {
 		if s, ok := k.ctl.Current(); ok && s == k.want {
-			break
+			return nil
 		}
 		if !time.Now().Before(deadline) {
-			err := fmt.Errorf("the driver still reports another size than %v", k.want)
-			if rerr := k.fb.Reopen(); rerr != nil {
-				err = fmt.Errorf("%w; the framebuffer is not usable: %v", err, rerr)
-			}
-			return fail(err)
+			return fmt.Errorf("the driver still reports another size than %v", k.want)
 		}
 	}
-	if err := k.fb.Reopen(); err != nil {
-		return fail(err)
-	}
-	k.count = k.ctl.ResCount()
-	log.Printf("display: the framebuffer was reset to %v; full resolution %v restored", cur, k.want)
-	return true, nil
 }
 
 // openFB opens the framebuffer, switched to the full output resolution when
