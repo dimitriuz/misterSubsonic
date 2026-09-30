@@ -302,9 +302,11 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 | Y | open Now Playing | open Queue |
 | L / R | page up/down (letter jump on Artists) | previous / next track |
 | Start | play/pause (global) | play/pause |
-| Select | shuffle-play current list | cycle shuffle → repeat modes |
+| Select | shuffle-play current list | press: cycle shuffle → repeat modes; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
+
+**Mute** is M on a keyboard, the media Mute key, or holding Select on Now Playing for one second (the release after that hold does nothing). Settings → Playback has no Volume or Mute rows; volume is Up/Down on Now Playing and the media keys. **Settings help:** the focused setting's help text (one or two dim lines) shows under a settings list, and Transcode bitrate is listed only while Transcode to is mp3.
 
 **Media keys** (volume up and down, mute, play/pause, next, previous, fast-forward and rewind) work on every screen. The top screen gets each key first, so a text field or a screen with its own meaning for it keeps it; the X menu, the exit prompt and the screensaver let them through (a media key wakes the screensaver and acts on the first press). Next and previous need a queue. Seeking needs a current track, moves ±10 s (held: ±30 s, at most four seeks a second) and stops a second before the end.
 

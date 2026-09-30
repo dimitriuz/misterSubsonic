@@ -36,8 +36,10 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 8. **Network drop.** Unplug the network or turn off Wi-Fi mid-track. The app
    shows buffering, then plays on when the network is back, or shows a clear
    error.
-9. **Mute.** Press M on a keyboard, and use Settings → Playback → Mute. The
-   volume keys bring the sound back.
+9. **Mute.** Press M on a keyboard, and hold Select on Now Playing for a second (a short
+   Select press still cycles shuffle/repeat, and the release after the hold does
+   nothing). The volume keys bring the sound back. Settings → Playback has no
+   Volume or Mute rows.
 10. **Exit.** Use Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), and holding B for 2 s on the home screen.
     Both return to the Scripts menu with the text readable and "MiSTer
     Subsonic closed." shown. The controller works in the menu afterwards.

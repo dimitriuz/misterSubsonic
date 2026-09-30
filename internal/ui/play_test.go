@@ -24,9 +24,6 @@ func TestNowPlayingVolumeKeys(t *testing.T) {
 	if v := ta.pl.st.VolumeDB; v != 0 {
 		t.Fatalf("volume %v, want clamped to 0", v)
 	}
-	if volumeLabel(-12.4) != "Vol −12 dB" || volumeLabel(0) != "Vol 0 dB" {
-		t.Fatalf("labels %q %q", volumeLabel(-12.4), volumeLabel(0))
-	}
 }
 
 func TestNowPlayingXStarsTheSong(t *testing.T) {

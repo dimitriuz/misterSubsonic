@@ -28,21 +28,17 @@ func TestSettingsNoLongerHasExit(t *testing.T) {
 
 func TestPlaybackSettingsApplyAndSave(t *testing.T) {
 	ta, _ := connectedApp(t)
-	ta.pl.st.VolumeDB = -10
 	ta.Push(newSettingsList("Playback", playbackSettings))
-	ta.press(input.BtnRight) // volume +1
-	ta.press(input.BtnDown)  // past Mute
-	ta.press(input.BtnDown)
 	ta.press(input.BtnRight) // ReplayGain off -> track
 	ta.press(input.BtnDown)
 	ta.press(input.BtnA) // scrobbling off
 	ta.press(input.BtnDown)
 	ta.press(input.BtnLeft) // transcode mp3 -> wav
-	if ta.pl.st.VolumeDB != -9 || !slices.Equal(ta.pl.calls, []string{"replaygain track", "scrobble off"}) {
-		t.Fatalf("volume %v, player calls %v", ta.pl.st.VolumeDB, ta.pl.calls)
+	if !slices.Equal(ta.pl.calls, []string{"replaygain track", "scrobble off"}) {
+		t.Fatalf("player calls %v", ta.pl.calls)
 	}
 	pb := ta.cfg.Playback
-	if pb.VolumeDB != -9 || pb.ReplayGain != "track" || pb.Scrobble || pb.TranscodeFormat != "wav" {
+	if pb.ReplayGain != "track" || pb.Scrobble || pb.TranscodeFormat != "wav" {
 		t.Fatalf("config %+v", pb)
 	}
 	ta.flushConfig()
@@ -158,10 +154,10 @@ func TestSettingsWorkWithoutAConnection(t *testing.T) {
 	ta.press(input.BtnDown)
 	ta.press(input.BtnA) // Settings
 	ta.press(input.BtnDown)
-	ta.press(input.BtnA) // Playback
-	ta.press(input.BtnLeft)
-	if ta.cfg.Playback.VolumeDB != -1 {
-		t.Fatalf("volume %v", ta.cfg.Playback.VolumeDB)
+	ta.press(input.BtnA)     // Playback
+	ta.press(input.BtnRight) // ReplayGain off -> track
+	if ta.cfg.Playback.ReplayGain != "track" {
+		t.Fatalf("replaygain %q", ta.cfg.Playback.ReplayGain)
 	}
 }
 
@@ -232,5 +228,88 @@ func TestVolumeChangedWhileDisconnectedReachesTheNextPlayer(t *testing.T) {
 	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl2, fakeArt{})
 	if pl2.st.VolumeDB != -7 {
 		t.Fatalf("player without a detached change moved to %v dB", pl2.st.VolumeDB)
+	}
+}
+
+func labels(rows []setting) []string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.label)
+	}
+	return out
+}
+
+func TestPlaybackSettingsHaveNoVolumeOrMute(t *testing.T) {
+	ta, _ := connectedApp(t)
+	got := labels(playbackSettings(ta.App))
+	for _, l := range got {
+		if l == "Volume" || l == "Mute" {
+			t.Fatalf("rows %v", got)
+		}
+	}
+}
+
+func TestTranscodeBitrateRowOnlyForMP3(t *testing.T) {
+	ta, _ := connectedApp(t)
+	for f, want := range map[string]bool{"mp3": true, "flac": false, "wav": false} {
+		ta.cfg.Playback.TranscodeFormat = f
+		if has := slices.Contains(labels(playbackSettings(ta.App)), "Transcode bitrate"); has != want {
+			t.Errorf("%s: bitrate row shown %v, want %v", f, has, want)
+		}
+	}
+	// The focus stays on a real row when the bitrate row goes away.
+	ta.cfg.Playback.TranscodeFormat = "mp3"
+	s := newSettingsList("Playback", playbackSettings)
+	ta.Push(s)
+	ta.settle(t)
+	s.list.Focus = len(playbackSettings(ta.App)) - 1 // bitrate
+	ta.cfg.Playback.TranscodeFormat = "flac"
+	ta.press(input.BtnRight) // must not panic
+	if err := ta.render(); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(playbackSettings(ta.App)); s.list.Focus >= n || s.helpText(ta.App) == "" {
+		t.Fatalf("focus %d of %d rows", s.list.Focus, n)
+	}
+}
+
+func TestSettingsShowTheFocusedRowsHelp(t *testing.T) {
+	for _, mk := range []func(*App) []setting{playbackSettings, displaySettings} {
+		ta, _ := connectedApp(t)
+		s := newSettingsList("x", mk)
+		ta.Push(s)
+		ta.settle(t)
+		seen := map[string]bool{}
+		for i := range mk(ta.App) {
+			h := s.helpText(ta.App)
+			if h == "" || seen[h] {
+				t.Fatalf("row %d: help %q", i, h)
+			}
+			seen[h] = true
+			ta.onInput(input.Event{Button: input.BtnDown, Kind: input.Press})
+			ta.settle(t) // the verify mode checks the partial frame
+		}
+	}
+	ta, _ := connectedApp(t)
+	s := newSettingsList("Playback", playbackSettings)
+	ta.Push(s)
+	if !strings.HasPrefix(s.helpText(ta.App), "Evens out loudness") {
+		t.Fatalf("help %q", s.helpText(ta.App))
+	}
+}
+
+// Every help text fits its two lines on every layout, untruncated.
+func TestSettingsHelpFitsTwoLines(t *testing.T) {
+	for _, p := range profiles {
+		ta := newTestApp(t, p)
+		ta.cfg = config.Default()
+		for _, mk := range []func(*App) []setting{playbackSettings, displaySettings} {
+			for _, r := range mk(ta.App) {
+				ls := helpLines(ta.F.Small, r.help, p.W-2*p.Margin)
+				if len(ls) > 2 || strings.HasSuffix(ls[len(ls)-1], "…") || len(wrap(ta.F.Small, r.help, p.W-2*p.Margin)) > 2 {
+					t.Errorf("%s: %q needs more than two lines: %v", p.Name, r.label, ls)
+				}
+			}
+		}
 	}
 }
