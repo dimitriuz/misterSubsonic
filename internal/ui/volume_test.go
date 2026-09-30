@@ -45,9 +45,9 @@ func TestVolumePanelHides(t *testing.T) {
 		t.Fatal("the panel went while the key repeated")
 	}
 	ta.now = ta.now.Add(100 * time.Millisecond)
-	ta.dirty = false
+	ta.clean()
 	ta.onWake()
-	if !ta.volumeUntil.IsZero() || !ta.dirty {
+	if !ta.volumeUntil.IsZero() || !ta.redrawDue() {
 		t.Fatal("the panel didn't go, or the screen wasn't redrawn without it")
 	}
 }
@@ -57,5 +57,20 @@ func TestVolumeLevel(t *testing.T) {
 		if got := volumeLevel(db); got != want {
 			t.Errorf("volumeLevel(%v) = %v, want %v", db, got, want)
 		}
+	}
+}
+
+// Now Playing shows no volume of its own: the frame is the same at any
+// level (the panel shows changes; Settings shows the dB).
+func TestNowPlayingDoesNotShowTheVolume(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewNowPlayingScreen())
+	ta.pl.st.VolumeDB = -10
+	loud := ta.settle(t).ToRGBA()
+	ta.pl.st.VolumeDB = -45
+	ta.dirty = true
+	if !samePixels(loud, ta.settle(t).ToRGBA()) {
+		t.Fatal("Now Playing changed with the volume")
 	}
 }

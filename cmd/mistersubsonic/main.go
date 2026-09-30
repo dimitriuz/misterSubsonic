@@ -37,7 +37,7 @@ var version = "dev"
 
 type flags struct {
 	config, display, viewerAddr, frames, profile, fbdev, keys, log, screenshots string
-	null, restoreConsole                                                        bool
+	null, restoreConsole, verifyRedraw                                          bool
 	volume                                                                      float64
 	exitAfter                                                                   time.Duration
 }
@@ -54,12 +54,13 @@ func main() {
 	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
 	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
 	flag.StringVar(&f.screenshots, "screenshots", "auto", "screenshot folder: auto (/media/fat/screenshots/MiSTer_Subsonic beside the config on the framebuffer, screenshots/ next to the config elsewhere), a path, or \"\" for none")
+	flag.BoolVar(&f.verifyRedraw, "verify-redraw", false, "check every partial redraw against a full one and log any difference (debugging)")
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
 	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
 	flag.BoolVar(&f.restoreConsole, "restore-console", false, "put the console back in text mode and exit (the launcher runs this after the app)")
 	flag.Parse()
 	if f.restoreConsole {
-		if err := platform.RestoreText(); err != nil {
+		if err := restoreConsole(); err != nil {
 			fmt.Fprintln(os.Stderr, "mistersubsonic:", err)
 			os.Exit(1)
 		}
@@ -224,21 +225,38 @@ func run(f flags) (err error) {
 	}
 	var disp gfx.Display
 	var inputs []<-chan input.Event
+	padAtStart := false
 	switch f.display {
 	case "fbdev":
-		fb, err := gfx.OpenFB(f.fbdev)
-		if err != nil {
-			return err
-		}
-		con, err := platform.GraphicsMode()
+		// The console goes to graphics mode before the framebuffer size can
+		// change: in text mode fbcon redraws its text into the new
+		// framebuffer and crashes the kernel. (Not testable without the
+		// devices; restoreConsole has the same order and is tested.)
+		con, err := graphicsMode()
 		if err != nil {
 			log.Printf("console: %v (its text may show over the app)", err)
 		}
-		defer con.Restore() // after the framebuffer is blanked (defers run last-in first-out)
+		// Exit order (defers run last-in first-out, and -restore-console does
+		// the same): the framebuffer is closed (unmapped), then the input is
+		// released, then the framebuffer gets its old size back (the console
+		// still in graphics mode), and last the console returns to text mode.
+		defer func() {
+			if err := fbControl().Restore(); err != nil {
+				log.Printf("display: %v", err)
+			}
+			if err := con.Restore(); err != nil {
+				log.Printf("console: %v", err)
+			}
+		}()
+		fb, err := openFB(f.fbdev, profileName, dataDir, allowFullRes(cfg.Display.FullResolution, con))
+		if err != nil {
+			return err
+		}
 		disp = fb
 		mgr := input.NewManager(input.ManagerOptions{Grab: true})
 		defer mgr.Close()
 		inputs = append(inputs, mgr.Events())
+		padAtStart = mgr.HasPad()
 	case "viewer":
 		prof := ui.PickProfile(1280, 720, profileName)
 		v := devview.New(prof.W, prof.H)
@@ -303,6 +321,8 @@ func run(f flags) (err error) {
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
 		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),
+		VerifyRedraw:  f.verifyRedraw,
+		PadAtStart:    padAtStart,
 		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})
 	if err != nil {

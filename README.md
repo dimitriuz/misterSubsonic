@@ -25,7 +25,7 @@ Or unzip a release's `MiSTer_Subsonic-<version>.zip` onto the SD card: it holds
 `Scripts/MiSTer_Subsonic.sh` and the `mistersubsonic/` folder.
 
 Start it from the Scripts menu: **MiSTer_Subsonic**. While it runs, background music (BGM) is
-stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (Settings → Exit,
+stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (Exit in the main menu,
 or hold B on the home screen). Updates never touch your settings.
 
 Everything the app keeps is in `/media/fat/mistersubsonic/`:
@@ -55,17 +55,21 @@ applies per server (each server's cache gets that much).
 ## Video settings (MiSTer.ini)
 
 The app draws on the MiSTer's Linux framebuffer. That framebuffer is sized from `MiSTer.ini`; the
-app never changes the video mode itself. Keep `fb_size=0` (automatic) and `fb_terminal=1` (both
-the defaults).
+app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (automatic) and
+`fb_terminal=1` (both the defaults).
 
 - **HDMI:** the interface is drawn at the framebuffer's own size, pixel for pixel, so text and
   covers stay sharp at any resolution.
   - `video_mode=0` (1280x720@60) or `7` (1280x720@50) gives a 1280x720 framebuffer.
-  - `video_mode=8` (1920x1080@60) gives 1920x1080. It is the sharpest, but a full redraw takes
-    about 70 ms on the MiSTer, so scrolling is less smooth than at 720p (about 30 ms).
-  - Modes above 1920x1080 (for example `video_mode=1920,1200,60`) get a framebuffer of half the
-    size (960x600): MiSTer's menu halves it, whatever `fb_size` says. The interface fits that
-    size, and the display scales it up.
+  - `video_mode=8` (1920x1080@60) gives 1920x1080.
+  - Modes above 1920x1080 get a framebuffer of half the size from MiSTer's menu, whatever
+    `fb_size` says. For a custom mode up to 1920x1200 (`video_mode=1920,1200,60`, say) the app
+    asks the menu for the full size when it starts, and puts the half size back when it exits
+    (after a crash too, through the launcher). Nothing is written to the SD card. Set
+    `full_resolution = false` under `[display]` in `config.toml` to keep the half size.
+  - Redraws only touch what changed: a focus move costs about 11-12 ms at 1920x1200, and the
+    progress bar and scrolling titles less. Scrolling a long list redraws the list, about 40 ms a
+    step at 1920x1200 (about 25 steps a second).
 - **CRT (15 kHz):** add a `[Menu]` section, for example the 240p mode SAM uses for its CRT
   video:
 
@@ -99,6 +103,9 @@ PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, mute
 Settings → Playback; changing the volume turns the sound back on. A multimedia keyboard's media
 keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
 fast-forward/rewind to seek. A volume panel shows the level for a moment whenever it changes.
+
+**Hints:** the bar along the bottom of every screen shows what the buttons do there: as gamepad
+buttons after a gamepad press, as keys after a key press. Settings → Display → Hints turns it off.
 
 **Screenshots:** Print Screen, or Alt+Scroll Lock (MiSTer's own screenshot keys), saves the
 screen as a PNG in `/media/fat/screenshots/MiSTer_Subsonic/`. The MiSTer Companion remote's

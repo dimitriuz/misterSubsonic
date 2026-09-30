@@ -169,6 +169,22 @@ func (b *FB) Present(c *Canvas) error {
 	return nil
 }
 
+// PresentRects shows the rectangles rs of c, a full-size frame whose other
+// pixels are already on screen.
+func (b *FB) PresentRects(c *Canvas, rs []Rect) error {
+	if b.mem == nil {
+		return errors.New("gfx: framebuffer closed")
+	}
+	if c.W != b.fmt.width || c.H != b.fmt.height {
+		return fmt.Errorf("gfx: frame %dx%d != framebuffer %dx%d", c.W, c.H, b.fmt.width, b.fmt.height)
+	}
+	for _, r := range rs {
+		b.fmt.packRect(b.mem, c, r)
+	}
+	b.last = c
+	return nil
+}
+
 // Intact reports whether the screen still shows the frame last presented,
 // from a grid of sampled pixels: Main_MiSTer or the console may have drawn
 // over it (spec §8.1). It is true before the first Present and after Close.

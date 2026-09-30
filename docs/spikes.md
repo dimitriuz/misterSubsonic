@@ -133,3 +133,47 @@ This MiSTer: HDMI at `video_mode=1920,1200,60`, so the framebuffer is 960×600×
 - **Now Playing's small volume indicator:** the user doesn't like it. Plan 4b removes it and keeps the volume panel.
 - **Hotkey hints:** the user wants hints for the gamepad and keyboard on every screen (Plan 4b).
 - **Media keys and the volume panel (items 19–20):** not reported yet.
+
+## Plan 4b on the MiSTer (2026-09-30)
+
+Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `gfx.test -test.bench 'Pack'`); nothing was drawn on the TV.
+
+**A full-frame pass is memory-bound on the Cortex-A9.** A CPU profile of a native 1080p frame had `Canvas.Clear` at 37%, cover `Blit` at 25%, and the framebuffer copy took another 19 ms. `Clear` indexed `c.Pix` inside its loop, which reloads the slice on every store; a local slice made it about 3× faster:
+
+| Full frame (draw only) | Before | After |
+|---|---|---|
+| 960×600 albums / feed | 13.5 / 14.7 ms | 10.7 / 11.8 ms |
+| 1280×720 albums / feed | 22.2 / 22.5 ms | 17.3 / 18.4 ms |
+| 1920×1080 albums / feed | 49.4 / 48.1 ms | 37.3 / 37.6 ms |
+| 1920×1200 albums | 50.2 ms | 38.0 ms |
+
+**Partial frames at 1920×1200** (draw, then the copy of the damaged rectangles):
+
+| Case | Draw | Copy | Total |
+|---|---|---|---|
+| Full frame | 38.0 ms | 21.8 ms | ≈ 60 ms |
+| Focus move in a cover grid (two cells) | 9.7 ms | 2.2 ms | ≈ 12 ms |
+| Focus move in a list (two rows) | 8.6 ms | 2.1 ms | ≈ 11 ms |
+| List scroll step (the list area) | 20.6 ms | ≈ 20 ms | ≈ 41 ms |
+| Progress tick (bar and times) | 0.7 ms | < 1 ms | ≈ 1 ms |
+| Marquee frame (one line) | 1.1 ms | < 1 ms | ≈ 2 ms |
+
+- **Targets** (Plan 4b spec §3.6): focus moves, the tick and the marquee ≤ 10 ms: met for the tick and marquee, and within 2 ms for focus moves. A list scroll step ≤ 40 ms: about 41 ms, where a full frame was ≈ 72 ms before this plan.
+- **Scroll-by-shift was measured and dropped.** Moving a 1640×1000 area up one row takes 15.4 ms, filling it 6.2 ms: on this memory bus shifting pixels costs more than redrawing them.
+- **The framebuffer copy stays a `copy`.** A 32-bit store loop was 30% slower (11.2 against 8.7 ms in the same test).
+- **No size threshold for partial frames.** A partial frame measured never slower than a full one, even at 92% of the screen, so any damaged area is drawn partially.
+
+**Full resolution:** the menu accepts `fb_cmd1 8888 1 1920 1200` (the font test card, see "Plan 4 on the MiSTer"). The app's switch and restore were tested against a fake command pipe, then on the TV (below).
+
+**On the TV (2026-09-30, the user's report):**
+- **First run (build 8379160):** the switch to 1920×1200 worked, then the kernel oopsed in fbcon (`sys_imageblit`): the console was still in text mode while the size changed. Fixed in b421a7c: the console enters graphics mode before the switch and stays in it until the size is back. b0c9575 skips the switch if graphics mode can't be entered.
+- **Build b0c9575:**
+  - **Full resolution (items 3, 22):** works; `log.txt` shows "framebuffer 1920x1200, full resolution (was 960x600)". Text is as sharp as MiSTerHiFi, and exit returns to the menu correctly.
+  - **Smooth browsing (item 23):** OK.
+  - **Gamepad R on an 8BitDo M30 (X-input, `045e:028e`):** didn't work. Its MiSTer map sends R as an analog axis (`0x305` = `ABS_Z` high), which the map reader skipped. Fixed in d2d8336, which decodes axis entries the way Main_MiSTer does.
+  - **Screenshot:** the home feed's next row of covers overflowed onto the mini bar. Fixed in f9b9027: screens are clipped to their own area.
+  - **Exit:** the user asked for it in the main menu (6ec2cc5).
+- **Build f9b9027:** all of the above works: R on the M30, Exit in the main menu, no overflow, and the hints (item 24).
+- **Crash restore (item 22):** after `kill -9` of the app at 1920×1200, the launcher said "stopped with an error". Its `-restore-console` put the framebuffer back to 960×600 and removed `/tmp/mistersubsonic.fb`, with no kernel errors.
+- **No stale pixels (item 25):** in a 2½-minute run with `-verify-redraw` at 1920×1200, with music playing, the user browsed grids and lists, opened Now Playing and used the volume keys. `log.txt` has 0 "partial redraw differs" lines.
+- **Caution for tools:** reading `/dev/fb0` with `read()` (`head`, `dd`, `cat`) while the app is at full resolution oopses the kernel (`mmiocpy`), because the driver's read path keeps the old window. Use the app's own screenshot (Print Screen) instead.

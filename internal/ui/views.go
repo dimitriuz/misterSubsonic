@@ -27,9 +27,11 @@ func (k *cursor) setFocus(i int) { k.grid.Focus, k.list.Focus = i, i }
 func (k *cursor) handle(a *App, e input.Event, n int) bool {
 	var ok bool
 	if a.P.Cover > 0 {
-		ok = k.grid.Handle(e, n)
-	} else {
-		ok = k.list.Handle(e, n)
+		if ok = k.grid.Handle(e, n); ok {
+			a.moved(k.grid.Moved())
+		}
+	} else if ok = k.list.Handle(e, n); ok {
+		a.moved(k.list.Moved())
 	}
 	k.sync(a)
 	return ok
@@ -154,6 +156,7 @@ type songsView struct {
 
 func (v *songsView) Handle(a *App, e input.Event) bool {
 	if v.list.Handle(e, len(v.songs)) {
+		a.moved(v.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press || len(v.songs) == 0 {

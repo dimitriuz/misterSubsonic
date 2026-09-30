@@ -135,6 +135,7 @@ func (s *PlaylistScreen) Handle(a *App, e input.Event) bool {
 		n = playlistActionRows + len(s.songs())
 	}
 	if s.list.Handle(e, n) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press {

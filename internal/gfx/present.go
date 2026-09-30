@@ -10,6 +10,13 @@ type Display interface {
 	Close() error
 }
 
+// PartialPresenter is a Display that can update parts of the screen.
+type PartialPresenter interface {
+	// PresentRects shows the rectangles rs of c, a full-size frame whose
+	// other pixels are already on screen.
+	PresentRects(c *Canvas, rs []Rect) error
+}
+
 // Checker is a Display that can tell whether something else drew over its
 // last frame (the MiSTer framebuffer: Main_MiSTer or the console).
 type Checker interface {

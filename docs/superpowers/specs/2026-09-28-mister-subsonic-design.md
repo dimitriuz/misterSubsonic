@@ -223,9 +223,11 @@ The loop records the **frame index where each track starts in the ring's output*
 ### 8.1 Rendering
 
 - **Framebuffer.** `gfx` opens `/dev/fb0`, reads the geometry with the `FBIOGET_*SCREENINFO` ioctls and mmaps it (16 or 32 bpp). If the fbdev mmap fails, it falls back to mapping `/dev/mem` at `smem_start`.
-- **Double buffering.** All drawing goes to a back buffer. Presenting copies only the dirty rectangles. The UI redraws on events, not continuously; the only periodic redraw is the position tick.
+- **Double buffering.** All drawing goes to a back buffer. The UI redraws on events, not continuously.
+- **Partial redraws** (Plan 4b, `docs/superpowers/specs/2026-09-30-mister-subsonic-plan-4b-design.md`). A change that knows its area damages it; the frame then runs the normal drawing clipped to the damage and copies only those rectangles to the framebuffer. Focus moves in lists and grids, the position tick, the marquee, arriving covers, toasts and the volume panel are partial; anything else redraws the whole frame. A verify mode (every UI test, and `-verify-redraw` on the device) checks each partial frame against a full one.
+- **Full resolution** (Plan 4b). When the menu halved an HDMI framebuffer (the output in `MiSTer.ini` is exactly twice its size, and no bigger than 1920×1200), the app asks for the full size on `/dev/MiSTer_cmd` at start and restores the old size on exit; `-restore-console` restores it after a crash. `display.full_resolution = false` turns it off.
 - **Canvas per profile:**
-  - **HDMI** draws at the framebuffer's own size and fills it, with no scaler. The 1280×720 layout is the design size: every length is scaled by `min(W/1280, H/720)`, and fonts stay at 15/12/10 px or more (title, body, small). A 16:10 screen gets more rows instead of bars. The MiSTer menu halves framebuffers above 1920×1080 (1920×1200 gives 960×600), and the app draws that size.
+  - **HDMI** draws at the framebuffer's own size and fills it, with no scaler. The 1280×720 layout is the design size: every length is scaled by `min(W/1280, H/720)`, and fonts stay at 15/12/10 px or more (title, body, small). A 16:10 screen gets more rows instead of bars. The MiSTer menu halves framebuffers above 1920×1080 (1920×1200 gives 960×600); the app switches those back to full size (see Full resolution above).
   - **CRT** keeps its logical size and is scaled to the framebuffer with nearest neighbour (integer scale where possible) and letterboxed.
 
 | Profile | Canvas | Picked when |
@@ -233,7 +235,7 @@ The loop records the **frame index where each track starts in the ring's output*
 | HDMI | the framebuffer's size (layout designed at 1280×720) | `auto` and fb height > 288, or `display.profile = "hdmi"` |
 | CRT | 320×240 or 320×288, with pixel aspect correction; 480/576-line framebuffers are line-doubled | `auto` and fb height ≤ 288, or `display.profile = "crt"` |
 
-**Repaint target:** a full repaint takes under 30 ms on the Cortex-A9 at 960×600 and on CRT. Native 1080p is the exception: about 68 ms, sharp, but held scrolling redraws at about 15 frames a second. Partial redraws for it are in the backlog (`docs/superpowers/plans/backlog.md`).
+**Repaint target:** on the Cortex-A9, a full repaint takes under 30 ms at 960×600 and on CRT. At 1920×1080 and 1920×1200 a full frame takes about 60 ms, so those rely on partial redraws: a focus move, the tick and the marquee cost ≤ 12 ms, and a list scroll step about 40 ms (Plan 4b's measurements in `docs/spikes.md`).
 
 `display.profile` accepts `auto`, `hdmi` or `crt`. A 480i/576i CRT can't be told apart from a 480p/576p HDMI framebuffer, so `auto` picks HDMI; CRT users on interlaced modes set `crt` explicitly, and the README says so.
 
@@ -308,7 +310,9 @@ Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgU
 
 **Screenshot key:** Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity.
 
-Quitting the app is Settings → Exit, or holding B for 2 s on the Home root, with a confirmation.
+**Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select has no key, so a keyboard shows no Select hint; the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
+
+Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), or holding B for 2 s on the Home root, with a confirmation.
 
 ### 8.4 Input (`internal/input`)
 

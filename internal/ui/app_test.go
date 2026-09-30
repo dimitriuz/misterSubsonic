@@ -156,18 +156,19 @@ func TestSafeAreaAndMiniBarNeedACurrentSong(t *testing.T) {
 	ta.Push(s)
 	ta.settle(t)
 	p := ta.P
-	if s.area.Y != p.SafeY+p.HeaderH || s.area.Bottom() != p.H-p.SafeY {
-		t.Fatalf("body %+v: want from %d to %d", s.area, p.SafeY+p.HeaderH, p.H-p.SafeY)
+	bottom := p.H - p.SafeY - ta.hintH() // the hint bar is the last line
+	if s.area.Y != p.SafeY+p.HeaderH || s.area.Bottom() != bottom {
+		t.Fatalf("body %+v: want from %d to %d", s.area, p.SafeY+p.HeaderH, bottom)
 	}
 	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: -1, NextIndex: -1}
 	ta.settle(t)
-	if s.area.Bottom() != p.H-p.SafeY {
+	if s.area.Bottom() != bottom {
 		t.Fatal("mini bar shown with nothing selected")
 	}
 	ta.pl.st.Index = 0
 	ta.settle(t)
-	if s.area.Bottom() != p.H-p.SafeY-p.MiniBarH {
-		t.Fatalf("body bottom %d with a current song, want %d", s.area.Bottom(), p.H-p.SafeY-p.MiniBarH)
+	if s.area.Bottom() != bottom-p.MiniBarH {
+		t.Fatalf("body bottom %d with a current song, want %d", s.area.Bottom(), bottom-p.MiniBarH)
 	}
 }
 
@@ -244,5 +245,29 @@ func TestMarqueeHandlesAnyScript(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestScreenDrawsOnlyInsideItsArea(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: 0, NextIndex: -1}
+	probeCol := gfx.RGB(0xff, 0, 0xff)
+	ta.Push(&probe{draw: func(a *App, c *gfx.Canvas, area gfx.Rect) {
+		c.Fill(gfx.R(area.X, area.Y-100, area.W, area.H+500), probeCol)
+	}})
+	c := ta.settle(t)
+	p := ta.P
+	bodyTop := p.SafeY + p.HeaderH
+	miniY := p.H - p.SafeY - ta.hintH() - p.MiniBarH
+	for _, pt := range []struct {
+		name string
+		y    int
+	}{{"header", 0}, {"header bottom", bodyTop - 1}, {"mini bar top", miniY}, {"mini bar bottom", miniY + p.MiniBarH - 1}} {
+		if got := c.At(0, pt.y); got != colPanel {
+			t.Errorf("%s (y=%d): %06x, want the panel colour", pt.name, pt.y, uint32(got)&0xFFFFFF)
+		}
+	}
+	if got := c.At(0, bodyTop); got != probeCol {
+		t.Errorf("body pixel %06x: the screen lost its own area", uint32(got)&0xFFFFFF)
 	}
 }

@@ -38,6 +38,10 @@ func newSidebarRoot() *SidebarRoot {
 		s.labels = append(s.labels, it.label)
 		s.makers = append(s.makers, it.open)
 	}
+	// Exit is the last entry: no section behind it (a nil maker), so focusing
+	// it opens nothing; A or Right asks to quit.
+	s.labels = append(s.labels, exitItem.label)
+	s.makers = append(s.makers, nil)
 	s.children = make([]Screen, len(s.makers))
 	return s
 }
@@ -69,6 +73,9 @@ func (s *SidebarRoot) Enter(a *App) { s.open(a) }
 // open makes the selected section the visible one: it is created and
 // entered on first use, told it is shown again otherwise.
 func (s *SidebarRoot) open(a *App) Screen {
+	if s.onExit() {
+		return nil
+	}
 	if c := s.children[s.sel]; c != nil {
 		if sh, ok := c.(shower); ok {
 			sh.Shown(a)
@@ -87,6 +94,9 @@ func (s *SidebarRoot) Shown(a *App) {
 		sh.Shown(a)
 	}
 }
+
+// onExit is true while the sidebar selection is on the Exit entry.
+func (s *SidebarRoot) onExit() bool { return s.sel == len(s.labels)-1 }
 
 // current is the selected section, nil while it hasn't been opened yet.
 func (s *SidebarRoot) current() Screen { return s.children[s.sel] }
@@ -120,6 +130,10 @@ func (s *SidebarRoot) Handle(a *App, e input.Event) bool {
 			})
 			return true
 		case input.BtnRight, input.BtnA:
+			if e.Kind == input.Press && s.onExit() {
+				a.confirm = true // the same prompt as holding B
+				return true
+			}
 			if e.Kind == input.Press {
 				s.inSidebar = false
 				s.dwelling++
@@ -162,6 +176,8 @@ func (s *SidebarRoot) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	content := gfx.R(side.Right(), area.Y, area.W-side.W, area.H)
 	if child := s.current(); child != nil {
 		a.drawDimmed(s.inSidebar, func() { child.Draw(a, c, content) })
+	} else if s.onExit() {
+		a.drawCentered(c, content, "Exit MiSTer Subsonic", colDim)
 	} else {
 		a.drawCentered(c, content, "…", colDim)
 	}

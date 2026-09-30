@@ -164,7 +164,7 @@ func (f *Font) Measure(s string) int {
 // Draw renders s with its baseline at y, starting at x, clipped to clip.
 // It returns the x after the last glyph.
 func (f *Font) Draw(c *Canvas, x, y int, s string, col Color, clip Rect) int {
-	clip = clip.Intersect(c.Bounds())
+	clip = clip.Intersect(c.Clip())
 	v := uint32(col) & 0xFFFFFF
 	alpha := col.A()
 	for _, r := range s {

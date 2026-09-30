@@ -64,9 +64,9 @@ func TestMarqueeWaitsQuietlyForItsDelay(t *testing.T) {
 		t.Fatalf("half way: next wake in %v, want %v", d, marqueeDelay/2)
 	}
 	ta.now = ta.now.Add(marqueeDelay / 2)
-	ta.dirty = false
+	ta.clean()
 	ta.onWake()
-	if !ta.dirty {
+	if !ta.redrawDue() {
 		t.Fatal("the wake at the end of the delay did not redraw")
 	}
 	ta.settle(t)

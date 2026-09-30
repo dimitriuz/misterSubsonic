@@ -10,14 +10,14 @@ import (
 )
 
 // SettingsScreen is Settings (spec §8.2): Servers · Playback · Display ·
-// About · Exit. It works without a connection (from the unreachable
+// About. It works without a connection (from the unreachable
 // screen): changes are saved to the config and applied to the player when
 // there is one.
 type SettingsScreen struct {
 	list List
 }
 
-var settingsItems = []string{"Servers", "Playback", "Display", "About", "Exit"}
+var settingsItems = []string{"Servers", "Playback", "Display", "About"}
 
 func NewSettingsScreen() *SettingsScreen { return &SettingsScreen{} }
 
@@ -26,6 +26,7 @@ func (s *SettingsScreen) Enter(a *App)  {}
 
 func (s *SettingsScreen) Handle(a *App, e input.Event) bool {
 	if s.list.Handle(e, len(settingsItems)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press || e.Button != input.BtnA {
@@ -40,8 +41,6 @@ func (s *SettingsScreen) Handle(a *App, e input.Event) bool {
 		a.Push(newSettingsList("Display", displaySettings))
 	case "About":
 		a.Push(&AboutScreen{})
-	case "Exit":
-		a.confirm = true // the same prompt as holding B
 	}
 	return true
 }
@@ -77,6 +76,7 @@ func (s *SettingsListScreen) Enter(a *App)  {}
 func (s *SettingsListScreen) Handle(a *App, e input.Event) bool {
 	rows := s.rows(a)
 	if s.list.Handle(e, len(rows)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind == input.Release || len(rows) == 0 {
@@ -126,7 +126,7 @@ func onOff(b bool) string {
 // volumeDB is the current volume: the player's, else the config's.
 func (a *App) volumeDB() float64 {
 	if pl := a.Player(); pl != nil {
-		return pl.State().VolumeDB
+		return a.state().VolumeDB
 	}
 	if a.volumePending {
 		return a.pendingDB // changed while there is no player
@@ -159,8 +159,8 @@ func (a *App) setVolume(db float64) {
 // setMuted turns the sound off or back on (spec §6). It isn't saved, so the
 // app always starts with the sound on.
 func (a *App) setMuted(on bool) {
-	a.muted, a.dirty = on, true
-	a.showVolume()
+	a.muted = on
+	a.showVolume() // keys that show it elsewhere too (Settings) redraw it all
 	if pl := a.Player(); pl != nil {
 		pl.SetMuted(on)
 	}
@@ -245,6 +245,11 @@ func displaySettings(a *App) []setting {
 				m := cycle(screensaverChoices, d().ScreensaverMinutes, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Display.ScreensaverMinutes = m }, false)
 			}},
+		{"Hints", func(a *App) string { return onOff(d().Hints) },
+			func(a *App, dir int) {
+				on := !d().Hints
+				a.UpdateConfig(func(c *config.Config) { c.Display.Hints = on }, false)
+			}},
 	}
 }
 
@@ -269,6 +274,7 @@ func (s *ServersScreen) servers(a *App) []config.Server {
 func (s *ServersScreen) Handle(a *App, e input.Event) bool {
 	srvs := s.servers(a)
 	if s.list.Handle(e, len(srvs)+1) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press {

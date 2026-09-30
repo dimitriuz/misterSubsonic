@@ -128,6 +128,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 			step = -step
 		}
 		a.setVolume(st.VolumeDB + step) // and saved to the config
+		a.exact = true                  // Now Playing shows no volume: only the panel changes
 		return true
 	}
 	if e.Kind != input.Press {
@@ -165,7 +166,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 
 func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	p := a.P
-	st := a.Player().State()
+	st := a.state()
 	song, ok := st.Current()
 	if !ok {
 		a.drawCentered(c, area, "Nothing playing", colDim)
@@ -208,7 +209,8 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	// Progress.
 	y += p.Margin / 2
 	d := secs(song.Duration)
-	pos := s.position(a, st, a.o.Now())
+	pos := s.position(a, st, a.clock())
+	a.markTick(gfx.R(text.X, y, text.W, barH))
 	c.Fill(gfx.R(text.X, y, text.W, barH), colArtBg)
 	if d > 0 {
 		c.Fill(gfx.R(text.X, y, progressW(text.W, pos, d), barH), colAccent)
@@ -218,6 +220,7 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	if d > 0 {
 		times += " / " + clock(d)
 	}
+	a.markTick(gfx.R(text.X, y, text.W, fs.Height()))
 	fs.Draw(c, text.X, y+fs.Ascent(), times, colDim, c.Bounds())
 	y += fs.Height() + p.Margin/2
 
@@ -227,9 +230,7 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 			mode += "  ·  " + m.label
 		}
 	}
-	mode += "  ·  "
-	end := iconText(c, fb, statusIcon(st.Status), text.X, y+fb.Ascent(), fb.Truncate(mode, text.W-fb.Ascent()), colText, c.Bounds())
-	a.drawVolumeInline(c, fb, end, y+fb.Ascent(), text.Right()-end)
+	iconText(c, fb, statusIcon(st.Status), text.X, y+fb.Ascent(), fb.Truncate(mode, text.W-fb.Ascent()), colText, c.Bounds())
 	y += fb.Height()
 	if st.NextIndex >= 0 && st.NextIndex < len(st.Queue) {
 		next := st.Queue[st.NextIndex]
@@ -263,6 +264,7 @@ func (s *QueueScreen) Enter(a *App)  {}
 func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 	st := a.Player().State()
 	if s.list.Handle(e, len(st.Queue)) {
+		a.moved(s.list.Moved())
 		return true
 	}
 	if e.Kind != input.Press {
@@ -309,7 +311,7 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *QueueScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
-	st := a.Player().State()
+	st := a.state()
 	if len(st.Queue) == 0 {
 		a.drawCentered(c, area, "The queue is empty", colDim)
 		return

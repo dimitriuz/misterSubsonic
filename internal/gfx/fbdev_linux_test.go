@@ -104,3 +104,27 @@ func TestIntactNoticesAnOverwrite(t *testing.T) {
 		}
 	}
 }
+
+// PresentRects updates the framebuffer in the rectangles only, and the
+// watchdog then compares against the new frame.
+func TestPresentRectsUpdatesOnlyTheRectangles(t *testing.T) {
+	f := fbFormat{width: 64, height: 48, stride: 64 * 4, bpp: 32}
+	b := &FB{mem: make([]byte, f.stride*f.height), fmt: f}
+	old, next := NewCanvas(64, 48), NewCanvas(64, 48)
+	old.Clear(RGB(1, 1, 1))
+	next.Clear(RGB(1, 1, 1))
+	next.Fill(R(10, 10, 5, 5), RGB(200, 0, 0))
+	b.Present(old)
+	if err := b.PresentRects(next, []Rect{R(10, 10, 5, 5)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.read(b.mem, 12, 12); got != 0xC80000 {
+		t.Fatalf("inside = %06x", got)
+	}
+	if !b.Intact() {
+		t.Fatal("the watchdog doesn't see the updated frame")
+	}
+	if err := b.PresentRects(NewCanvas(10, 10), nil); err == nil {
+		t.Fatal("a frame of the wrong size was accepted")
+	}
+}

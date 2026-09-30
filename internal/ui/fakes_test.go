@@ -334,6 +334,8 @@ func newTestApp(t *testing.T, prof Profile) *testApp {
 		t.Fatal(err)
 	}
 	ta.App = a
+	a.verify = true // every partial frame must equal a full one
+	a.verifyFail = func(m string) { t.Errorf("%s", m) }
 	return ta
 }
 
@@ -354,6 +356,11 @@ func (ta *testApp) settle(t *testing.T) *gfx.Canvas {
 	}
 	return ta.disp.Last()
 }
+
+// redrawDue reports whether the next frame redraws anything (all of it, or
+// damaged parts); clean forgets both.
+func (ta *testApp) redrawDue() bool { return ta.dirty || len(ta.damage) > 0 }
+func (ta *testApp) clean()          { ta.dirty, ta.damage = false, nil }
 
 func (ta *testApp) press(b input.Button) {
 	ta.onInput(input.Event{Button: b, Kind: input.Press})

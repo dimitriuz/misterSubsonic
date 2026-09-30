@@ -102,6 +102,12 @@ type Options struct {
 	Version    string // shown in Settings → About
 	// ScreenshotDir is where the screenshot button saves PNGs ("": off).
 	ScreenshotDir string
+	// PadAtStart: a gamepad is connected, so the hint bar starts with
+	// gamepad buttons (otherwise keyboard keys) until the first press.
+	PadAtStart bool
+	// VerifyRedraw checks every partial frame against a full one and logs
+	// any difference (a debugging aid on the device).
+	VerifyRedraw bool
 	// Connect starts a connection to cfg's active server, off the UI
 	// goroutine, replacing any previous one; it answers with
 	// a.Connected or a.ConnectFailed (through a.Post).
@@ -198,8 +204,20 @@ type App struct {
 	muted       bool      // the sound is off (not saved: the app starts with sound)
 	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
 	shooting    bool      // a screenshot is being saved
-	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
-	overwritten bool      // the last check found the screen drawn over
+	pad         bool      // the last press came from a gamepad (the hint bar follows it)
+
+	damage       []gfx.Rect                 // changed areas for the next frame (dirty means the whole frame)
+	exact        bool                       // the key being handled damaged exactly what it changed
+	ticks        []gfx.Rect                 // drawn from the playback position
+	frameNow     time.Time                  // the clock while a frame is drawn
+	frameState   *player.State              // the player's state while a frame is drawn
+	mqRect       gfx.Rect                   // the scrolling title
+	arts         map[subsonic.ID][]gfx.Rect // where each cover was drawn
+	verify       bool                       // check partial frames against full ones
+	verifyFail   func(string)               // called when that check fails (tests)
+	verifyCanvas *gfx.Canvas
+	checkAt      time.Time // the next watchdog check (zero: the display can't check itself)
+	overwritten  bool      // the last check found the screen drawn over
 }
 
 func New(o Options) (*App, error) {
@@ -230,6 +248,7 @@ func New(o Options) (*App, error) {
 	if pw != a.P.W || ph != a.P.H { // drawn at the display's size: nothing to scale
 		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
 	}
+	a.verify, a.pad = o.VerifyRedraw, o.PadAtStart
 	if _, ok := o.Display.(gfx.Checker); ok {
 		a.checkAt = o.Now().Add(watchdogEvery)
 	}
@@ -267,8 +286,8 @@ func (a *App) Post(f func()) {
 // Redraw marks the frame dirty.
 func (a *App) Redraw() { a.dirty = true }
 
-// ArtReady is the art loader's Ready callback: redraw when a cover arrives.
-func (a *App) ArtReady(art.Key) { a.Post(a.Redraw) }
+// ArtReady is the art loader's Ready callback: redraw where the cover goes.
+func (a *App) ArtReady(k art.Key) { a.Post(func() { a.coverArrived(k.ID) }) }
 
 func (a *App) Library() Library { return a.o.Library }
 func (a *App) Player() Player   { return a.o.Player }
@@ -387,6 +406,7 @@ func (a *App) After(owner Screen, d time.Duration, f func()) {
 func (a *App) Toast(format string, args ...any) {
 	text := fmt.Sprintf(format, args...)
 	until := a.o.Now().Add(toastTime)
+	a.Damage(a.toastsArea()) // the toasts move up for the new one
 	if n := len(a.toasts); n > 0 && a.toasts[n-1].text == text {
 		a.toasts[n-1].until = until
 	} else {
@@ -395,7 +415,7 @@ func (a *App) Toast(format string, args ...any) {
 			a.toasts = a.toasts[len(a.toasts)-maxToasts:]
 		}
 	}
-	a.dirty = true
+	a.Damage(a.toastsArea())
 }
 
 // Run drives the UI until ctx ends or the user exits. A pending
@@ -406,7 +426,7 @@ func (a *App) Run(ctx context.Context) error {
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
 	for !a.quit {
-		if a.dirty {
+		if a.dirty || len(a.damage) > 0 {
 			if err := a.render(); err != nil {
 				return err
 			}
@@ -477,13 +497,15 @@ func (a *App) onWake() {
 	for _, e := range a.rep.Due(now) {
 		a.dispatch(e)
 	}
+	shown := a.toastsArea()
 	kept := a.toasts[:0]
 	for _, t := range a.toasts {
 		if now.Before(t.until) {
 			kept = append(kept, t)
-		} else {
-			a.dirty = true
 		}
+	}
+	if len(kept) < len(a.toasts) {
+		a.Damage(shown) // the rest stay where they were
 	}
 	a.toasts = kept
 	var due []timer
@@ -514,10 +536,15 @@ func (a *App) onWake() {
 	}
 	a.checkScreen(now)
 	if !a.volumeUntil.IsZero() && !now.Before(a.volumeUntil) {
-		a.volumeUntil, a.dirty = time.Time{}, true // the panel goes
+		a.Damage(a.volumePanelRect()) // the panel goes
+		a.volumeUntil = time.Time{}
 	}
 	if a.animate || (!a.mqWake.IsZero() && !now.Before(a.mqWake)) {
-		a.dirty = true
+		if a.mqRect.Empty() {
+			a.dirty = true
+		} else {
+			a.Damage(a.mqRect)
+		}
 	}
 	if !a.bDown.IsZero() && len(a.stack) == 1 && !now.Before(a.bDown.Add(exitHold)) {
 		a.bDown = time.Time{}
@@ -525,7 +552,7 @@ func (a *App) onWake() {
 		a.dirty = true
 	}
 	if a.o.Player != nil && a.o.Player.State().Status == player.Playing {
-		a.dirty = true // progress
+		a.damageAll(a.ticks) // progress
 	}
 }
 
@@ -549,6 +576,7 @@ func (a *App) onInput(e input.Event) {
 		}
 		return
 	}
+	a.noteSource(e)
 	now := a.o.Now()
 	a.lastInput = now
 	if a.wake() && e.Kind == input.Press && !isMediaButton(e.Button) {
@@ -587,7 +615,24 @@ func (a *App) onInput(e input.Event) {
 }
 
 func (a *App) dispatch(e input.Event) {
-	a.dirty = true
+	a.exact = false
+	top, title, hints := a.Top(), "", ""
+	if top != nil {
+		title, hints = top.Title(), hintKey(a.screenHints())
+	}
+	defer func() {
+		switch {
+		case !a.exact || a.Top() != top:
+			a.dirty = true // what the key changed is unknown: redraw it all
+		case top != nil:
+			if top.Title() != title {
+				a.Damage(a.headerRect()) // e.g. Artists · B follows the focus
+			}
+			if hintKey(a.screenHints()) != hints {
+				a.Damage(a.hintRect()) // e.g. Servers: the Add row has no menu
+			}
+		}
+	}()
 	if a.confirm {
 		switch e.Button {
 		case input.BtnA:
@@ -639,7 +684,7 @@ func (a *App) dispatch(e input.Event) {
 }
 
 func (a *App) hasQueue() bool {
-	return a.o.Player != nil && len(a.o.Player.State().Queue) > 0
+	return a.o.Player != nil && len(a.state().Queue) > 0
 }
 
 // hasCurrent reports whether a song is selected (the mini bar shows it).
@@ -647,7 +692,7 @@ func (a *App) hasCurrent() bool {
 	if a.o.Player == nil {
 		return false
 	}
-	_, ok := a.o.Player.State().Current()
+	_, ok := a.state().Current()
 	return ok
 }
 
@@ -660,34 +705,62 @@ func (a *App) present(c *gfx.Canvas) error {
 	return a.o.Display.Present(a.scaler.Scale(c))
 }
 
+// render draws the next frame: only the damaged areas when nothing else
+// changed, otherwise the whole frame.
 func (a *App) render() error {
+	a.frameNow = a.o.Now()
+	if a.o.Player != nil {
+		st := a.o.Player.State()
+		a.frameState = &st
+	}
+	defer func() { a.frameNow, a.frameState = time.Time{}, nil }()
+	full := a.dirty
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {
 		a.saver = false
 	}
 	if a.saver {
+		a.damage = a.damage[:0]
 		a.drawSaver(a.canvas)
 		return a.present(a.canvas)
 	}
+	if !full && len(a.damage) > 0 {
+		if done, err := a.renderDamage(); done || err != nil {
+			return err
+		}
+	}
+	a.damage = a.damage[:0]
+	a.drawFrame(a.canvas)
+	return a.present(a.canvas)
+}
+
+// drawFrame draws everything on c (within its clip).
+func (a *App) drawFrame(c *gfx.Canvas) {
 	a.animate, a.mq.seen, a.mqWake, a.dim = false, false, time.Time{}, false
-	c := a.canvas
+	a.resetMarks()
 	c.Clear(colBg)
 	top := a.Top()
 	p := a.P
 	// Content stays inside the title-safe area (SafeY lines top and bottom;
 	// panels still run to the edges).
-	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY)
+	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY-a.hintH())
 	if top != nil {
 		_, fullscreen := top.(*NowPlayingScreen)
 		if !fullscreen {
 			a.drawHeader(c, top.Title())
-			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, p.H-2*p.SafeY-p.HeaderH)
+			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, body.Bottom()-p.SafeY-p.HeaderH)
 			if a.hasCurrent() {
 				body.H -= p.MiniBarH
 				a.drawMiniBar(c, gfx.R(0, body.Bottom(), p.W, p.MiniBarH))
 			}
 		}
+		// A screen draws only inside its own area, whatever it overflows
+		// (a partial frame's damage clip stays in force).
+		outer := c.Clip()
+		c.SetClip(body.Intersect(outer))
 		top.Draw(a, c, body)
+		c.SetClip(outer)
+		a.drawHints(c)
 	}
 	if !a.mq.seen {
 		a.mq = marquee{}
@@ -697,12 +770,14 @@ func (a *App) render() error {
 	if a.confirm {
 		a.drawConfirm(c)
 	}
-	return a.present(c)
 }
+
+// headerRect is the title bar across the top.
+func (a *App) headerRect() gfx.Rect { return gfx.R(0, 0, a.P.W, a.P.SafeY+a.P.HeaderH) }
 
 func (a *App) drawHeader(c *gfx.Canvas, title string) {
 	p := a.P
-	c.Fill(gfx.R(0, 0, p.W, p.SafeY+p.HeaderH), colPanel)
+	c.Fill(a.headerRect(), colPanel)
 	f := a.F.Title
 	y := p.SafeY + (p.HeaderH+f.Ascent()-f.Descent())/2
 	w := p.W - 2*p.Margin
@@ -731,7 +806,7 @@ func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx
 		f.Draw(c, x, y, f.Truncate(s, w), col, clip)
 		return
 	}
-	now := a.o.Now()
+	now := a.clock()
 	if a.mq.text != s {
 		a.mq = marquee{text: s, since: now}
 	}
@@ -746,11 +821,12 @@ func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx
 	}
 	vis, dx := f.Marquee(s, off)
 	area := gfx.R(x, y-f.Ascent(), w, f.Height()).Intersect(clip)
+	a.markMarquee(area)
 	f.Draw(c, x+dx, y, vis, col, area)
 }
 
 func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
-	st := a.o.Player.State()
+	st := a.state()
 	song, _ := st.Current()
 	c.Fill(gfx.R(r.X, r.Y, r.W, a.P.H-r.Y), colPanel) // to the bottom edge, past the safe area
 	p := a.P
@@ -769,6 +845,7 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 	iconText(c, f, statusIcon(st.Status), x, base, f.Truncate(line, w-f.Ascent()), colText, c.Bounds())
 	if d := time.Duration(song.Duration) * time.Second; d > 0 {
 		bw := progressW(w, st.Position, d)
+		a.markTick(gfx.R(x, r.Bottom()-max(p.Margin/6, 2)-2, w, 2))
 		c.Fill(gfx.R(x, r.Bottom()-max(p.Margin/6, 2)-2, w, 2), colArtBg)
 		c.Fill(gfx.R(x, r.Bottom()-max(p.Margin/6, 2)-2, bw, 2), colAccent)
 	}
@@ -777,14 +854,22 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 func (a *App) drawToasts(c *gfx.Canvas) {
 	f := a.F.Body
 	p := a.P
-	y := p.H - p.SafeY - p.MiniBarH - p.Margin
-	for i := len(a.toasts) - 1; i >= 0; i-- {
-		text := f.Truncate(a.toasts[i].text, p.W-4*p.Margin)
-		w := f.Measure(text) + p.Margin
-		h := f.Height() + p.Margin/2
-		r := gfx.R((p.W-w)/2, y-h, w, h)
+	a.eachToast(func(r gfx.Rect, text string) {
 		c.Fill(r, colOverlay)
 		f.Draw(c, r.X+p.Margin/2, r.Y+p.Margin/4+f.Ascent(), text, colText, c.Bounds())
+	})
+}
+
+// eachToast calls f with each toast's box and text, newest at the bottom.
+func (a *App) eachToast(f func(r gfx.Rect, text string)) {
+	fb := a.F.Body
+	p := a.P
+	y := p.H - p.SafeY - a.hintH() - p.MiniBarH - p.Margin
+	for i := len(a.toasts) - 1; i >= 0; i-- {
+		text := fb.Truncate(a.toasts[i].text, p.W-4*p.Margin)
+		w := fb.Measure(text) + p.Margin
+		h := fb.Height() + p.Margin/2
+		f(gfx.R((p.W-w)/2, y-h, w, h), text)
 		y -= h + p.Margin/4
 	}
 }
@@ -806,6 +891,7 @@ func (a *App) drawConfirm(c *gfx.Canvas) {
 
 // drawArt draws a cover (or a placeholder while it loads) into r.
 func (a *App) drawArt(c *gfx.Canvas, id subsonic.ID, r gfx.Rect) {
+	a.markArt(id, r)
 	c.Fill(r, colArtBg)
 	if img, ok := a.Art(id, r.W); ok {
 		// Centre non-square art inside the square.

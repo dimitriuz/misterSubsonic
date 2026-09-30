@@ -67,6 +67,7 @@ type Event struct {
 	Button Button
 	Kind   Kind
 	Rune   rune
+	Pad    bool // sent by a gamepad (its buttons, stick or hat), not a keyboard
 }
 
 // Repeat timing (spec §8.4).
@@ -92,6 +93,7 @@ func repeats(b Button) bool {
 // Due whenever NextDeadline passes.
 type Repeater struct {
 	held  Button
+	pad   bool // the held press came from a gamepad
 	next  time.Time
 	count int
 }
@@ -101,7 +103,7 @@ func (r *Repeater) Feed(e Event, now time.Time) {
 	switch e.Kind {
 	case Press:
 		if repeats(e.Button) {
-			r.held, r.next, r.count = e.Button, now.Add(RepeatDelay), 0
+			r.held, r.pad, r.next, r.count = e.Button, e.Pad, now.Add(RepeatDelay), 0
 		} else {
 			r.held = BtnNone
 		}
@@ -136,5 +138,5 @@ func (r *Repeater) Due(now time.Time) []Event {
 	if !r.next.After(now) {
 		r.next = now.Add(step)
 	}
-	return []Event{{Button: r.held, Kind: Repeat}}
+	return []Event{{Button: r.held, Kind: Repeat, Pad: r.pad}}
 }

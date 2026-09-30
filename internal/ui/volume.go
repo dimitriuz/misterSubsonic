@@ -9,8 +9,7 @@ import (
 )
 
 // The volume indicator: a panel that shows the level for a moment whenever
-// the volume or mute changes (from any screen or key), and a compact
-// speaker and bar on Now Playing.
+// the volume or mute changes (from any screen or key).
 
 // volumeShowTime is how long the panel stays after the last change.
 const volumeShowTime = 1500 * time.Millisecond
@@ -25,7 +24,17 @@ func volumeLevel(db float64) float64 { return max(0, min(1, (db+60)/60)) }
 // showVolume brings up the panel (again) for volumeShowTime.
 func (a *App) showVolume() {
 	a.volumeUntil = a.o.Now().Add(volumeShowTime)
-	a.dirty = true
+	a.Damage(a.volumePanelRect())
+}
+
+// volumePanelRect is where the volume panel is drawn: centred under the
+// header, sized for the widest label ("Muted").
+func (a *App) volumePanelRect() gfx.Rect {
+	p, f := a.P, a.F.Body
+	icon := f.Height()
+	pad := p.Margin / 2
+	w := pad + icon + pad + max(p.W/4, 6*icon) + pad + f.Measure("Muted") + pad
+	return gfx.R((p.W-w)/2, p.SafeY+p.HeaderH+p.Margin/2, w, icon+2*pad)
 }
 
 // drawSpeaker draws a speaker filling the square r: the box and cone, then
@@ -126,7 +135,7 @@ func fillRoundRect(c *gfx.Canvas, r gfx.Rect, rad int, col gfx.Color) {
 // drawVolumePanel draws the volume panel centred under the header while it
 // is due: the speaker, the bar, and the level (0–100) or "Muted".
 func (a *App) drawVolumePanel(c *gfx.Canvas) {
-	if a.volumeUntil.IsZero() || !a.o.Now().Before(a.volumeUntil) {
+	if a.volumeUntil.IsZero() || !a.clock().Before(a.volumeUntil) {
 		return
 	}
 	p, f := a.P, a.F.Body
@@ -140,9 +149,7 @@ func (a *App) drawVolumePanel(c *gfx.Canvas) {
 	barW := max(p.W/4, 6*icon)
 	labelW := f.Measure("Muted")
 	pad := p.Margin / 2
-	w := pad + icon + pad + barW + pad + labelW + pad
-	h := icon + 2*pad
-	panel := gfx.R((p.W-w)/2, p.SafeY+p.HeaderH+p.Margin/2, w, h)
+	panel := a.volumePanelRect()
 	fillRoundRect(c, panel, pad, colPanel.WithAlpha(0xF0))
 	x := panel.X + pad
 	drawSpeaker(c, gfx.R(x, panel.Y+pad, icon, icon), level, a.muted, colText)
@@ -155,20 +162,4 @@ func (a *App) drawVolumePanel(c *gfx.Canvas) {
 		col = colDim
 	}
 	f.Draw(c, x+(labelW-f.Measure(label))/2, panel.Y+pad+(icon+f.Ascent()-f.Descent())/2, label, col, c.Bounds())
-}
-
-// drawVolumeInline draws the compact indicator at x on the text line at
-// baseline (Now Playing): a small speaker and a short bar, within maxW.
-func (a *App) drawVolumeInline(c *gfx.Canvas, f *gfx.Font, x, baseline, maxW int) {
-	s := f.Ascent()
-	barW := 4 * s
-	if s+s/3+barW > maxW {
-		return
-	}
-	db := a.volumeDB()
-	level := volumeLevel(db)
-	col := colDim
-	drawSpeaker(c, gfx.R(x, baseline-s, s, s), level, a.muted, col)
-	bh := max(s*2/5, 3)
-	drawVolumeBar(c, gfx.R(x+s+s/3, baseline-(s+bh)/2, barW, bh), level, a.muted, volumeSegments/2)
 }

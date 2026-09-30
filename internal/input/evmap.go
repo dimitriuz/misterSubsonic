@@ -14,6 +14,7 @@ const (
 	absY     = 0x01
 	absHat0X = 0x10
 	absHat0Y = 0x11
+	absHat3Y = 0x17
 )
 
 // Keyboard and gamepad key codes (linux/input-event-codes.h).
@@ -51,6 +52,7 @@ const (
 	keyDown         = 108
 	keyKPEnter      = 96
 
+	btnMisc   = 0x100 // the first BTN_* code: below it are keyboard keys
 	btnSouth  = 0x130
 	btnEast   = 0x131
 	btnNorth  = 0x133
@@ -128,6 +130,39 @@ func ParseMisterMap(b []byte) (map[uint16]Button, error) {
 	return m, nil
 }
 
+// AxisKey names one side of an analog axis that a MiSTer map assigns to a
+// button (Main_MiSTer's KEY_EMU codes 0x300+2*axis for the low side, +1 for
+// the high side).
+type AxisKey struct {
+	Axis uint16
+	High bool
+}
+
+// keyEmu is Main_MiSTer's KEY_EMU (KEY_MAX+1): where axis pseudo-keys start.
+const keyEmu = 0x300
+
+// ParseMisterAxes returns the map's analog-axis entries (for example a trigger
+// assigned to R). Hat axes (ABS_HAT0X..ABS_HAT3Y) are skipped: the translator
+// handles hats generically.
+func ParseMisterAxes(b []byte) (map[AxisKey]Button, error) {
+	if len(b) < 4*len(misterSlots) {
+		return nil, fmt.Errorf("input: map file too short (%d bytes)", len(b))
+	}
+	m := map[AxisKey]Button{}
+	for i, btn := range misterSlots {
+		code := binary.LittleEndian.Uint32(b[4*i:]) & 0xFFFF
+		if code < keyEmu || code > 0x3ff {
+			continue
+		}
+		axis := uint16((code - keyEmu) >> 1)
+		if axis >= absHat0X && axis <= absHat3Y {
+			continue
+		}
+		m[AxisKey{axis, code&1 == 1}] = btn
+	}
+	return m, nil
+}
+
 // AbsRange is an absolute axis's calibration (from EVIOCGABS).
 type AbsRange struct{ Min, Max int32 }
 
@@ -137,6 +172,55 @@ type translator struct {
 	abs   map[uint16]AbsRange
 	state map[uint16]int  // axis -> -1, 0, +1
 	shift map[uint16]bool // Shift keys held
+
+	axes     map[AxisKey]Button // axes the MiSTer map turned into buttons
+	axisSide map[uint16]int     // mapped axis -> -1 low, 0 none, +1 high
+}
+
+// withAxes gives the translator the map's axis-to-button entries.
+func (t *translator) withAxes(axes map[AxisKey]Button) *translator {
+	t.axes = axes
+	return t
+}
+
+// axisMapped reports whether either side of the axis is mapped to a button.
+func (t *translator) axisMapped(code uint16) bool {
+	_, lo := t.axes[AxisKey{code, false}]
+	_, hi := t.axes[AxisKey{code, true}]
+	return lo || hi
+}
+
+// translateAxis handles a mapped axis like MiSTer: the high side is pressed
+// above centre+range/4, the low side (only if mapped) below centre-range/4.
+func (t *translator) translateAxis(code uint16, value int32) []Event {
+	r, ok := t.abs[code]
+	if !ok || r.Max <= r.Min {
+		return nil
+	}
+	rng := int64(r.Max) - int64(r.Min) + 1
+	center, thr := int64(r.Min)+rng/2, rng/4
+	side := 0
+	if v := int64(value); v > center+thr {
+		side = 1
+	} else if _, lo := t.axes[AxisKey{code, false}]; lo && v < center-thr {
+		side = -1
+	}
+	prev := t.axisSide[code]
+	if side == prev {
+		return nil
+	}
+	if t.axisSide == nil {
+		t.axisSide = map[uint16]int{}
+	}
+	t.axisSide[code] = side
+	var out []Event
+	if prev != 0 {
+		out = append(out, Event{Button: t.axes[AxisKey{code, prev > 0}], Kind: Release})
+	}
+	if side != 0 {
+		out = append(out, Event{Button: t.axes[AxisKey{code, side > 0}], Kind: Press})
+	}
+	return out
 }
 
 func newTranslator(keys map[uint16]Button, abs map[uint16]AbsRange) *translator {
@@ -146,6 +230,15 @@ func newTranslator(keys map[uint16]Button, abs map[uint16]AbsRange) *translator 
 // handle converts a raw event. value: 1 press, 0 release, 2 kernel
 // autorepeat (buttons ignore it, the app repeats them itself; typing repeats).
 func (t *translator) handle(typ, code uint16, value int32) []Event {
+	evs := t.translate(typ, code, value)
+	pad := typ == evAbs || code >= btnMisc // gamepad buttons and sticks; keyboard keys are below BTN_MISC
+	for i := range evs {
+		evs[i].Pad = pad
+	}
+	return evs
+}
+
+func (t *translator) translate(typ, code uint16, value int32) []Event {
 	switch typ {
 	case evKey:
 		b, ok := t.keys[code]
@@ -177,6 +270,9 @@ func (t *translator) handle(typ, code uint16, value int32) []Event {
 		}
 		return nil
 	case evAbs:
+		if t.axisMapped(code) {
+			return t.translateAxis(code, value)
+		}
 		var neg, pos Button
 		switch code {
 		case absX, absHat0X:

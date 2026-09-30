@@ -17,7 +17,7 @@ Suggested order:
 - **Seeks in a sized MP3 reuse the stream.** Every seek in a raw MP3 of known size reopens the stream: a few HTTP requests, and the queued next track is dropped. When the byte estimate falls inside the reader's window, seek that reader and open a fresh decoder on it instead.
 - **Accurate VBR MP3 seeks.** Read the Xing/Info header's 100-point table of contents (in the first frame after the ID3v2 tag), and use it instead of pure proportion. Without a table, keep the proportional estimate.
 - **Text fields trim by width, not by rune** (`drawField`).
-- **Faster redraws at 1080p.** A native 1920×1080 frame takes about 68 ms on the MiSTer (Plan 4's measurements in `docs/spikes.md`). Redraw only what changed for the common cases: the focus moving in a list or grid, the progress bar, the marquee, the volume panel. Present only the changed rows.
+- **Faster list scrolling at full resolution.** Plan 4b made focus moves, the tick and the marquee partial (≤ 12 ms at 1920×1200); a scroll step still redraws the list area, about 40 ms. The A9 is memory-bound (shifting the pixels measured slower than redrawing them), so the next step would be fewer bytes per frame, not a smarter redraw.
 - **The deferred minors** in `docs/superpowers/plan-2a-followups.md`, under "Plan 2c minors", "Plan 3a minors", "Plan 3b minors" and "Plan 4 minors". Pick the ones that still matter, for example:
   - `Promote` allocating under the stream lock;
   - the launcher's TERM handling;
