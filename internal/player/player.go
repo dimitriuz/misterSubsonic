@@ -555,7 +555,7 @@ func (p *Player) SetScrobble(on bool) {
 
 // Resumable finds a saved queue: the server's first, then the local file.
 func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
-	if pq, err := p.o.API.GetPlayQueue(ctx); err == nil && pq != nil {
+	if pq, err := p.o.API.GetPlayQueue(ctx); err == nil && pq != nil && len(pq.Songs) > 0 {
 		r := &Resume{Songs: pq.Songs, Position: time.Duration(pq.Position) * time.Millisecond}
 		for i, s := range pq.Songs {
 			if s.ID == pq.Current {
