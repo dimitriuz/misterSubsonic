@@ -5,6 +5,8 @@
 package ui
 
 import (
+	"math"
+
 	"mistersubsonic/internal/gfx"
 )
 
@@ -39,17 +41,47 @@ var (
 )
 
 // PickProfile chooses the layout for a framebuffer (spec §8.1): "auto" picks
-// CRT at 288 lines or fewer, otherwise HDMI.
+// CRT at 288 lines or fewer, otherwise HDMI. The HDMI layout is scaled to
+// the framebuffer, so the picture is drawn at its own resolution: sharp
+// text and covers at 960x600 or 1920x1080 rather than a 1280x720 picture
+// resampled. A CRT layout keeps its logical size (its pixels aren't square).
 func PickProfile(fbW, fbH int, override string) Profile {
 	crt := override == "crt" || (override != "hdmi" && fbH <= gfx.CRTMaxLines)
 	if !crt {
-		return ProfileHDMI
+		return scaleProfile(ProfileHDMI, fbW, fbH)
 	}
 	p := ProfileCRT240
 	if fbH == 288 || fbH == 576 {
 		p.H = 288
 	}
 	return p
+}
+
+// Smallest font sizes a scaled layout uses, so a small HDMI framebuffer
+// stays readable.
+const minTitle, minBody, minSmall = 15, 12, 10
+
+// scaleProfile is p resized to a w×h canvas: every length is scaled by the
+// factor that fits p's canvas into w×h, and the canvas takes the whole of
+// w×h (a 16:10 screen gets more rows, not black bars).
+func scaleProfile(p Profile, w, h int) Profile {
+	if w == p.W && h == p.H || w <= 0 || h <= 0 {
+		return p
+	}
+	k := min(float64(w)/float64(p.W), float64(h)/float64(p.H))
+	s := func(v int) int {
+		if v == 0 {
+			return 0
+		}
+		return max(int(math.Round(float64(v)*k)), 1)
+	}
+	q := p
+	q.W, q.H = w, h
+	q.Margin, q.HeaderH, q.RowH, q.Row2H, q.Thumb = s(p.Margin), s(p.HeaderH), s(p.RowH), s(p.Row2H), s(p.Thumb)
+	q.Title, q.Body, q.Small = max(s(p.Title), minTitle), max(s(p.Body), minBody), max(s(p.Small), minSmall)
+	q.ArtNow, q.ArtAlbum, q.MiniBarH, q.SafeY = s(p.ArtNow), s(p.ArtAlbum), s(p.MiniBarH), s(p.SafeY)
+	q.MarqueeSpeed, q.Cover, q.SideW = s(p.MarqueeSpeed), s(p.Cover), s(p.SideW)
+	return q
 }
 
 // Colors.

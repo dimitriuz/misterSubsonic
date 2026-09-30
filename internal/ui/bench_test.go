@@ -34,17 +34,24 @@ func BenchmarkRepaint(b *testing.B) {
 			ta.now = ta.now.Add(2 * marqueeDelay)
 		}},
 		{"albums-crt-240p", ProfileCRT240, 640, 240, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
-		// The framebuffer a 1920x1200 display gets (fb_size halves modes above 1080p).
-		{"albums-hdmi-960x600", ProfileHDMI, 960, 600, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
-		{"feed-hdmi-960x600", ProfileHDMI, 960, 600, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
-		{"nowplaying-hdmi-960x600", ProfileHDMI, 960, 600, func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() }, nil},
+		// The layout scaled to the framebuffer and drawn at its size (no
+		// scaling pass): 960x600 is what a 1920x1200 display gets (the
+		// MiSTer halves framebuffers above 1920x1080).
+		{"albums-native-960x600", PickProfile(960, 600, "auto"), 960, 600, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
+		{"feed-native-960x600", PickProfile(960, 600, "auto"), 960, 600, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
+		{"nowplaying-native-960x600", PickProfile(960, 600, "auto"), 960, 600, func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() }, nil},
+		{"albums-native-1920x1080", PickProfile(1920, 1080, "auto"), 1920, 1080, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
+		{"feed-native-1920x1080", PickProfile(1920, 1080, "auto"), 1920, 1080, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
 	}
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			t := &testing.T{}
 			ta := newTestApp(t, c.prof)
 			ta.o.Display = nullDisplay{c.fbW, c.fbH} // the framebuffer's pack is measured in gfx
-			ta.scaler = gfx.NewScaler(c.prof.W, c.prof.H, c.fbW, c.fbH)
+			ta.scaler = nil
+			if c.prof.W != c.fbW || c.prof.H != c.fbH {
+				ta.scaler = gfx.NewScaler(c.prof.W, c.prof.H, c.fbW, c.fbH)
+			}
 			for i := 0; i < 40; i++ { // a long list, so every row is drawn
 				ta.lib.albums = append(ta.lib.albums, ta.lib.albums[i%3])
 			}

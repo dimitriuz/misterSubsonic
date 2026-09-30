@@ -321,6 +321,41 @@ func TestPickProfile(t *testing.T) {
 	}
 }
 
+// The HDMI layout is scaled to the framebuffer and drawn at its size.
+func TestHDMIProfileScalesToTheFramebuffer(t *testing.T) {
+	if p := PickProfile(1280, 720, "auto"); p != ProfileHDMI {
+		t.Fatalf("1280x720 changed the layout: %+v", p)
+	}
+	p := PickProfile(960, 600, "auto") // a 1920x1200 display's framebuffer
+	if p.Name != "hdmi" || p.W != 960 || p.H != 600 || p.Body != 18 || p.Title != 26 || p.Cover != 128 ||
+		p.SideW != 188 || p.RowH != 42 || p.ArtNow != 300 || p.Margin != 27 {
+		t.Fatalf("960x600: %+v", p)
+	}
+	if p := PickProfile(1920, 1080, "auto"); p.W != 1920 || p.Body != 36 || p.Cover != 255 {
+		t.Fatalf("1920x1080: %+v", p)
+	}
+	if p := PickProfile(640, 360, "hdmi"); p.Title != 17 || p.Body != 12 || p.Small != minSmall { // half size; 9 px would be too small
+		t.Fatalf("a tiny framebuffer's fonts: %+v", p)
+	}
+	if p := PickProfile(640, 240, "auto"); p.W != 320 {
+		t.Fatalf("a CRT keeps its logical size: %+v", p)
+	}
+}
+
+// A canvas the display's own size is presented as it is: no scaling pass.
+func TestNativeCanvasIsPresentedUnscaled(t *testing.T) {
+	prof := PickProfile(960, 600, "auto")
+	ta := newTestApp(t, prof)
+	if ta.scaler != nil {
+		t.Fatal("a scaler was set up for a canvas the size of the display")
+	}
+	ta.Push(NewHomeScreen())
+	got := ta.settle(t)
+	if got.W != 960 || got.H != 600 {
+		t.Fatalf("presented %dx%d", got.W, got.H)
+	}
+}
+
 func TestFormatHelpers(t *testing.T) {
 	if clock(3*time.Minute+5*time.Second) != "3:05" || clock(time.Hour+time.Minute) != "1:01:00" {
 		t.Fatal("clock format")

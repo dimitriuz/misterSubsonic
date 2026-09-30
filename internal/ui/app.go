@@ -221,7 +221,9 @@ func New(o Options) (*App, error) {
 	}
 	a.canvas = gfx.NewCanvas(a.P.W, a.P.H)
 	pw, ph := o.Display.Size()
-	a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
+	if pw != a.P.W || ph != a.P.H { // drawn at the display's size: nothing to scale
+		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
+	}
 	if _, ok := o.Display.(gfx.Checker); ok {
 		a.checkAt = o.Now().Add(watchdogEvery)
 	}
@@ -626,6 +628,15 @@ func (a *App) hasCurrent() bool {
 	return ok
 }
 
+// present shows the logical canvas c on the display, scaled when their
+// sizes differ.
+func (a *App) present(c *gfx.Canvas) error {
+	if a.scaler == nil {
+		return a.o.Display.Present(c)
+	}
+	return a.o.Display.Present(a.scaler.Scale(c))
+}
+
 func (a *App) render() error {
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {
@@ -633,7 +644,7 @@ func (a *App) render() error {
 	}
 	if a.saver {
 		a.drawSaver(a.canvas)
-		return a.o.Display.Present(a.scaler.Scale(a.canvas))
+		return a.present(a.canvas)
 	}
 	a.animate, a.mq.seen, a.mqWake, a.dim = false, false, time.Time{}, false
 	c := a.canvas
@@ -662,7 +673,7 @@ func (a *App) render() error {
 	if a.confirm {
 		a.drawConfirm(c)
 	}
-	return a.o.Display.Present(a.scaler.Scale(c))
+	return a.present(c)
 }
 
 func (a *App) drawHeader(c *gfx.Canvas, title string) {
