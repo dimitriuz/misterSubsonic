@@ -602,6 +602,9 @@ func (a *App) onInput(e input.Event) {
 	a.noteSource(e)
 	now := a.o.Now()
 	a.lastInput = now
+	if e.Kind == input.Press {
+		delete(a.wakeKeys, e.Button) // a stale wake key: its release never came
+	}
 	if a.wake() && e.Kind == input.Press && !isMediaButton(e.Button) {
 		a.wakeKeys[e.Button] = true
 		return // the press that wakes the screensaver does nothing else (a media key still acts)

@@ -162,3 +162,30 @@ func (s *releaseSpy) Enter(*App)                       {}
 func (s *releaseSpy) Handle(*App, input.Event) bool    { return true }
 func (s *releaseSpy) Draw(*App, *gfx.Canvas, gfx.Rect) {}
 func (s *releaseSpy) Release(*App, input.Button)       { s.n++ }
+
+// A wake press whose release never arrives (a pad unplugged, drainInput)
+// must not leave the next press of that button half-handled: its release is
+// delivered and the auto-repeat stops.
+func TestScreensaverStaleWakeKeyDoesNotKeepRepeating(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press}) // wakes; its release is lost
+	if ta.saver {
+		t.Fatal("the press didn't wake the screensaver")
+	}
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press})
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Release})
+	if d := ta.rep.NextDeadline(); !d.IsZero() {
+		t.Fatal("Right keeps repeating after its release")
+	}
+}
+
+func TestDrainInputForgetsWakeKeys(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.wakeKeys[input.BtnRight] = true
+	ta.drainInput()
+	if len(ta.wakeKeys) != 0 {
+		t.Fatalf("wakeKeys %v survive drainInput", ta.wakeKeys)
+	}
+}

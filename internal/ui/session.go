@@ -109,6 +109,7 @@ func (a *App) drainInput() {
 		default:
 			a.rep = input.Repeater{}
 			a.swallowed = map[input.Button]bool{}
+			a.wakeKeys = map[input.Button]bool{}
 			a.bDown = time.Time{}
 			return
 		}

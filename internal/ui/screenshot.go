@@ -22,7 +22,9 @@ func (a *App) screenshot() {
 		return
 	}
 	if a.shooting {
-		a.Toast("Still saving the last screenshot")
+		if !a.saver { // silent over the screensaver: a toast would wake it
+			a.Toast("Still saving the last screenshot")
+		}
 		return
 	}
 	a.shooting = true

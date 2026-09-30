@@ -132,3 +132,26 @@ func TestScreenshotWhileSavingSaysSo(t *testing.T) {
 		t.Fatalf("%d files, want the one screenshot", len(entries))
 	}
 }
+
+// Over the screensaver the toasts are silent too: a toast would wake it.
+func TestScreenshotToastsStaySilentOverTheScreensaver(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.o.ScreenshotDir = t.TempDir()
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	if !ta.saver {
+		t.Fatal("the screensaver didn't start")
+	}
+	ta.settle(t)
+	ta.press(input.BtnScreenshot)
+	ta.press(input.BtnScreenshot) // still saving
+	if !ta.saver || len(ta.toasts) != 0 {
+		t.Fatalf("saver %v, toasts %v after Still saving", ta.saver, ta.toasts)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	if !ta.saver || len(ta.toasts) != 0 {
+		t.Fatalf("saver %v, toasts %v after Screenshot saved", ta.saver, ta.toasts)
+	}
+}
