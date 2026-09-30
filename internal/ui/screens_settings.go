@@ -196,7 +196,7 @@ func (a *App) setVolume(db float64) {
 // app always starts with the sound on.
 func (a *App) setMuted(on bool) {
 	a.muted = on
-	a.showVolume() // keys that show it elsewhere too (Settings) redraw it all
+	a.showVolume()
 	if pl := a.Player(); pl != nil {
 		pl.SetMuted(on)
 	}

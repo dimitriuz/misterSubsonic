@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"fmt"
-	"math"
 	"time"
 
 	"mistersubsonic/internal/gfx"
@@ -64,6 +62,7 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 		s.selDown, s.selMuted = false, false
 		if !muted {
 			s.cycleMode(a)
+			a.dirty = true // the mode label may change without a player event
 		}
 		return
 	}
@@ -179,6 +178,9 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 	case input.BtnY:
 		a.Push(NewQueueScreen())
 	case input.BtnSelect: // a press starts a hold: short cycles the mode, long mutes
+		if s.selDown {
+			break // only a press starts a hold, not a second one
+		}
 		s.selDown, s.selMuted = true, false
 		s.selHold++
 		hold := s.selHold
@@ -269,15 +271,6 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	if a.insecure {
 		line(fs, "insecure: certificate not checked", colError)
 	}
-}
-
-// volumeLabel is e.g. "Vol −12 dB" (a real minus sign).
-func volumeLabel(db float64) string {
-	v := int(math.Round(db))
-	if v < 0 {
-		return fmt.Sprintf("Vol −%d dB", -v)
-	}
-	return "Vol 0 dB"
 }
 
 // QueueScreen lists the play queue.

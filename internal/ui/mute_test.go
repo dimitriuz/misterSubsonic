@@ -110,3 +110,22 @@ func TestSelectHoldIsCancelledByLeavingTheScreen(t *testing.T) {
 		t.Fatal("muted from another screen")
 	}
 }
+
+// A short Select tap changes the mode label, which the player announces
+// with no event: the release must redraw the frame.
+func TestSelectTapRedrawsTheModeLabel(t *testing.T) {
+	ta, _ := connectedApp(t)
+	playingState(ta)
+	ta.pl.st.Repeat = player.RepeatAll
+	ta.Push(NewNowPlayingScreen())
+	ta.settle(t)
+	ta.clean()
+	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Press})
+	ta.settle(t)
+	ta.clean() // only the release can mark the frame dirty now
+	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Release})
+	if ta.pl.st.Repeat != player.RepeatOne || !ta.dirty {
+		t.Fatalf("repeat %v, dirty %v", ta.pl.st.Repeat, ta.dirty)
+	}
+	ta.settle(t) // the verify mode compares with a full frame
+}
