@@ -60,7 +60,7 @@ func main() {
 	flag.BoolVar(&f.restoreConsole, "restore-console", false, "put the console back in text mode and exit (the launcher runs this after the app)")
 	flag.Parse()
 	if f.restoreConsole {
-		if err := platform.RestoreText(); err != nil {
+		if err := restoreConsole(); err != nil {
 			fmt.Fprintln(os.Stderr, "mistersubsonic:", err)
 			os.Exit(1)
 		}
@@ -227,10 +227,15 @@ func run(f flags) (err error) {
 	var inputs []<-chan input.Event
 	switch f.display {
 	case "fbdev":
-		fb, err := gfx.OpenFB(f.fbdev)
+		fb, err := openFB(f.fbdev, profileName, dataDir, cfg.Display.FullResolution)
 		if err != nil {
 			return err
 		}
+		defer func() { // after the framebuffer is closed: its old size back
+			if err := fbControl().Restore(); err != nil {
+				log.Printf("display: %v", err)
+			}
+		}()
 		con, err := platform.GraphicsMode()
 		if err != nil {
 			log.Printf("console: %v (its text may show over the app)", err)

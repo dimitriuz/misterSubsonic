@@ -52,6 +52,7 @@ type Playback struct {
 type Display struct {
 	Profile            string `toml:"profile"`
 	ScreensaverMinutes int    `toml:"screensaver_minutes"`
+	FullResolution     bool   `toml:"full_resolution"`
 }
 
 type Cache struct {
@@ -62,7 +63,7 @@ type Cache struct {
 func Default() *Config {
 	return &Config{
 		Playback: Playback{TranscodeFormat: "mp3", TranscodeBitrate: 320, ReplayGain: "off", Scrobble: true, BufferMB: 32, ALSADevice: "default"},
-		Display:  Display{Profile: "auto", ScreensaverMinutes: 5},
+		Display:  Display{Profile: "auto", ScreensaverMinutes: 5, FullResolution: true},
 		Cache:    Cache{CoverArtMB: 200},
 	}
 }
