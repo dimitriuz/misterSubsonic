@@ -210,6 +210,7 @@ type App struct {
 	exact        bool                       // the key being handled damaged exactly what it changed
 	ticks        []gfx.Rect                 // drawn from the playback position
 	frameNow     time.Time                  // the clock while a frame is drawn
+	frameState   *player.State              // the player's state while a frame is drawn
 	mqRect       gfx.Rect                   // the scrolling title
 	arts         map[subsonic.ID][]gfx.Rect // where each cover was drawn
 	verify       bool                       // check partial frames against full ones
@@ -683,7 +684,7 @@ func (a *App) dispatch(e input.Event) {
 }
 
 func (a *App) hasQueue() bool {
-	return a.o.Player != nil && len(a.o.Player.State().Queue) > 0
+	return a.o.Player != nil && len(a.state().Queue) > 0
 }
 
 // hasCurrent reports whether a song is selected (the mini bar shows it).
@@ -691,7 +692,7 @@ func (a *App) hasCurrent() bool {
 	if a.o.Player == nil {
 		return false
 	}
-	_, ok := a.o.Player.State().Current()
+	_, ok := a.state().Current()
 	return ok
 }
 
@@ -708,7 +709,11 @@ func (a *App) present(c *gfx.Canvas) error {
 // changed, otherwise the whole frame.
 func (a *App) render() error {
 	a.frameNow = a.o.Now()
-	defer func() { a.frameNow = time.Time{} }()
+	if a.o.Player != nil {
+		st := a.o.Player.State()
+		a.frameState = &st
+	}
+	defer func() { a.frameNow, a.frameState = time.Time{}, nil }()
 	full := a.dirty
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {
@@ -816,7 +821,7 @@ func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx
 }
 
 func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
-	st := a.o.Player.State()
+	st := a.state()
 	song, _ := st.Current()
 	c.Fill(gfx.R(r.X, r.Y, r.W, a.P.H-r.Y), colPanel) // to the bottom edge, past the safe area
 	p := a.P

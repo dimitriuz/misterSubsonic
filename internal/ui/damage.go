@@ -30,6 +30,19 @@ func (a *App) clock() time.Time {
 	return a.o.Now()
 }
 
+// state is the player's state as drawing sees it: read once at the start of
+// a frame (like the clock), so every damaged area and the verify pass show
+// the same position; live outside a frame. Zero without a player.
+func (a *App) state() player.State {
+	if a.frameState != nil {
+		return *a.frameState
+	}
+	if a.o.Player == nil {
+		return player.State{}
+	}
+	return a.o.Player.State()
+}
+
 // Damage marks r as changed; the next frame redraws it.
 func (a *App) Damage(r gfx.Rect) {
 	r = r.Intersect(a.canvas.Bounds())
@@ -83,7 +96,7 @@ func (a *App) renderDamage() (bool, error) {
 	// Position, marquee and clock move on their own: every partial frame
 	// brings their regions up to date too, so what it leaves on screen is
 	// what a full frame would show (the verify pass sees the same clock).
-	if a.o.Player != nil && a.o.Player.State().Status == player.Playing {
+	if a.o.Player != nil && a.state().Status == player.Playing {
 		a.damage = append(a.damage, a.ticks...)
 	}
 	if a.animate && !a.mqRect.Empty() {

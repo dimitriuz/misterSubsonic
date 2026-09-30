@@ -128,7 +128,7 @@ func onOff(b bool) string {
 // volumeDB is the current volume: the player's, else the config's.
 func (a *App) volumeDB() float64 {
 	if pl := a.Player(); pl != nil {
-		return pl.State().VolumeDB
+		return a.state().VolumeDB
 	}
 	if a.volumePending {
 		return a.pendingDB // changed while there is no player

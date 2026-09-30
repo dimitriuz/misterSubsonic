@@ -166,7 +166,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 
 func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	p := a.P
-	st := a.Player().State()
+	st := a.state()
 	song, ok := st.Current()
 	if !ok {
 		a.drawCentered(c, area, "Nothing playing", colDim)
@@ -311,7 +311,7 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *QueueScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
-	st := a.Player().State()
+	st := a.state()
 	if len(st.Queue) == 0 {
 		a.drawCentered(c, area, "The queue is empty", colDim)
 		return

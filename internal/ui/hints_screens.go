@@ -65,11 +65,11 @@ func (s *ArtistsScreen) Hints(*App) []Hint {
 
 func (s *NowPlayingScreen) Hints(a *App) []Hint {
 	play := "Play"
-	if pl := a.Player(); pl != nil && pl.State().Status == player.Playing {
+	if pl := a.Player(); pl != nil && a.state().Status == player.Playing {
 		play = "Pause"
 	}
 	star := "Star"
-	if song, ok := a.Player().State().Current(); ok && a.isStarred(songStar(song)) {
+	if song, ok := a.state().Current(); ok && a.isStarred(songStar(song)) {
 		star = "Unstar"
 	}
 	return []Hint{hk(input.BtnA, play), hkPair(input.BtnLeft, input.BtnRight, "Seek"),
@@ -78,7 +78,7 @@ func (s *NowPlayingScreen) Hints(a *App) []Hint {
 }
 
 func (s *QueueScreen) Hints(a *App) []Hint {
-	if len(a.Player().State().Queue) == 0 {
+	if len(a.state().Queue) == 0 {
 		return []Hint{hk(input.BtnY, "Now Playing")} // Play and Menu have nothing to act on
 	}
 	return []Hint{playHint, menuHint, hk(input.BtnY, "Now Playing")}

@@ -61,7 +61,7 @@ func (a *App) drawSaver(c *gfx.Canvas) {
 	if pl == nil {
 		return
 	}
-	song, ok := pl.State().Current()
+	song, ok := a.state().Current()
 	if !ok {
 		return
 	}
