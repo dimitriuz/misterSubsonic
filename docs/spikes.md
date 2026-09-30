@@ -174,5 +174,6 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
   - **Screenshot:** the home feed's next row of covers overflowed onto the mini bar. Fixed in f9b9027: screens are clipped to their own area.
   - **Exit:** the user asked for it in the main menu (6ec2cc5).
 - **Build f9b9027:** all of the above works: R on the M30, Exit in the main menu, no overflow, and the hints (item 24).
-- **Not run:** the `kill -9` restore (item 22) and the `-verify-redraw` run (item 25).
+- **Crash restore (item 22):** after `kill -9` of the app at 1920×1200, the launcher said "stopped with an error". Its `-restore-console` put the framebuffer back to 960×600 and removed `/tmp/mistersubsonic.fb`, with no kernel errors.
+- **No stale pixels (item 25):** in a 2½-minute run with `-verify-redraw` at 1920×1200, with music playing, the user browsed grids and lists, opened Now Playing and used the volume keys. `log.txt` has 0 "partial redraw differs" lines.
 - **Caution for tools:** reading `/dev/fb0` with `read()` (`head`, `dd`, `cat`) while the app is at full resolution oopses the kernel (`mmiocpy`), because the driver's read path keeps the old window. Use the app's own screenshot (Print Screen) instead.
