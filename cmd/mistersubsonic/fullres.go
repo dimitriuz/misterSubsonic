@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"path/filepath"
 
@@ -32,29 +33,63 @@ func fullSize(fb platform.Size, profileName, dataDir string, enabled bool) (plat
 	return out, true
 }
 
+// keeper notices that the menu reset the framebuffer. On a display
+// reconnect Main_MiSTer re-initialises video, resets the framebuffer to the
+// half size and shows its own background instead of the Linux framebuffer;
+// from then on it ignores framebuffer requests, so nothing the app draws is
+// visible and the full size can't be asked for again. The app quits then, and
+// the user starts it again.
+type keeper struct {
+	ctl   platform.FBControl
+	want  platform.Size
+	count string
+}
+
+func newKeeper(ctl platform.FBControl, want platform.Size) *keeper {
+	return &keeper{ctl: ctl, want: want, count: ctl.ResCount()}
+}
+
+// check is the UI's WatchDisplay hook. repaint: the framebuffer was
+// reconfigured but is still the wanted size, so the whole frame must be
+// drawn. An error means the menu took the screen back.
+func (k *keeper) check() (repaint bool, err error) {
+	count := k.ctl.ResCount()
+	if count == k.count {
+		return false, nil
+	}
+	k.count = count
+	cur, ok := k.ctl.Current()
+	if ok && cur == k.want {
+		return true, nil
+	}
+	return false, fmt.Errorf("display: the display was reconnected and the MiSTer menu took the screen back (framebuffer reset to %v); quitting, start MiSTer Subsonic again", cur)
+}
+
 // openFB opens the framebuffer, switched to the full output resolution when
-// fullSize says so. Any failure falls back to the framebuffer as it was.
-func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, error) {
+// fullSize says so (then the keeper watches it; nil otherwise). Any failure
+// falls back to the framebuffer as it was.
+func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, *keeper, error) {
 	fb, err := gfx.OpenFB(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	w, h := fb.Size()
 	from := platform.Size{W: w, H: h}
 	to, ok := fullSize(from, profileName, dataDir, enabled)
 	if !ok {
-		return fb, nil
+		return fb, nil, nil
 	}
 	fb.Close()
 	ctl := fbControl()
 	if err := ctl.Switch(from, to); err != nil {
 		log.Printf("display: full resolution: %v", err)
-		return gfx.OpenFB(path)
+		fb, err := gfx.OpenFB(path)
+		return fb, nil, err
 	}
 	if fb, err = gfx.OpenFB(path); err == nil {
 		if w, h := fb.Size(); w == to.W && h == to.H {
 			log.Printf("display: framebuffer %v, full resolution (was %v)", to, from)
-			return fb, nil
+			return fb, newKeeper(ctl, to), nil
 		}
 		log.Printf("display: asked for %v, got %dx%d; keeping %v", to, w, h, from)
 		fb.Close()
@@ -62,7 +97,8 @@ func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, error) {
 	if err := ctl.Restore(); err != nil {
 		log.Printf("display: %v", err)
 	}
-	return gfx.OpenFB(path)
+	fb, err = gfx.OpenFB(path)
+	return fb, nil, err
 }
 
 // restoreConsole is -restore-console, which the launcher runs after every

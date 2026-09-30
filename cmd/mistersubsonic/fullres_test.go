@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -126,5 +127,84 @@ func TestAllowFullRes(t *testing.T) {
 	}
 	if allowFullRes(false, con) {
 		t.Error("full resolution allowed although disabled")
+	}
+}
+
+// keeperMenu stands in for the menu: res_count and the driver's size files.
+type keeperMenu struct {
+	ctl platform.FBControl
+}
+
+var fullSz = platform.Size{W: 1920, H: 1200}
+
+func newKeeperMenu(t *testing.T) (*keeperMenu, *keeper) {
+	t.Helper()
+	dir := t.TempDir()
+	m := &keeperMenu{ctl: platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 100 * time.Millisecond}}
+	os.WriteFile(m.ctl.Cmd, nil, 0o644)
+	os.WriteFile(m.ctl.State, []byte("960 600\n"), 0o644) // as openFB's Switch left it
+	m.publish(8, fullSz)
+	return m, newKeeper(m.ctl, fullSz)
+}
+
+func (m *keeperMenu) publish(count int, sz platform.Size) {
+	d := m.ctl.Sys
+	os.WriteFile(filepath.Join(d, "width"), []byte(strconv.Itoa(sz.W)+"\n"), 0o644)
+	os.WriteFile(filepath.Join(d, "height"), []byte(strconv.Itoa(sz.H)+"\n"), 0o644)
+	os.WriteFile(filepath.Join(d, "res_count"), []byte(strconv.Itoa(count)+"\n"), 0o644)
+}
+
+func (m *keeperMenu) commands() string {
+	b, _ := os.ReadFile(m.ctl.Cmd)
+	return strings.TrimSpace(string(b))
+}
+
+func TestKeeperIgnoresAnUnchangedCount(t *testing.T) {
+	m, k := newKeeperMenu(t)
+	if rep, err := k.check(); rep || err != nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if m.commands() != "" {
+		t.Fatal("sent a command")
+	}
+}
+
+func TestKeeperRepaintsWhenTheSizeIsStillWanted(t *testing.T) {
+	m, k := newKeeperMenu(t)
+	m.publish(9, fullSz) // reconfigured, same size
+	if rep, err := k.check(); !rep || err != nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if m.commands() != "" {
+		t.Fatalf("commands %q", m.commands())
+	}
+	if rep, _ := k.check(); rep {
+		t.Fatal("repainted twice for one change")
+	}
+}
+
+// After a display reconnect the menu shows its own background and ignores
+// requests: the keeper reports it at once, without asking.
+func TestKeeperFailsAtOnceAfterAReset(t *testing.T) {
+	m, k := newKeeperMenu(t)
+	m.publish(9, platform.Size{W: 960, H: 600})
+	start := time.Now()
+	rep, err := k.check()
+	if rep || err == nil {
+		t.Fatalf("%v %v", rep, err)
+	}
+	if time.Since(start) > 50*time.Millisecond {
+		t.Errorf("took %v", time.Since(start))
+	}
+	for _, want := range []string{"reconnected", "960x600", "start MiSTer Subsonic again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if m.commands() != "" {
+		t.Fatalf("commands %q", m.commands())
+	}
+	if b, _ := os.ReadFile(m.ctl.State); string(b) != "960 600\n" {
+		t.Fatalf("the saved size is %q", b)
 	}
 }

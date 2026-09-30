@@ -153,8 +153,12 @@ func (c FBControl) Restore() error {
 }
 
 // request sends fb_cmd1 for s (32 bpp) and waits until res_count changes.
+// If the driver already has size s, it is done.
 func (c FBControl) request(s Size) error {
-	count := c.resCount()
+	if cur, ok := c.Current(); ok && cur == s {
+		return nil // the menu doesn't count a change to the size it already has
+	}
+	count := c.ResCount()
 	f, err := os.OpenFile(c.Cmd, os.O_WRONLY|os.O_APPEND|syscall.O_NONBLOCK, 0) // never block: with no reader a FIFO open fails with ENXIO
 	if err != nil {
 		return fmt.Errorf("platform: %w", err)
@@ -171,14 +175,32 @@ func (c FBControl) request(s Size) error {
 		wait = time.Second
 	}
 	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if c.resCount() != count {
+		if c.ResCount() != count {
 			return nil
 		}
 	}
 	return fmt.Errorf("platform: the menu didn't switch the framebuffer to %v", s)
 }
 
-func (c FBControl) resCount() string {
+// ResCount is the driver's mode-change counter ("" if unreadable). It goes
+// up whenever the menu reconfigures the framebuffer, e.g. after a display
+// hotplug.
+func (c FBControl) ResCount() string {
 	b, _ := os.ReadFile(filepath.Join(c.Sys, "res_count"))
 	return strings.TrimSpace(string(b))
+}
+
+// Current is the framebuffer size the driver has now, from its width and
+// height parameters.
+func (c FBControl) Current() (Size, bool) {
+	rd := func(name string) int {
+		b, _ := os.ReadFile(filepath.Join(c.Sys, name))
+		n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || n <= 0 {
+			return 0
+		}
+		return n
+	}
+	s := Size{rd("width"), rd("height")}
+	return s, s.W > 0 && s.H > 0
 }

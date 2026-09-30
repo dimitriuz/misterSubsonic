@@ -66,7 +66,10 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
     `fb_size` says. For a custom mode up to 1920x1200 (`video_mode=1920,1200,60`, say) the app
     asks the menu for the full size when it starts, and puts the half size back when it exits
     (after a crash too, through the launcher). Nothing is written to the SD card. Set
-    `full_resolution = false` under `[display]` in `config.toml` to keep the half size.
+    `full_resolution = false` under `[display]` in `config.toml` to keep the half size. If the
+    display is unplugged and replugged (or the TV power-cycled) while the app runs, the MiSTer
+    menu takes the screen back and cannot be asked for the full size again: the app quits within
+    about 2 seconds (the music stops) and you start it again.
   - Redraws only touch what changed: a focus move costs about 11-12 ms at 1920x1200, and the
     progress bar and scrolling titles less. Scrolling a long list redraws the list, about 40 ms a
     step at 1920x1200 (about 25 steps a second).

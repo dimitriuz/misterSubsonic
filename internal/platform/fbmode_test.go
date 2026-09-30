@@ -169,3 +169,46 @@ func TestSaved(t *testing.T) {
 		t.Fatal("still saved after a restore")
 	}
 }
+
+func TestResCountAndCurrent(t *testing.T) {
+	c := fakeMenu(t, true)
+	if got := c.ResCount(); got != "8" {
+		t.Fatalf("ResCount %q", got)
+	}
+	if _, ok := c.Current(); ok {
+		t.Fatal("a size from missing files")
+	}
+	os.WriteFile(filepath.Join(c.Sys, "width"), []byte("960\n"), 0o644)
+	if _, ok := c.Current(); ok {
+		t.Fatal("a size without a height")
+	}
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte("600\n"), 0o644)
+	if s, ok := c.Current(); !ok || s != (Size{960, 600}) {
+		t.Fatalf("Current %v %v", s, ok)
+	}
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte("junk"), 0o644)
+	if _, ok := c.Current(); ok {
+		t.Fatal("junk accepted")
+	}
+	if (FBControl{Sys: filepath.Join(t.TempDir(), "none")}).ResCount() != "" {
+		t.Fatal("ResCount of a missing dir")
+	}
+}
+
+// A request for the size the framebuffer already has is done: no command,
+// no wait (the menu doesn't bump res_count for it).
+func TestRequestForTheCurrentSizeIsDone(t *testing.T) {
+	c := fakeMenu(t, true)
+	os.WriteFile(filepath.Join(c.Sys, "width"), []byte("960\n"), 0o644)
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte("600\n"), 0o644)
+	os.WriteFile(c.State, []byte("960 600\n"), 0o644)
+	if err := c.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("commands sent: %q", b)
+	}
+	if _, err := os.Stat(c.State); !os.IsNotExist(err) {
+		t.Fatal("the state file is still there")
+	}
+}
