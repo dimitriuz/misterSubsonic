@@ -67,7 +67,7 @@ func (a *App) drawSaver(c *gfx.Canvas) {
 	}
 	p := a.P
 	art := p.ArtNow / 2
-	steps := int(a.o.Now().Sub(a.saverSince) / saverStep)
+	steps := int(a.clock().Sub(a.saverSince) / saverStep)
 	x := bounce(steps*saverDrift, p.W-art)
 	y := bounce(steps*saverDrift*2/3, p.H-art-a.F.Small.Height())
 	r := gfx.R(x, y, art, art)

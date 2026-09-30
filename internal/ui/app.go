@@ -209,6 +209,7 @@ type App struct {
 	damage       []gfx.Rect                 // changed areas for the next frame (dirty means the whole frame)
 	exact        bool                       // the key being handled damaged exactly what it changed
 	ticks        []gfx.Rect                 // drawn from the playback position
+	frameNow     time.Time                  // the clock while a frame is drawn
 	mqRect       gfx.Rect                   // the scrolling title
 	arts         map[subsonic.ID][]gfx.Rect // where each cover was drawn
 	verify       bool                       // check partial frames against full ones
@@ -706,6 +707,8 @@ func (a *App) present(c *gfx.Canvas) error {
 // render draws the next frame: only the damaged areas when nothing else
 // changed, otherwise the whole frame.
 func (a *App) render() error {
+	a.frameNow = a.o.Now()
+	defer func() { a.frameNow = time.Time{} }()
 	full := a.dirty
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {
@@ -793,7 +796,7 @@ func (a *App) drawFit(c *gfx.Canvas, f *gfx.Font, x, y, w int, s string, col gfx
 		f.Draw(c, x, y, f.Truncate(s, w), col, clip)
 		return
 	}
-	now := a.o.Now()
+	now := a.clock()
 	if a.mq.text != s {
 		a.mq = marquee{text: s, since: now}
 	}

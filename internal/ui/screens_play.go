@@ -209,7 +209,7 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	// Progress.
 	y += p.Margin / 2
 	d := secs(song.Duration)
-	pos := s.position(a, st, a.o.Now())
+	pos := s.position(a, st, a.clock())
 	a.markTick(gfx.R(text.X, y, text.W, barH))
 	c.Fill(gfx.R(text.X, y, text.W, barH), colArtBg)
 	if d > 0 {

@@ -194,3 +194,60 @@ func area(rs []gfx.Rect) int {
 	}
 	return n
 }
+
+// The player moves its position between the 500 ms ticks. A partial frame
+// drawn in between (a focus move) still shows the current position, and the
+// verify pass agrees with it.
+func TestPartialFrameKeepsTheProgressCurrent(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	d := &rectDisplay{Headless: ta.disp}
+	ta.o.Display = d
+	ta.Push(NewHomeScreen())
+	s := NewAlbumScreen(sampleLibrary().albums[0])
+	ta.Push(s)
+	ta.settle(t)
+	d.rects, d.fulls = nil, 0
+	if len(ta.ticks) == 0 {
+		t.Fatal("the mini bar marked no tick region")
+	}
+	ta.pl.st.Position += 40 * time.Second // as the player does, on its own
+	ta.press(input.BtnDown)
+	ta.settle(t)
+	rs := presented(t, d)
+	for _, tk := range ta.ticks {
+		if !covered(rs, tk) {
+			t.Fatalf("tick region %v not in the partial frame %v", tk, rs)
+		}
+	}
+}
+
+// A marquee keeps scrolling with the clock between its own frames.
+func TestPartialFrameKeepsTheMarqueeCurrent(t *testing.T) {
+	p := &probe{draw: func(a *App, c *gfx.Canvas, area gfx.Rect) {
+		f := a.F.Body
+		a.drawFit(c, f, area.X, area.Y+f.Ascent(), 100, longTitle, colText, area, true)
+	}}
+	ta, d := partialApp(t, ProfileHDMI, p)
+	ta.now = ta.now.Add(marqueeDelay + time.Second)
+	ta.onWake()
+	ta.settle(t)
+	d.rects, d.fulls = nil, 0
+	ta.now = ta.now.Add(300 * time.Millisecond) // no wake yet
+	ta.Damage(gfx.R(0, ta.P.H-10, 10, 10))
+	ta.settle(t)
+	rs := presented(t, d)
+	if !covered(rs, ta.mqRect) {
+		t.Fatalf("the marquee line %v not in the partial frame %v", ta.mqRect, rs)
+	}
+}
+
+// covered reports whether r lies inside one of rs.
+func covered(rs []gfx.Rect, r gfx.Rect) bool {
+	for _, x := range rs {
+		if r.Intersect(x) == r {
+			return true
+		}
+	}
+	return false
+}

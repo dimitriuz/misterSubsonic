@@ -135,7 +135,7 @@ func fillRoundRect(c *gfx.Canvas, r gfx.Rect, rad int, col gfx.Color) {
 // drawVolumePanel draws the volume panel centred under the header while it
 // is due: the speaker, the bar, and the level (0–100) or "Muted".
 func (a *App) drawVolumePanel(c *gfx.Canvas) {
-	if a.volumeUntil.IsZero() || !a.o.Now().Before(a.volumeUntil) {
+	if a.volumeUntil.IsZero() || !a.clock().Before(a.volumeUntil) {
 		return
 	}
 	p, f := a.P, a.F.Body

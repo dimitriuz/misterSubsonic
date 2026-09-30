@@ -3,8 +3,10 @@ package ui
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"mistersubsonic/internal/gfx"
+	"mistersubsonic/internal/player"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -18,6 +20,15 @@ import (
 // maxDamageRects is how many separate areas a partial frame redraws; more
 // than that and they are merged into their bounding box.
 const maxDamageRects = 4
+
+// clock is the time drawing sees: fixed for the whole frame (every damaged
+// area and the verify pass), the real clock outside one.
+func (a *App) clock() time.Time {
+	if !a.frameNow.IsZero() {
+		return a.frameNow
+	}
+	return a.o.Now()
+}
 
 // Damage marks r as changed; the next frame redraws it.
 func (a *App) Damage(r gfx.Rect) {
@@ -69,6 +80,15 @@ func union(a, b gfx.Rect) gfx.Rect {
 // size above which a full frame is drawn instead. It reports false when the
 // verify check failed and the full frame is needed.
 func (a *App) renderDamage() (bool, error) {
+	// Position, marquee and clock move on their own: every partial frame
+	// brings their regions up to date too, so what it leaves on screen is
+	// what a full frame would show (the verify pass sees the same clock).
+	if a.o.Player != nil && a.o.Player.State().Status == player.Playing {
+		a.damage = append(a.damage, a.ticks...)
+	}
+	if a.animate && !a.mqRect.Empty() {
+		a.damage = append(a.damage, a.mqRect)
+	}
 	rs := mergeRects(a.damage, maxDamageRects)
 	a.damage = a.damage[:0]
 	c := a.canvas
