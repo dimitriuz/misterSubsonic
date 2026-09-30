@@ -776,3 +776,20 @@ func TestSeekWhileASizedMP3OpensReopensAtTheTarget(t *testing.T) {
 		}
 	}
 }
+
+// A server that answers with an empty saved queue has nothing to resume:
+// the local file is used instead, and an empty Resume never reaches the UI
+// (which would index its missing songs).
+func TestAnEmptyServerQueueIsNotAResume(t *testing.T) {
+	h := newHarness(t, nil)
+	h.api.queue = &subsonic.PlayQueue{}
+	if r, err := h.p.Resumable(t.Context()); err != nil || r != nil {
+		t.Fatalf("resumable = %+v, %v; want none", r, err)
+	}
+	if err := SaveResume(h.p.o.ResumePath, Resume{Songs: songs(2, 100), Index: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := h.p.Resumable(t.Context()); err != nil || r == nil || r.Index != 1 {
+		t.Fatalf("resumable = %+v, %v; want the local file's", r, err)
+	}
+}

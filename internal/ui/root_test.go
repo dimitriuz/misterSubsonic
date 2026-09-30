@@ -186,3 +186,21 @@ func TestEveryScreenSurvivesEveryButton(t *testing.T) {
 		}
 	}
 }
+
+// With the Resume card first, the feed has one more entry than rows: going
+// down to the last row must draw it, not index past the rows (a crash seen
+// on the MiSTer).
+func TestFeedWithResumeDrawsItsLastRow(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1, Position: 30 * time.Second}
+	s := NewFeedScreen()
+	ta.Push(s)
+	ta.settle(t)
+	if s.resume == nil || len(s.rows) < 2 {
+		t.Fatalf("setup: resume %v, %d rows", s.resume != nil, len(s.rows))
+	}
+	for s.row < s.count()-1 {
+		ta.press(input.BtnDown)
+		ta.settle(t) // draws; the last row must not panic
+	}
+}
