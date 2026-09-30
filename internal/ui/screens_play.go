@@ -177,10 +177,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		pl.Next()
 	case input.BtnY:
 		a.Push(NewQueueScreen())
-	case input.BtnSelect: // a press starts a hold: short cycles the mode, long mutes
-		if s.selDown {
-			break // only a press starts a hold, not a second one
-		}
+	case input.BtnSelect: // every press starts a fresh hold (a lost release is recovered): short cycles the mode, long mutes
 		s.selDown, s.selMuted = true, false
 		s.selHold++
 		hold := s.selHold

@@ -129,3 +129,31 @@ func TestSelectTapRedrawsTheModeLabel(t *testing.T) {
 	}
 	ta.settle(t) // the verify mode compares with a full frame
 }
+
+// A Select release that went to another screen must not leave Now Playing
+// stuck: the next press starts a fresh hold.
+func TestSelectLostReleaseRecovers(t *testing.T) {
+	ta, _ := connectedApp(t)
+	playingState(ta)
+	np := NewNowPlayingScreen()
+	ta.Push(np)
+	sel := func(k input.Kind) { ta.onInput(input.Event{Button: input.BtnSelect, Kind: k}) }
+	sel(input.Press)
+	ta.Push(NewQueueScreen())
+	ta.now = ta.now.Add(2 * muteHold)
+	ta.onWake()        // the hold's timer fires under the Queue: no mute there
+	sel(input.Release) // goes to the Queue
+	ta.Pop()
+	sel(input.Press)
+	ta.now = ta.now.Add(muteHold)
+	ta.onWake()
+	sel(input.Release)
+	if !ta.muted {
+		t.Fatal("hold after a lost release didn't mute")
+	}
+	sel(input.Press)
+	sel(input.Release)
+	if !ta.pl.st.Shuffle {
+		t.Fatal("tap after that didn't cycle the mode")
+	}
+}
