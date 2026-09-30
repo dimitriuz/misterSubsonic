@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"mistersubsonic/internal/config"
@@ -30,6 +31,10 @@ var hintFixtures = map[string]func(ta *testApp) Screen{
 	"display":     func(ta *testApp) Screen { return newSettingsList("Display", displaySettings) },
 	"servers":     func(ta *testApp) Screen { return NewServersScreen() },
 	"wizard":      func(ta *testApp) Screen { return NewWizardScreen(false, false) },
+	"menu with a queue": func(ta *testApp) Screen {
+		playingState(ta)
+		return NewMenuScreen(ta.Top(), "Menu", []menuEntry{{"One", func(a *App) {}}, {"Two", func(a *App) {}}})
+	},
 }
 
 func hintApp(t *testing.T, p Profile, mk func(ta *testApp) Screen) *testApp {
@@ -175,4 +180,41 @@ func cropBottom(c *gfx.Canvas, y int) *gfx.Canvas {
 	out := gfx.NewCanvas(c.W, c.H-y)
 	copy(out.Pix, c.Pix[y*c.W:])
 	return out
+}
+
+// A menu takes every button, so it offers neither Back nor Now Playing.
+func TestMenuHintsAreItsOwn(t *testing.T) {
+	ta := hintApp(t, ProfileHDMI, hintFixtures["menu with a queue"])
+	if got := hintLabels(ta.screenHints()); got != "Choose, Close" {
+		t.Fatalf("menu with a queue: %s", got)
+	}
+}
+
+// A text field takes N as a letter on a keyboard, so Now Playing is hinted
+// there only for a gamepad, whose Y does open it.
+func TestTypingScreensHintNowPlayingOnlyForThePad(t *testing.T) {
+	for _, name := range []string{"search", "wizard"} {
+		mk := hintFixtures[name]
+		for _, pad := range []bool{false, true} {
+			ta := hintApp(t, ProfileHDMI, func(ta *testApp) Screen { playingState(ta); return mk(ta) })
+			ta.pad = pad
+			has := strings.Contains(hintLabels(ta.screenHints()), "Now Playing")
+			if has != pad {
+				t.Errorf("%s, pad=%v: Now Playing hinted %v (%s)", name, pad, has, hintLabels(ta.screenHints()))
+			}
+			if pad && has {
+				ta.press(input.BtnY)
+				ta.settle(t)
+				if _, ok := ta.Top().(*NowPlayingScreen); !ok {
+					t.Errorf("%s: Y with a gamepad leaves %T on top", name, ta.Top())
+				}
+			}
+		}
+	}
+	// Back is still hinted: Esc is not a letter.
+	ta := hintApp(t, ProfileHDMI, func(ta *testApp) Screen { playingState(ta); return NewSearchScreen() })
+	ta.pad = false
+	if !strings.Contains(hintLabels(ta.screenHints()), "Back") {
+		t.Errorf("Search on a keyboard lost Back: %s", hintLabels(ta.screenHints()))
+	}
 }

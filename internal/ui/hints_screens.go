@@ -134,3 +134,18 @@ func hintsOf(a *App, s Screen) []Hint {
 	}
 	return commonHints
 }
+
+// ownsAllButtons: a menu handles every press (see modalHints).
+func (s *MenuScreen) ownsAllButtons() {}
+
+// Typing: the search field takes typed keys until the results have focus.
+func (s *SearchScreen) Typing() bool { return !s.inResults }
+
+// Typing: every wizard step but the test takes typed keys.
+func (s *WizardScreen) Typing() bool { return s.step != stepTest }
+
+// Typing: the sidebar root passes keys to a section that types.
+func (s *SidebarRoot) Typing() bool {
+	t, ok := s.current().(textTaker)
+	return ok && !s.inSidebar && t.Typing()
+}

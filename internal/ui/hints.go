@@ -25,6 +25,18 @@ type Hinter interface {
 	Hints(a *App) []Hint
 }
 
+// modalHints is a screen that takes every button itself (a menu): the app
+// adds no Back or Now Playing to its list, as it never sees those presses.
+type modalHints interface {
+	ownsAllButtons()
+}
+
+// textTaker is a screen where printable keys type text right now, so on a
+// keyboard N is a letter and cannot open Now Playing.
+type textTaker interface {
+	Typing() bool
+}
+
 func hk(b input.Button, label string) Hint        { return Hint{Button: b, Label: label} }
 func hkPair(b, p input.Button, label string) Hint { return Hint{Button: b, Pair: p, Label: label} }
 
@@ -115,6 +127,9 @@ func (a *App) screenHints() []Hint {
 	} else {
 		hs = commonHints
 	}
+	if _, modal := top.(modalHints); modal {
+		return hs
+	}
 	uses := func(b input.Button) bool {
 		for _, h := range hs {
 			if h.Button == b || h.Pair == b {
@@ -127,7 +142,11 @@ func (a *App) screenHints() []Hint {
 	if len(a.stack) > 1 && !uses(input.BtnB) {
 		out = append(out, hk(input.BtnB, "Back"))
 	}
-	if _, np := top.(*NowPlayingScreen); !np && a.hasQueue() && !uses(input.BtnY) {
+	typing := false
+	if t, ok := top.(textTaker); ok {
+		typing = t.Typing()
+	}
+	if _, np := top.(*NowPlayingScreen); !np && a.hasQueue() && !uses(input.BtnY) && (a.pad || !typing) {
 		out = append(out, hk(input.BtnY, "Now Playing"))
 	}
 	return out
