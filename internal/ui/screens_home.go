@@ -17,7 +17,12 @@ type homeItem struct {
 	label    string
 	listType string        // album list type
 	open     func() Screen // a section; nil for album lists and Resume
+	exit     bool          // the Exit entry: A asks to quit
 }
+
+// exitItem is the last entry of both roots (the HDMI sidebar and the CRT
+// list); A on it opens the exit prompt.
+var exitItem = homeItem{label: "Exit", exit: true}
 
 var homeLists = []homeItem{
 	{label: "Recently added", listType: subsonic.ListNewest},
@@ -89,7 +94,7 @@ func (s *HomeScreen) items() []homeItem {
 		song := s.resume.Songs[s.resume.Index]
 		out = append(out, homeItem{label: fmt.Sprintf("Resume: %s — %s", song.Title, song.Artist)})
 	}
-	return append(append(out, homeLists...), sections...)
+	return append(append(append(out, homeLists...), sections...), exitItem)
 }
 
 func (s *HomeScreen) Handle(a *App, e input.Event) bool {
@@ -104,6 +109,8 @@ func (s *HomeScreen) Handle(a *App, e input.Event) bool {
 	}
 	it := items[s.list.Focus]
 	switch {
+	case it.exit:
+		a.confirm = true // the same prompt as holding B
 	case it.open != nil:
 		a.Push(it.open())
 	case it.listType == "":
@@ -121,7 +128,7 @@ func (s *HomeScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	items := s.items()
 	s.list.Draw(c, area, len(items), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
 		col := colText
-		if items[i].listType == "" && items[i].open == nil {
+		if items[i].listType == "" && items[i].open == nil && !items[i].exit {
 			col = colAccent
 		}
 		a.drawRow(c, r, row{main: items[i].label, col: col, focused: focused})

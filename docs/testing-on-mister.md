@@ -38,7 +38,7 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
    error.
 9. **Mute.** Press M on a keyboard, and use Settings → Playback → Mute. The
    volume keys bring the sound back.
-10. **Exit.** Use Settings → Exit, and holding B for 2 s on the home screen.
+10. **Exit.** Use Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), and holding B for 2 s on the home screen.
     Both return to the Scripts menu with the text readable and "MiSTer
     Subsonic closed." shown. The controller works in the menu afterwards.
 11. **BGM.** With BGM playing in the menu, start the app: the music stops.

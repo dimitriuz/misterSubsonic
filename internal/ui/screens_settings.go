@@ -10,14 +10,14 @@ import (
 )
 
 // SettingsScreen is Settings (spec §8.2): Servers · Playback · Display ·
-// About · Exit. It works without a connection (from the unreachable
+// About. It works without a connection (from the unreachable
 // screen): changes are saved to the config and applied to the player when
 // there is one.
 type SettingsScreen struct {
 	list List
 }
 
-var settingsItems = []string{"Servers", "Playback", "Display", "About", "Exit"}
+var settingsItems = []string{"Servers", "Playback", "Display", "About"}
 
 func NewSettingsScreen() *SettingsScreen { return &SettingsScreen{} }
 
@@ -41,8 +41,6 @@ func (s *SettingsScreen) Handle(a *App, e input.Event) bool {
 		a.Push(newSettingsList("Display", displaySettings))
 	case "About":
 		a.Push(&AboutScreen{})
-	case "Exit":
-		a.confirm = true // the same prompt as holding B
 	}
 	return true
 }

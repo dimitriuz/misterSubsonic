@@ -11,6 +11,7 @@ import (
 
 var (
 	openHint    = hk(input.BtnA, "Open")
+	exitHint    = hk(input.BtnA, "Exit")
 	playHint    = hk(input.BtnA, "Play")
 	menuHint    = hk(input.BtnX, "Menu")
 	shuffleHint = hk(input.BtnSelect, "Shuffle")
@@ -50,7 +51,13 @@ func (s *GenresScreen) Hints(*App) []Hint {
 	return loadHints(s.err != nil, len(s.genres) > 0, openHint)
 }
 
-func (s *HomeScreen) Hints(*App) []Hint     { return []Hint{openHint} }
+func (s *HomeScreen) Hints(a *App) []Hint {
+	s.sync(a)
+	if items := s.items(); s.list.Focus < len(items) && items[s.list.Focus].exit {
+		return []Hint{exitHint}
+	}
+	return []Hint{openHint}
+}
 func (s *SettingsScreen) Hints(*App) []Hint { return []Hint{openHint} }
 func (s *AboutScreen) Hints(*App) []Hint    { return nil }
 
@@ -153,6 +160,9 @@ func (s *starredTab) Hints(a *App) []Hint {
 
 func (s *SidebarRoot) Hints(a *App) []Hint {
 	if s.inSidebar {
+		if s.onExit() {
+			return []Hint{exitHint}
+		}
 		return []Hint{openHint}
 	}
 	return hintsOf(a, s.current())

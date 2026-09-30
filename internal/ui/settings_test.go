@@ -20,19 +20,9 @@ func connectedApp(t *testing.T) (*testApp, *connectRecorder) {
 	return ta, rec
 }
 
-func TestSettingsExitAsks(t *testing.T) {
-	ta, _ := connectedApp(t)
-	ta.Push(NewSettingsScreen())
-	for range 4 {
-		ta.press(input.BtnDown)
-	}
-	ta.press(input.BtnA) // Exit
-	if !ta.confirm {
-		t.Fatal("Exit did not ask")
-	}
-	ta.press(input.BtnB)
-	if ta.confirm || ta.quit {
-		t.Fatal("B did not cancel the exit prompt")
+func TestSettingsNoLongerHasExit(t *testing.T) {
+	if slices.Contains(settingsItems, "Exit") {
+		t.Fatalf("Settings lists Exit: %v", settingsItems)
 	}
 }
 

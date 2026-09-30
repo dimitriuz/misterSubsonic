@@ -312,7 +312,7 @@ Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgU
 
 **Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select has no key, so a keyboard shows no Select hint; the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
 
-Quitting the app is Settings → Exit, or holding B for 2 s on the Home root, with a confirmation.
+Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), or holding B for 2 s on the Home root, with a confirmation.
 
 ### 8.4 Input (`internal/input`)
 

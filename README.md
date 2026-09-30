@@ -25,7 +25,7 @@ Or unzip a release's `MiSTer_Subsonic-<version>.zip` onto the SD card: it holds
 `Scripts/MiSTer_Subsonic.sh` and the `mistersubsonic/` folder.
 
 Start it from the Scripts menu: **MiSTer_Subsonic**. While it runs, background music (BGM) is
-stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (Settings → Exit,
+stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (Exit in the main menu,
 or hold B on the home screen). Updates never touch your settings.
 
 Everything the app keeps is in `/media/fat/mistersubsonic/`:

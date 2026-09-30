@@ -204,3 +204,81 @@ func TestFeedWithResumeDrawsItsLastRow(t *testing.T) {
 		ta.settle(t) // draws; the last row must not panic
 	}
 }
+
+// sidebarOnExit is an HDMI root with the sidebar focus on Exit (the last entry).
+func sidebarOnExit(t *testing.T) (*testApp, *SidebarRoot) {
+	t.Helper()
+	ta := newTestApp(t, ProfileHDMI)
+	root := newSidebarRoot()
+	ta.Push(root)
+	ta.settle(t)
+	ta.press(input.BtnLeft)
+	for range len(root.labels) - 1 {
+		ta.press(input.BtnDown)
+	}
+	return ta, root
+}
+
+func TestSidebarExitOnlyActsOnAOrRight(t *testing.T) {
+	for _, b := range []input.Button{input.BtnA, input.BtnRight} {
+		ta, root := sidebarOnExit(t)
+		depth := len(ta.stack)
+		dwell(ta) // resting on Exit opens nothing and asks nothing
+		ta.settle(t)
+		if ta.confirm || len(ta.stack) != depth || !root.inSidebar || root.current() != nil {
+			t.Fatalf("dwell on Exit: confirm %v, stack %d->%d, sidebar %v", ta.confirm, depth, len(ta.stack), root.inSidebar)
+		}
+		ta.press(b)
+		if !ta.confirm {
+			t.Fatalf("%v on Exit did not ask", b)
+		}
+		ta.press(input.BtnB)
+		if ta.confirm || ta.quit || len(ta.stack) != depth {
+			t.Fatalf("B: confirm %v, quit %v", ta.confirm, ta.quit)
+		}
+	}
+	ta, _ := sidebarOnExit(t)
+	ta.press(input.BtnA)
+	ta.press(input.BtnA)
+	if !ta.quit {
+		t.Fatal("A on the prompt did not exit")
+	}
+}
+
+func TestCRTHomeExitIsTheLastItem(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	ta.Push(NewRootScreen(ta.P))
+	ta.settle(t)
+	h := ta.Top().(*HomeScreen)
+	for range len(h.items()) - 1 {
+		ta.press(input.BtnDown)
+	}
+	if hs := h.Hints(ta.App); len(hs) != 1 || hs[0].Label != "Exit" {
+		t.Fatalf("hints on Exit: %v", hs)
+	}
+	ta.press(input.BtnA)
+	if !ta.confirm {
+		t.Fatal("A on Exit did not ask")
+	}
+	ta.press(input.BtnB)
+	if ta.confirm || ta.quit {
+		t.Fatal("B did not cancel")
+	}
+}
+
+func TestExitHintsAndWork(t *testing.T) {
+	ta, root := sidebarOnExit(t)
+	if hs := root.Hints(ta.App); len(hs) != 1 || hs[0].Label != "Exit" || hs[0].Button != input.BtnA {
+		t.Fatalf("sidebar hints on Exit: %v", hs)
+	}
+	ta.press(input.BtnUp) // Settings: back to Open
+	if hs := root.Hints(ta.App); hs[0].Label != "Open" {
+		t.Fatalf("sidebar hints on Settings: %v", hs)
+	}
+	ta.press(input.BtnDown)
+	before := ta.settle(t).ToRGBA()
+	ta.press(input.BtnA) // the hinted button changes the frame
+	if samePixels(before, ta.settle(t).ToRGBA()) {
+		t.Fatal("A on Exit changed nothing")
+	}
+}
