@@ -6,6 +6,16 @@ import (
 	"mistersubsonic/internal/input"
 )
 
+// isMediaButton reports whether b is one mediaKey handles.
+func isMediaButton(b input.Button) bool {
+	switch b {
+	case input.BtnVolUp, input.BtnVolDown, input.BtnMute, input.BtnPlayPause,
+		input.BtnNextTrack, input.BtnPrevTrack, input.BtnSeekFwd, input.BtnSeekBack:
+		return true
+	}
+	return false
+}
+
 // mediaKey handles a multimedia keyboard's (or remote's) media keys, on
 // every screen: volume (held to repeat), play/pause, next and previous
 // track, and seeking. It reports whether e was one. Releases never get here.
@@ -18,6 +28,10 @@ func (a *App) mediaKey(e input.Event) bool {
 			step = -step
 		}
 		a.setVolume(a.volumeDB() + step)
+	case input.BtnMute:
+		if e.Kind == input.Press {
+			a.toggleMute()
+		}
 	case input.BtnPlayPause:
 		if pl != nil && e.Kind == input.Press {
 			pl.TogglePause()

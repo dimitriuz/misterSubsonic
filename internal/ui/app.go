@@ -551,8 +551,8 @@ func (a *App) onInput(e input.Event) {
 	}
 	now := a.o.Now()
 	a.lastInput = now
-	if a.wake() && e.Kind == input.Press {
-		return // the press that wakes the screensaver does nothing else
+	if a.wake() && e.Kind == input.Press && !isMediaButton(e.Button) {
+		return // the press that wakes the screensaver does nothing else (a media key still acts)
 	}
 	if e.Rune != 0 && !a.confirm {
 		if e.Kind == input.Press {
@@ -594,6 +594,8 @@ func (a *App) dispatch(e input.Event) {
 			a.quit = true
 		case input.BtnB:
 			a.confirm = false
+		default:
+			a.mediaKey(e) // volume and the rest keep working under the prompt
 		}
 		return
 	}
@@ -623,8 +625,6 @@ func (a *App) dispatch(e input.Event) {
 		if !a.popTo(func(s Screen) bool { _, ok := s.(*NowPlayingScreen); return ok }) {
 			a.Push(NewNowPlayingScreen())
 		}
-	case input.BtnMute:
-		a.toggleMute()
 	case input.BtnQueue:
 		if !a.hasQueue() {
 			break

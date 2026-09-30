@@ -182,3 +182,56 @@ func TestVolumeWithoutAConfigIsKeptForThePlayer(t *testing.T) {
 		t.Fatalf("player volume %v, want -2", ta.pl.st.VolumeDB)
 	}
 }
+
+// The X menu and the exit prompt let the media keys through and stay open.
+func TestMediaKeysPassThroughMenuAndExitPrompt(t *testing.T) {
+	ta, _ := connectedApp(t)
+	playingState(ta)
+	ta.pl.st.VolumeDB = -20
+	ta.Push(NewMenuScreen(NewHomeScreen(), "Item", []menuEntry{{label: "One", run: func(*App) {}}}))
+	ta.press(input.BtnVolUp)
+	if _, ok := ta.Top().(*MenuScreen); !ok || ta.pl.st.VolumeDB != -19 {
+		t.Fatalf("menu: top %T, volume %v", ta.Top(), ta.pl.st.VolumeDB)
+	}
+	ta.press(input.BtnMute)
+	if !ta.muted {
+		t.Fatal("mute did nothing under the menu")
+	}
+	ta.press(input.BtnMute)
+	ta.confirm = true
+	ta.press(input.BtnVolUp)
+	ta.press(input.BtnMute)
+	ta.press(input.BtnMute)
+	if !ta.confirm || ta.quit || ta.pl.st.VolumeDB != -18 {
+		t.Fatalf("prompt: confirm %v, quit %v, volume %v", ta.confirm, ta.quit, ta.pl.st.VolumeDB)
+	}
+	ta.press(input.BtnPlayPause)
+	if !slices.Contains(ta.pl.calls, "toggle") || !ta.confirm {
+		t.Fatalf("play/pause under the prompt: %v", ta.pl.calls)
+	}
+	ta.press(input.BtnB)
+	if ta.confirm {
+		t.Fatal("B did not close the prompt")
+	}
+}
+
+// A media key wakes the screensaver and acts at once; other buttons only wake.
+func TestMediaKeyOnTheScreensaverActsOnTheFirstPress(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.pl.st.VolumeDB = -20
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	if !ta.saver {
+		t.Fatal("the screensaver did not start")
+	}
+	ta.press(input.BtnVolDown)
+	if ta.saver || ta.pl.st.VolumeDB != -21 {
+		t.Fatalf("saver %v, volume %v after one Vol-", ta.saver, ta.pl.st.VolumeDB)
+	}
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	ta.press(input.BtnMute)
+	if ta.saver || !ta.muted {
+		t.Fatalf("saver %v, muted %v after one Mute", ta.saver, ta.muted)
+	}
+}
