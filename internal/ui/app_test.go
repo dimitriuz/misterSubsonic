@@ -156,18 +156,19 @@ func TestSafeAreaAndMiniBarNeedACurrentSong(t *testing.T) {
 	ta.Push(s)
 	ta.settle(t)
 	p := ta.P
-	if s.area.Y != p.SafeY+p.HeaderH || s.area.Bottom() != p.H-p.SafeY {
-		t.Fatalf("body %+v: want from %d to %d", s.area, p.SafeY+p.HeaderH, p.H-p.SafeY)
+	bottom := p.H - p.SafeY - ta.hintH() // the hint bar is the last line
+	if s.area.Y != p.SafeY+p.HeaderH || s.area.Bottom() != bottom {
+		t.Fatalf("body %+v: want from %d to %d", s.area, p.SafeY+p.HeaderH, bottom)
 	}
 	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: -1, NextIndex: -1}
 	ta.settle(t)
-	if s.area.Bottom() != p.H-p.SafeY {
+	if s.area.Bottom() != bottom {
 		t.Fatal("mini bar shown with nothing selected")
 	}
 	ta.pl.st.Index = 0
 	ta.settle(t)
-	if s.area.Bottom() != p.H-p.SafeY-p.MiniBarH {
-		t.Fatalf("body bottom %d with a current song, want %d", s.area.Bottom(), p.H-p.SafeY-p.MiniBarH)
+	if s.area.Bottom() != bottom-p.MiniBarH {
+		t.Fatalf("body bottom %d with a current song, want %d", s.area.Bottom(), bottom-p.MiniBarH)
 	}
 }
 

@@ -247,6 +247,11 @@ func displaySettings(a *App) []setting {
 				m := cycle(screensaverChoices, d().ScreensaverMinutes, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Display.ScreensaverMinutes = m }, false)
 			}},
+		{"Hints", func(a *App) string { return onOff(d().Hints) },
+			func(a *App, dir int) {
+				on := !d().Hints
+				a.UpdateConfig(func(c *config.Config) { c.Display.Hints = on }, false)
+			}},
 	}
 }
 

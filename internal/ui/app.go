@@ -102,6 +102,9 @@ type Options struct {
 	Version    string // shown in Settings → About
 	// ScreenshotDir is where the screenshot button saves PNGs ("": off).
 	ScreenshotDir string
+	// PadAtStart: a gamepad is connected, so the hint bar starts with
+	// gamepad buttons (otherwise keyboard keys) until the first press.
+	PadAtStart bool
 	// VerifyRedraw checks every partial frame against a full one and logs
 	// any difference (a debugging aid on the device).
 	VerifyRedraw bool
@@ -201,6 +204,7 @@ type App struct {
 	muted       bool      // the sound is off (not saved: the app starts with sound)
 	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
 	shooting    bool      // a screenshot is being saved
+	pad         bool      // the last press came from a gamepad (the hint bar follows it)
 
 	damage       []gfx.Rect                 // changed areas for the next frame (dirty means the whole frame)
 	exact        bool                       // the key being handled damaged exactly what it changed
@@ -242,7 +246,7 @@ func New(o Options) (*App, error) {
 	if pw != a.P.W || ph != a.P.H { // drawn at the display's size: nothing to scale
 		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
 	}
-	a.verify = o.VerifyRedraw
+	a.verify, a.pad = o.VerifyRedraw, o.PadAtStart
 	if _, ok := o.Display.(gfx.Checker); ok {
 		a.checkAt = o.Now().Add(watchdogEvery)
 	}
@@ -570,6 +574,7 @@ func (a *App) onInput(e input.Event) {
 		}
 		return
 	}
+	a.noteSource(e)
 	now := a.o.Now()
 	a.lastInput = now
 	if a.wake() && e.Kind == input.Press && !isMediaButton(e.Button) {
@@ -609,16 +614,21 @@ func (a *App) onInput(e input.Event) {
 
 func (a *App) dispatch(e input.Event) {
 	a.exact = false
-	top, title := a.Top(), ""
+	top, title, hints := a.Top(), "", ""
 	if top != nil {
-		title = top.Title()
+		title, hints = top.Title(), hintKey(a.screenHints())
 	}
 	defer func() {
 		switch {
 		case !a.exact || a.Top() != top:
 			a.dirty = true // what the key changed is unknown: redraw it all
-		case top != nil && top.Title() != title:
-			a.Damage(a.headerRect()) // e.g. Artists · B follows the focus
+		case top != nil:
+			if top.Title() != title {
+				a.Damage(a.headerRect()) // e.g. Artists · B follows the focus
+			}
+			if hintKey(a.screenHints()) != hints {
+				a.Damage(a.hintRect()) // e.g. Servers: the Add row has no menu
+			}
 		}
 	}()
 	if a.confirm {
@@ -725,18 +735,19 @@ func (a *App) drawFrame(c *gfx.Canvas) {
 	p := a.P
 	// Content stays inside the title-safe area (SafeY lines top and bottom;
 	// panels still run to the edges).
-	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY)
+	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY-a.hintH())
 	if top != nil {
 		_, fullscreen := top.(*NowPlayingScreen)
 		if !fullscreen {
 			a.drawHeader(c, top.Title())
-			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, p.H-2*p.SafeY-p.HeaderH)
+			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, body.Bottom()-p.SafeY-p.HeaderH)
 			if a.hasCurrent() {
 				body.H -= p.MiniBarH
 				a.drawMiniBar(c, gfx.R(0, body.Bottom(), p.W, p.MiniBarH))
 			}
 		}
 		top.Draw(a, c, body)
+		a.drawHints(c)
 	}
 	if !a.mq.seen {
 		a.mq = marquee{}
@@ -840,7 +851,7 @@ func (a *App) drawToasts(c *gfx.Canvas) {
 func (a *App) eachToast(f func(r gfx.Rect, text string)) {
 	fb := a.F.Body
 	p := a.P
-	y := p.H - p.SafeY - p.MiniBarH - p.Margin
+	y := p.H - p.SafeY - a.hintH() - p.MiniBarH - p.Margin
 	for i := len(a.toasts) - 1; i >= 0; i-- {
 		text := fb.Truncate(a.toasts[i].text, p.W-4*p.Margin)
 		w := fb.Measure(text) + p.Margin

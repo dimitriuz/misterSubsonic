@@ -307,7 +307,7 @@ func TestAlbumListRetriesFailedPage(t *testing.T) {
 		t.Fatalf("first page %d", len(s.view.albums))
 	}
 	ta.lib.err = errors.New("boom")
-	for range 20 {
+	for range albumPage { // page down to the end of the first page, whatever the page size
 		ta.press(input.BtnR)
 	}
 	ta.settle(t)

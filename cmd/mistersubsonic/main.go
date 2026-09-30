@@ -225,6 +225,7 @@ func run(f flags) (err error) {
 	}
 	var disp gfx.Display
 	var inputs []<-chan input.Event
+	padAtStart := false
 	switch f.display {
 	case "fbdev":
 		fb, err := openFB(f.fbdev, profileName, dataDir, cfg.Display.FullResolution)
@@ -245,6 +246,7 @@ func run(f flags) (err error) {
 		mgr := input.NewManager(input.ManagerOptions{Grab: true})
 		defer mgr.Close()
 		inputs = append(inputs, mgr.Events())
+		padAtStart = mgr.HasPad()
 	case "viewer":
 		prof := ui.PickProfile(1280, 720, profileName)
 		v := devview.New(prof.W, prof.H)
@@ -310,6 +312,7 @@ func run(f flags) (err error) {
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
 		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),
 		VerifyRedraw:  f.verifyRedraw,
+		PadAtStart:    padAtStart,
 		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})
 	if err != nil {
