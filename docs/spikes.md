@@ -100,3 +100,27 @@ pending — MiSTer unavailable. Run the checklist in `docs/testing-on-mister.md`
 ## Plan 3b on the MiSTer
 
 pending — MiSTer unavailable. Plan 3b's fixes are verified on the host. On the device, run `docs/testing-on-mister.md` items 6 (long FLAC), 16 (long MP3), 17 (ReplayGain) and 18 (memory), together with spikes 2 and 3 and the `Repaint` benchmarks.
+
+## Plan 4 on the MiSTer (2026-09-30)
+
+This MiSTer: HDMI at `video_mode=1920,1200,60`, so the framebuffer is 960×600×32. The app used to draw 1280×720 and scale it down, which blurred text. It now draws at the framebuffer's size.
+
+**Render speed** (`ui.test -test.bench Repaint`, fixed benchmark: cached covers, a display that drops frames; `gfx.test -test.bench Pack` for the framebuffer copy), per frame:
+
+| Case | Draw | Pack | Total |
+|---|---|---|---|
+| Before: 1280×720 scaled to 960×600 | ~35 ms | 17.5 ms | ~52 ms |
+| Native 960×600: albums / feed / Now Playing | 13.5 / 14.7 / 8.9 ms | 5.4 ms | **≈ 20 ms** |
+| Native 1280×720: albums / feed | 22.2 / 22.5 ms | 8.6 ms | ≈ 31 ms |
+| Native 1920×1080: albums / feed | 49.4 / 48.1 ms | 19.2 ms | ≈ 68 ms |
+| 1280×720 scaled to 1920×1080 (the old 1080p path): albums / feed | 51.7 / 49.2 ms | 19.2 ms | ≈ 70 ms |
+| CRT 240p: albums | 4.7 ms | — | — |
+
+- The pack is a straight copy for 32 bpp little-endian framebuffers (was a per-byte loop: 17.5 → 5.4 ms at 960×600).
+- `Blit` has a one-to-one path for covers drawn at their size.
+- On the Cortex-A9, Go's `memmove` is slower than the store loop for `Clear` and `Fill`, and a non-inlined per-pixel helper slows `Blit`; both were tried and left out.
+- **Target (30 ms):** met at 960×600 and on CRT, and just about at 720p (31 ms). Native 1080p is about 68 ms: sharp, but held scrolling redraws at about 15 frames a second. Partial redraws are in the backlog.
+
+**Screenshots** (`ui.test -test.bench Screenshot`): saving a PNG takes 0.21 s at 960×600 and 0.68 s at 1920×1080, off the UI goroutine. The MiSTer Companion remote waits up to 6 s.
+
+**On the TV:** pending. Run `docs/testing-on-mister.md` items 3, 19, 20 and 21 and record them here.

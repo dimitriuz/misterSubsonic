@@ -58,10 +58,14 @@ The app draws on the MiSTer's Linux framebuffer. That framebuffer is sized from 
 app never changes the video mode itself. Keep `fb_size=0` (automatic) and `fb_terminal=1` (both
 the defaults).
 
-- **HDMI:**
-  - `video_mode=0` (1280x720@60) or `7` (1280x720@50) gives a 1280x720 framebuffer, which the
-    interface fills pixel for pixel.
-  - `video_mode=8` (1920x1080@60) works too, scaled up by 1.5.
+- **HDMI:** the interface is drawn at the framebuffer's own size, pixel for pixel, so text and
+  covers stay sharp at any resolution.
+  - `video_mode=0` (1280x720@60) or `7` (1280x720@50) gives a 1280x720 framebuffer.
+  - `video_mode=8` (1920x1080@60) gives 1920x1080. It is the sharpest, but a full redraw takes
+    about 70 ms on the MiSTer, so scrolling is less smooth than at 720p (about 30 ms).
+  - Modes above 1920x1080 (for example `video_mode=1920,1200,60`) get a framebuffer of half the
+    size (960x600): MiSTer's menu halves it, whatever `fb_size` says. The interface fits that
+    size, and the display scales it up.
 - **CRT (15 kHz):** add a `[Menu]` section, for example the 240p mode SAM uses for its CRT
   video:
 
@@ -94,7 +98,11 @@ Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = m
 PgUp/PgDn = L/R, Space = Start. In Search, letters type. With a controller, mute is in
 Settings → Playback; changing the volume turns the sound back on. A multimedia keyboard's media
 keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
-fast-forward/rewind to seek.
+fast-forward/rewind to seek. A volume panel shows the level for a moment whenever it changes.
+
+**Screenshots:** Print Screen, or Alt+Scroll Lock (MiSTer's own screenshot keys), saves the
+screen as a PNG in `/media/fat/screenshots/MiSTer_Subsonic/`. The MiSTer Companion remote's
+Capture screenshot button works too.
 
 ## Developing
 

@@ -41,6 +41,8 @@ func BenchmarkRepaint(b *testing.B) {
 		{"albums-native-960x600", PickProfile(960, 600, "auto"), 960, 600, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
 		{"feed-native-960x600", PickProfile(960, 600, "auto"), 960, 600, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
 		{"nowplaying-native-960x600", PickProfile(960, 600, "auto"), 960, 600, func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() }, nil},
+		{"albums-native-1280x720", PickProfile(1280, 720, "auto"), 1280, 720, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
+		{"feed-native-1280x720", PickProfile(1280, 720, "auto"), 1280, 720, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
 		{"albums-native-1920x1080", PickProfile(1920, 1080, "auto"), 1920, 1080, func(ta *testApp) Screen { return NewAlbumListScreen("Recently added", "newest") }, nil},
 		{"feed-native-1920x1080", PickProfile(1920, 1080, "auto"), 1920, 1080, func(ta *testApp) Screen { return newSidebarRoot() }, nil},
 	}

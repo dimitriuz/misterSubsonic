@@ -7,7 +7,7 @@ func BenchmarkPack(b *testing.B) {
 	for _, c := range []struct {
 		name      string
 		w, h, bpp int
-	}{{"960x600x32", 960, 600, 32}, {"1920x1080x32", 1920, 1080, 32}, {"1920x1080x16", 1920, 1080, 16}} {
+	}{{"960x600x32", 960, 600, 32}, {"1280x720x32", 1280, 720, 32}, {"1920x1080x32", 1920, 1080, 32}, {"1920x1080x16", 1920, 1080, 16}} {
 		b.Run(c.name, func(b *testing.B) {
 			f := fbFormat{width: c.w, height: c.h, stride: c.w * c.bpp / 8, bpp: c.bpp}
 			mem := make([]byte, f.stride*f.height)
