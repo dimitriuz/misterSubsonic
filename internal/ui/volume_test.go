@@ -59,3 +59,18 @@ func TestVolumeLevel(t *testing.T) {
 		}
 	}
 }
+
+// Now Playing shows no volume of its own: the frame is the same at any
+// level (the panel shows changes; Settings shows the dB).
+func TestNowPlayingDoesNotShowTheVolume(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.Push(NewNowPlayingScreen())
+	ta.pl.st.VolumeDB = -10
+	loud := ta.settle(t).ToRGBA()
+	ta.pl.st.VolumeDB = -45
+	ta.dirty = true
+	if !samePixels(loud, ta.settle(t).ToRGBA()) {
+		t.Fatal("Now Playing changed with the volume")
+	}
+}

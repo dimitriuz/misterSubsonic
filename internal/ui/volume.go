@@ -9,8 +9,7 @@ import (
 )
 
 // The volume indicator: a panel that shows the level for a moment whenever
-// the volume or mute changes (from any screen or key), and a compact
-// speaker and bar on Now Playing.
+// the volume or mute changes (from any screen or key).
 
 // volumeShowTime is how long the panel stays after the last change.
 const volumeShowTime = 1500 * time.Millisecond
@@ -155,20 +154,4 @@ func (a *App) drawVolumePanel(c *gfx.Canvas) {
 		col = colDim
 	}
 	f.Draw(c, x+(labelW-f.Measure(label))/2, panel.Y+pad+(icon+f.Ascent()-f.Descent())/2, label, col, c.Bounds())
-}
-
-// drawVolumeInline draws the compact indicator at x on the text line at
-// baseline (Now Playing): a small speaker and a short bar, within maxW.
-func (a *App) drawVolumeInline(c *gfx.Canvas, f *gfx.Font, x, baseline, maxW int) {
-	s := f.Ascent()
-	barW := 4 * s
-	if s+s/3+barW > maxW {
-		return
-	}
-	db := a.volumeDB()
-	level := volumeLevel(db)
-	col := colDim
-	drawSpeaker(c, gfx.R(x, baseline-s, s, s), level, a.muted, col)
-	bh := max(s*2/5, 3)
-	drawVolumeBar(c, gfx.R(x+s+s/3, baseline-(s+bh)/2, barW, bh), level, a.muted, volumeSegments/2)
 }
