@@ -232,16 +232,23 @@ func run(f flags) (err error) {
 		if err != nil {
 			return err
 		}
-		defer func() { // after the framebuffer is closed: its old size back
+		// Exit order (defers run last-in first-out, and -restore-console does
+		// the same): the framebuffer is closed (unmapped), then the input is
+		// released, then the framebuffer gets its old size back, and last the
+		// console returns to text mode.
+		var con *platform.Console
+		defer func() {
 			if err := fbControl().Restore(); err != nil {
 				log.Printf("display: %v", err)
 			}
+			if err := con.Restore(); err != nil {
+				log.Printf("console: %v", err)
+			}
 		}()
-		con, err := platform.GraphicsMode()
+		con, err = platform.GraphicsMode()
 		if err != nil {
 			log.Printf("console: %v (its text may show over the app)", err)
 		}
-		defer con.Restore() // after the framebuffer is blanked (defers run last-in first-out)
 		disp = fb
 		mgr := input.NewManager(input.ManagerOptions{Grab: true})
 		defer mgr.Close()
