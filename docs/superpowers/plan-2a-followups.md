@@ -364,6 +364,7 @@ Still open:
   - The state is kept when a restore fails.
   - `forceExit` restores the size.
   - The forced exit and the normal exit restore share one guard, so the framebuffer size never changes in text mode.
+  - A run that never entered graphics mode (graphicsMode failed) restores no size on exit, on a forced exit or in `-restore-console`: they skip the size and only restore text mode.
   - A stale saved size is logged.
   - `pads` is cleared on Close.
   - A failed EVIOCGBIT is logged.
@@ -386,4 +387,5 @@ Still open:
 - **Config and covers:**
   - Saving keeps comments, blank lines and unknown keys.
   - An edit that trips over the file falls back to a full rewrite, and a BOM before the first key is kept.
-  - Cover scaling is 30% faster on the A9 (see `docs/spikes.md`).
+  - Decode plus scale of a cover is 30% faster on the A9 (1.98 s to 1.38 s), and the scaling alone about 47% (1.16 s to 0.61 s); see `docs/spikes.md`.
+  - `drawField` trimming by rune: obsolete (`drawTextField` trims by measured width).

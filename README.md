@@ -31,7 +31,8 @@ or hold B on the home screen). Updates never touch your settings.
 Everything the app keeps is in `/media/fat/mistersubsonic/`:
 - `config.toml` holds your settings. `config.example.toml` explains every option. When a setting
   is changed in the app, only the values that changed are rewritten; your comments, blank lines
-  and key order stay.
+  and key order stay. (A changed or added server table is written whole, and a file with inline
+  tables or multi-line strings is rewritten whole, losing its comments.)
 - `servers/<name>-<id>/` holds each server's resume state, scrobble queue and cover cache (`<id>` is
   8 hex digits from a hash of the server name). An older `servers/<name>/` folder stays with the
   first server that claims it, recorded in its `.server` file.
