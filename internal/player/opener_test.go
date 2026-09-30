@@ -219,3 +219,98 @@ func TestMP3StreamRetargetsWithinItsWindow(t *testing.T) {
 		t.Fatal("the stream stayed open after both sources closed")
 	}
 }
+
+// flakySeeker is a ReadSeeker whose seeks can be made to fail.
+type flakySeeker struct {
+	*bytes.Reader
+	fail func(off int64) bool
+}
+
+func (f *flakySeeker) Seek(off int64, whence int) (int64, error) {
+	if whence == io.SeekStart && f.fail(off) {
+		return 0, errors.New("seek refused")
+	}
+	return f.Reader.Seek(off, whence)
+}
+
+func tonemp3(t *testing.T) []byte {
+	t.Helper()
+	mp3, err := os.ReadFile("../audio/testdata/tone-44k16.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mp3
+}
+
+// When the estimated start can't be sought to, the stream is back at its
+// first byte, not left wherever the header probe stopped.
+func TestPositionMP3FallsBackToTheStart(t *testing.T) {
+	mp3 := tonemp3(t)
+	song := subsonic.Song{Size: int64(len(mp3)), Duration: 2}
+	for name, c := range map[string]struct {
+		song   subsonic.Song
+		offset time.Duration
+		fail   func(int64) bool
+	}{
+		"estimate seek fails": {song, time.Second, func(off int64) bool { return off > 100 }},
+		"no size to estimate": {subsonic.Song{Duration: 2}, time.Second, func(int64) bool { return false }},
+	} {
+		r := &flakySeeker{Reader: bytes.NewReader(mp3), fail: c.fail}
+		_, _, at, placed, err := positionMP3(r, c.song, c.offset)
+		if err != nil || placed || at != 0 {
+			t.Fatalf("%s: placed %v at %v err %v", name, placed, at, err)
+		}
+		if pos, _ := r.Reader.Seek(0, io.SeekCurrent); pos != 0 {
+			t.Errorf("%s: stream left at byte %d, want 0", name, pos)
+		}
+	}
+}
+
+// If even the rewind fails the stream can't be used: an error, not a source
+// that reads from the middle of the header.
+func TestPositionMP3ReportsAFailedRewind(t *testing.T) {
+	mp3 := tonemp3(t)
+	r := &flakySeeker{Reader: bytes.NewReader(mp3), fail: func(off int64) bool { return off > 100 || off == 0 }}
+	song := subsonic.Song{Size: int64(len(mp3)), Duration: 2}
+	if _, _, _, placed, err := positionMP3(r, song, time.Second); err == nil || placed {
+		t.Fatalf("placed %v, err %v; want an error", placed, err)
+	}
+}
+
+// A source that starts at byte base can't be seeked before it.
+func TestFromOffsetRejectsSeeksBeforeItsBase(t *testing.T) {
+	mp3 := tonemp3(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(mp3))
+	}))
+	defer srv.Close()
+	c, _ := subsonic.New(subsonic.Options{BaseURL: srv.URL, Credentials: subsonic.Credentials{Username: "a", Password: "b"}})
+	song := subsonic.Song{ID: "m", Suffix: "mp3", Size: int64(len(mp3)), Duration: 2}
+	op, err := NewOpener(c, StreamSettings{TranscodeFormat: "mp3"})(context.Background(), song, time.Second, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeOpened(op)
+	src := op.Source
+	base := op.Source.(*fromOffset).base
+	head := make([]byte, 8)
+	io.ReadFull(src, head) // now 8 bytes in
+	for name, seek := range map[string]func() (int64, error){
+		"start":   func() (int64, error) { return src.Seek(-1, io.SeekStart) },
+		"current": func() (int64, error) { return src.Seek(-9, io.SeekCurrent) },
+		"end":     func() (int64, error) { return src.Seek(-int64(len(mp3))+base-1, io.SeekEnd) },
+	} {
+		if _, err := seek(); err == nil {
+			t.Errorf("seek before the base from %s succeeded", name)
+		}
+		if pos, _ := src.Seek(0, io.SeekCurrent); pos != 8 {
+			t.Fatalf("after the refused seek from %s the position is %d, want 8", name, pos)
+		}
+	}
+	if pos, err := src.Seek(-8, io.SeekCurrent); err != nil || pos != 0 {
+		t.Fatalf("seek to the base = %d, %v", pos, err)
+	}
+	if pos, err := src.Seek(-int64(len(mp3))+base, io.SeekEnd); err != nil || pos != 0 {
+		t.Fatalf("seek to the base from the end = %d, %v", pos, err)
+	}
+}

@@ -60,17 +60,23 @@ func retryLater(code int) bool {
 	return false
 }
 
+// maxRetryAfter caps a Retry-After: far beyond any retry budget, and far
+// from overflowing a Duration.
+const maxRetryAfter = 24 * time.Hour
+
 // parseRetryAfter reads a Retry-After header: seconds or an HTTP date.
 func parseRetryAfter(h string, now time.Time) time.Duration {
 	h = strings.TrimSpace(h)
 	if h == "" {
 		return 0
 	}
-	if s, err := strconv.Atoi(h); err == nil && s >= 0 {
-		return time.Duration(s) * time.Second
+	if s, err := strconv.ParseInt(h, 10, 64); err == nil && s >= 0 {
+		return time.Duration(min(s, int64(maxRetryAfter/time.Second))) * time.Second
+	} else if errors.Is(err, strconv.ErrRange) && h[0] != '-' {
+		return maxRetryAfter
 	}
 	if t, err := http.ParseTime(h); err == nil && t.After(now) {
-		return t.Sub(now)
+		return min(t.Sub(now), maxRetryAfter)
 	}
 	return 0
 }
@@ -92,6 +98,7 @@ type Reader struct {
 	prefetch int64
 	gen      int
 	cancel   context.CancelFunc
+	alloc    func(n int64) []byte // makes the ring Promote grows to; a test hook
 }
 
 // Open issues the first request and returns once response headers arrive.
@@ -124,7 +131,8 @@ func Open(ctx context.Context, url string, o Options) (*Reader, error) {
 		// full window comes with Promote.
 		ringBytes = min(o.WindowBytes, o.PrefetchBytes+o.PrefetchBytes/4)
 	}
-	r := &Reader{url: url, o: o, ring: make([]byte, ringBytes), size: -1, prefetch: o.PrefetchBytes}
+	r := &Reader{url: url, o: o, ring: make([]byte, ringBytes), size: -1, prefetch: o.PrefetchBytes,
+		alloc: func(n int64) []byte { return make([]byte, n) }}
 	r.cond = sync.NewCond(&r.mu)
 
 	fctx, cancel := context.WithCancel(context.Background())
@@ -185,19 +193,34 @@ func (r *Reader) SeekIfBuffered(off int64) bool {
 }
 
 // Promote lifts the prefetch limit and grows the ring to the full window.
+// The new ring is allocated without the lock (a Read meanwhile isn't held up
+// by up to 32 MiB of zeroing); what the fetcher added during that is copied
+// over under it.
 func (r *Reader) Promote() {
 	r.mu.Lock()
-	r.prefetch = 0
-	if int64(len(r.ring)) < r.o.WindowBytes {
-		r.growLocked(r.o.WindowBytes)
+	if r.closed {
+		r.mu.Unlock()
+		return
 	}
+	r.prefetch = 0
 	r.cond.Broadcast()
+	grow := int64(len(r.ring)) < r.o.WindowBytes
+	r.mu.Unlock()
+	if !grow {
+		return
+	}
+	ring := r.alloc(r.o.WindowBytes)
+	r.mu.Lock()
+	if !r.closed && int64(len(r.ring)) < int64(len(ring)) {
+		r.growLocked(ring)
+		r.cond.Broadcast()
+	}
 	r.mu.Unlock()
 }
 
-// growLocked moves the buffered bytes [lo, hi) into a new ring of n bytes.
-func (r *Reader) growLocked(n int64) {
-	ring := make([]byte, n)
+// growLocked moves the buffered bytes [lo, hi) into ring, which is larger.
+func (r *Reader) growLocked(ring []byte) {
+	n := int64(len(ring))
 	old := int64(len(r.ring))
 	for off := r.lo; off < r.hi; {
 		s := off % old
@@ -366,12 +389,17 @@ func stripURL(err error) error {
 // not taken: the server's answer is returned instead.
 func (r *Reader) openRequest(ctx context.Context, deadline time.Time) (*http.Response, context.CancelFunc, error) {
 	start := time.Now()
+	var last error // the latest "come back later"
 	for attempt := 0; ; attempt++ {
-		resp, reqCancel, err := r.request(ctx, 0)
+		resp, reqCancel, err := r.budgetedRequest(ctx, start.Add(r.o.RetryBudget))
 		var he *HTTPError
 		if err == nil || !errors.As(err, &he) || !retryLater(he.StatusCode) {
+			if err != nil && last != nil && time.Since(start) >= r.o.RetryBudget {
+				err = last // the budget cut this request short: the server's answer says more
+			}
 			return resp, reqCancel, err
 		}
+		last = err
 		d := max(r.o.Backoff[min(attempt, len(r.o.Backoff)-1)], he.RetryAfter)
 		if time.Since(start)+d > r.o.RetryBudget {
 			return nil, nil, err
@@ -387,6 +415,30 @@ func (r *Reader) openRequest(ctx context.Context, deadline time.Time) (*http.Res
 			return nil, nil, err
 		}
 	}
+}
+
+// budgetedRequest is request, cut off at limit: Open's retries end with the
+// budget even when a request hangs.
+func (r *Reader) budgetedRequest(ctx context.Context, limit time.Time) (*http.Response, context.CancelFunc, error) {
+	lctx, lcancel := context.WithCancel(ctx)
+	t := time.AfterFunc(time.Until(limit), lcancel)
+	resp, reqCancel, err := r.request(lctx, 0)
+	if !t.Stop() { // the limit passed: whatever came back is too late
+		if err == nil {
+			resp.Body.Close()
+			reqCancel()
+			err = context.DeadlineExceeded
+		}
+		lcancel()
+		return nil, nil, err
+	}
+	if err != nil {
+		lcancel()
+		return nil, nil, err
+	}
+	// The body outlives this call, so the limit's timer is already stopped;
+	// the caller's cancel ends the request.
+	return resp, func() { reqCancel(); lcancel() }, nil
 }
 
 func (r *Reader) request(ctx context.Context, off int64) (*http.Response, context.CancelFunc, error) {
@@ -481,6 +533,15 @@ func (r *Reader) fetch(ctx context.Context, gen int, off int64, resp *http.Respo
 					return
 				}
 				continue
+			}
+			// The file may have changed since the last connection: the
+			// latest size is what a later 416 and the end are judged by.
+			if n := responseSize(resp); n >= 0 {
+				r.mu.Lock()
+				if r.gen == gen {
+					r.size = n
+				}
+				r.mu.Unlock()
 			}
 		}
 		skip := int64(0)

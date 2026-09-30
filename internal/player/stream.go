@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -85,24 +86,42 @@ func NewOpener(c *subsonic.Client, st StreamSettings) Opener {
 		if !transcoded && f == audio.FormatMP3 && s.Size > 0 && s.Duration > 0 {
 			// An MP3 without a seek table seeks by decoding from the start,
 			// which takes seconds on the MiSTer: start near the target instead.
-			layout := probeMP3(r)
-			base, ok := int64(0), false
-			if offset > 0 {
-				base, ok = layout.offset(s, offset)
+			layout, base, at, placed, err := positionMP3(r, s, offset)
+			if err != nil {
+				r.Close()
+				return Opened{}, err
 			}
-			if _, err := r.Seek(base, io.SeekStart); err == nil && (ok || offset == 0) {
+			if placed {
 				m := &mp3Stream{r: r, layout: layout}
 				m.refs.Store(1)
 				src = &fromOffset{s: m, base: base, placed: true}
-				if ok {
-					start = offset
-				}
-			} else {
-				r.Seek(0, io.SeekStart)
+				start = at
 			}
 		}
 		return Opened{Source: src, Format: f, Transcoded: transcoded, Offset: start}, nil
 	}
+}
+
+// positionMP3 probes r, an MP3 of song s, and moves it to the byte estimated
+// for offset (the start for offset 0). placed says the estimate is in use: r
+// is at base and the song's position there is at. Otherwise r is back at its
+// start, for the engine to seek; err is set only when r can't be put there.
+func positionMP3(r io.ReadSeeker, s subsonic.Song, offset time.Duration) (layout mp3Layout, base int64, at time.Duration, placed bool, err error) {
+	layout = probeMP3(r)
+	ok := false
+	if offset > 0 {
+		base, ok = layout.offset(s, offset)
+	}
+	if _, err := r.Seek(base, io.SeekStart); err == nil && (ok || offset == 0) {
+		if ok {
+			at = offset
+		}
+		return layout, base, at, true, nil
+	}
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return layout, 0, 0, false, err
+	}
+	return layout, 0, 0, false, nil
 }
 
 // mp3Stream is an MP3's stream shared by the sources of successive seeks:
@@ -159,8 +178,24 @@ func (f *fromOffset) Seek(off int64, whence int) (int64, error) {
 	if err := f.place(); err != nil {
 		return 0, err
 	}
-	if whence == io.SeekStart {
+	// The source begins at base: a seek before it is refused, and refused
+	// before anything moves.
+	var target int64
+	switch whence {
+	case io.SeekStart:
+		target = off
 		off += f.base
+	case io.SeekCurrent:
+		cur, err := f.s.r.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return 0, err
+		}
+		target = cur - f.base + off
+	case io.SeekEnd:
+		target = f.s.r.Size() + off - f.base // an unknown size, -1, is refused here too
+	}
+	if target < 0 {
+		return 0, errors.New("player: seek before the start of the stream")
 	}
 	abs, err := f.s.r.Seek(off, whence)
 	return abs - f.base, err

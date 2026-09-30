@@ -848,3 +848,195 @@ func TestOpenRetryAfterBeyondTheDeadlineReportsTheServer(t *testing.T) {
 		t.Fatalf("Open took %v", d)
 	}
 }
+
+// A huge Retry-After is clamped, not overflowed into a negative or tiny wait.
+func TestParseRetryAfterClampsAbsurdValues(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, h := range []string{"99999999999", "9223372036854775807", "99999999999999999999", "Fri, 31 Dec 9999 23:59:59 GMT"} {
+		if got := parseRetryAfter(h, now); got != maxRetryAfter {
+			t.Errorf("parseRetryAfter(%q) = %v, want the clamp %v", h, got, maxRetryAfter)
+		}
+	}
+}
+
+// An absurd Retry-After still gives up at once (it is beyond the budget).
+func TestAbsurdRetryAfterGivesUp(t *testing.T) {
+	const size = 1 << 20
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			dropAfter(w, size, 100<<10)
+		}
+		w.Header().Set("Retry-After", "99999999999")
+		w.WriteHeader(http.StatusTooManyRequests)
+		return true
+	})
+	r := open(t, s.URL, testOptions())
+	start := time.Now()
+	if _, err := io.ReadAll(r); err == nil {
+		t.Fatal("ReadAll succeeded")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("gave up after %v", d)
+	}
+}
+
+// Promote on a closed reader allocates nothing and changes nothing.
+func TestPromoteOnAClosedReaderIsANoOp(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	r.Close()
+	r.alloc = func(int64) []byte { t.Error("Promote allocated on a closed reader"); return nil }
+	r.Promote()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.ring) != 80<<10 || r.prefetch == 0 {
+		t.Fatalf("ring %d, prefetch %d: a closed reader changed", len(r.ring), r.prefetch)
+	}
+}
+
+// The ring is allocated without the lock, so a Read during the allocation
+// isn't stalled by it; a Close that lands meanwhile keeps the old ring.
+func TestPromoteAllocatesOutsideTheLock(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	buf := make([]byte, 10<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	locked := make(chan bool, 1)
+	r.alloc = func(n int64) []byte {
+		if r.mu.TryLock() {
+			r.mu.Unlock()
+			locked <- false
+		} else {
+			locked <- true
+		}
+		// A Read now must go through, not wait for this allocation.
+		done := make(chan struct{})
+		go func() { r.Read(buf); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("Read blocked during the allocation")
+		}
+		return make([]byte, n)
+	}
+	r.Promote()
+	select {
+	case held := <-locked:
+		if held {
+			t.Fatal("the lock was held during the allocation")
+		}
+	default:
+		t.Fatal("Promote never called the allocation hook")
+	}
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes", big)
+	}
+	checkBytes(t, readAt(t, r, 0, 64<<10), 0)
+}
+
+// A file that is shorter on reconnect ends at its new size: the 416-versus-
+// size check goes by the latest response, not the first.
+func TestShrunkFileEndsAtTheNewSize(t *testing.T) {
+	const size, shrunk = 1 << 20, 300 << 10
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			dropAfter(w, size, 100<<10)
+		}
+		http.ServeContent(w, r, "", time.Time{}, &virtualFile{size: shrunk})
+		return true
+	})
+	r := open(t, s.URL, testOptions())
+	got, err := io.ReadAll(r)
+	if err != nil || len(got) != shrunk {
+		t.Fatalf("ReadAll = %d bytes, %v; want %d bytes", len(got), err, shrunk)
+	}
+	checkBytes(t, got, 0)
+}
+
+// Open's whole retry, waits and requests alike, ends with the budget.
+func TestOpenBudgetRunsOut(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return true
+	})
+	o := testOptions()
+	o.RetryBudget = 100 * time.Millisecond
+	start := time.Now()
+	_, err := Open(context.Background(), s.URL, o)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Open error = %v, want the 503", err)
+	}
+	if d := time.Since(start); d > time.Second || s.requests.Load() < 2 {
+		t.Fatalf("Open took %v over %d requests", d, s.requests.Load())
+	}
+}
+
+// A retry request that hangs is cut off by the budget, not the stall timeout.
+func TestOpenBudgetBoundsTheRetryRequest(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		<-r.Context().Done() // never answers
+		return true
+	})
+	o := testOptions()
+	o.StallTimeout = 10 * time.Second
+	o.RetryBudget = 300 * time.Millisecond
+	start := time.Now()
+	_, err := Open(context.Background(), s.URL, o)
+	if err == nil {
+		t.Fatal("Open succeeded")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Open took %v, the budget is 300ms", d)
+	}
+}
+
+// A cancelled context ends Open's wait between retries.
+func TestOpenCancelDuringTheRetryWait(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return true
+	})
+	o := testOptions()
+	o.Backoff = []time.Duration{10 * time.Second}
+	o.RetryBudget = time.Minute
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := Open(ctx, s.URL, o)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Open error = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("Open took %v after the cancel", d)
+	}
+}
+
+// A 500 on the first request is not retried.
+func TestOpenFailsAtOnceOnServerError(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusInternalServerError)
+		return true
+	})
+	_, err := Open(context.Background(), s.URL, testOptions())
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("Open error = %v, want the 500", err)
+	}
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("%d requests, want 1", n)
+	}
+}
