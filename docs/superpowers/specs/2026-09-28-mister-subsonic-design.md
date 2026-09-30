@@ -224,12 +224,16 @@ The loop records the **frame index where each track starts in the ring's output*
 
 - **Framebuffer.** `gfx` opens `/dev/fb0`, reads the geometry with the `FBIOGET_*SCREENINFO` ioctls and mmaps it (16 or 32 bpp). If the fbdev mmap fails, it falls back to mapping `/dev/mem` at `smem_start`.
 - **Double buffering.** All drawing goes to a back buffer. Presenting copies only the dirty rectangles. The UI redraws on events, not continuously; the only periodic redraw is the position tick.
-- **Logical canvas per profile**, scaled to the framebuffer with nearest neighbour (integer scale where possible) and letterboxed:
+- **Canvas per profile:**
+  - **HDMI** draws at the framebuffer's own size and fills it, with no scaler. The 1280×720 layout is the design size: every length is scaled by `min(W/1280, H/720)`, and fonts stay at 15/12/10 px or more (title, body, small). A 16:10 screen gets more rows instead of bars. The MiSTer menu halves framebuffers above 1920×1080 (1920×1200 gives 960×600), and the app draws that size.
+  - **CRT** keeps its logical size and is scaled to the framebuffer with nearest neighbour (integer scale where possible) and letterboxed.
 
-| Profile | Logical size | Picked when |
+| Profile | Canvas | Picked when |
 |---|---|---|
-| HDMI | 1280×720 | `auto` and fb height > 288, or `display.profile = "hdmi"` |
+| HDMI | the framebuffer's size (layout designed at 1280×720) | `auto` and fb height > 288, or `display.profile = "hdmi"` |
 | CRT | 320×240 or 320×288, with pixel aspect correction; 480/576-line framebuffers are line-doubled | `auto` and fb height ≤ 288, or `display.profile = "crt"` |
+
+**Repaint target:** a full repaint takes under 30 ms on the Cortex-A9 at 960×600 and on CRT. Native 1080p is the exception: about 68 ms, sharp, but held scrolling redraws at about 15 frames a second. Partial redraws for it are in the backlog (`docs/superpowers/plans/backlog.md`).
 
 `display.profile` accepts `auto`, `hdmi` or `crt`. A 480i/576i CRT can't be told apart from a 480p/576p HDMI framebuffer, so `auto` picks HDMI; CRT users on interlaced modes set `crt` explicitly, and the README says so.
 
@@ -300,6 +304,10 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
 
+**Media keys** (volume up and down, mute, play/pause, next, previous, fast-forward and rewind) work on every screen. The top screen gets each key first, so a text field or a screen with its own meaning for it keeps it; the X menu, the exit prompt and the screensaver let them through (a media key wakes the screensaver and acts on the first press). Next and previous need a queue. Seeking needs a current track, moves ±10 s (held: ±30 s, at most four seeks a second) and stops a second before the end.
+
+**Screenshot key:** Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity.
+
 Quitting the app is Settings → Exit, or holding B for 2 s on the Home root, with a confirmation.
 
 ### 8.4 Input (`internal/input`)
@@ -312,7 +320,7 @@ Quitting the app is Settings → Exit, or holding B for 2 s on the Home root, wi
 - **Mapping:**
   - Gamepads are mapped through the user's MiSTer map `/media/fat/config/inputs/input_<VID>_<PID>_v3.map` when present.
   - Otherwise it uses Linux gamepad defaults: `BTN_SOUTH`=B, `BTN_EAST`=A, `BTN_NORTH`=X, `BTN_WEST`=Y, `BTN_TL`/`BTN_TR`, `BTN_START`/`BTN_SELECT`, and hat or stick axes with a 50% threshold.
-- **Key repeat** for navigation: 350 ms delay, then 110 ms, accelerating to 45 ms after 6 repeats. It is based on the real held state, not on the kernel's repeat events.
+- **Key repeat** for navigation: 350 ms delay, then 110 ms, accelerating to 45 ms after 6 repeats. It is based on the real held state, not on the kernel's repeat events. Volume and seek keys repeat the same way when held; the other media keys don't.
 - **Drain:** queued input is drained at startup and after returning from the wizard.
 
 ## 9. MiSTer platform, config, distribution
@@ -415,7 +423,7 @@ These are throwaway probes. The results are recorded in `docs/spikes.md`.
 
 1. **Range on Navidrome.** Does `stream?format=raw` for a FLAC return `206` for `Range:` requests on the user's server, and what do `Content-Length` and `Accept-Ranges` look like? Also check how a transcoded stream responds to Range and to `timeOffset`.
 2. **Toolchain + audio on device.** Build a minimal zig-cgo miniaudio binary, confirm it runs on the MiSTer's glibc, and play a 48 kHz test tone plus a FLAC through ALSA with no crackle. Also confirm the ALSA device name to use.
-3. **Performance on the Cortex-A9.** Measure the CPU cost of decoding FLAC 24/96, resampling to 48 kHz with speexdsp (compare quality levels 3, 5 and 7), rendering a full 1280×720 list screen with the pure-Go glyph cache, and presenting it. Target: decode + resample < 25% of one core, full UI repaint < 30 ms.
+3. **Performance on the Cortex-A9.** Measure the CPU cost of decoding FLAC 24/96, resampling to 48 kHz with speexdsp (compare quality levels 3, 5 and 7), rendering a full 1280×720 list screen with the pure-Go glyph cache, and presenting it. Target: decode + resample < 25% of one core, full UI repaint < 30 ms (§8.1: 1080p is the exception).
 
 If a spike fails, the design section it tests gets revised before implementation: §5 for #1, §6/§9 for #2, and §6/§8.1 for #3.
 

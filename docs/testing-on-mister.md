@@ -24,7 +24,8 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 3. **HDMI.** At 720p, 1080p and a mode above 1080p such as 1920x1200
    (`video_mode`, see the README): the image fills the screen and the text is
    sharp. Covers load in the grids. Scrolling a long list keeps up with a held
-   D-pad.
+   D-pad. At 1080p the text is sharp, but held scrolling redraws at about 15
+   frames a second: that is expected, not a failure.
 4. **CRT.** At 240p and 288p: the CRT layout, with nothing important cut off
    by overscan. Tune the title-safe margins if needed.
 5. **Controllers.** The user's MiSTer mapping works. Unplug the pad while the
@@ -66,8 +67,8 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     rather than keep growing.
 19. **Media keys.** On a multimedia keyboard (for example a Logitech K400
     Plus), on a browse screen and on Now Playing: volume up and down (held
-    too), mute, play/pause, next, previous. Each works without leaving the
-    screen.
+    too), mute, play/pause, next, previous, fast-forward and rewind (held too).
+    Each works without leaving the screen.
 20. **Volume panel.** Every volume or mute change shows the panel for about
     1.5 s: speaker, bar and level, or "Muted". Now Playing shows the small
     speaker and bar in its status line.
