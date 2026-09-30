@@ -102,6 +102,9 @@ type Options struct {
 	Version    string // shown in Settings → About
 	// ScreenshotDir is where the screenshot button saves PNGs ("": off).
 	ScreenshotDir string
+	// VerifyRedraw checks every partial frame against a full one and logs
+	// any difference (a debugging aid on the device).
+	VerifyRedraw bool
 	// Connect starts a connection to cfg's active server, off the UI
 	// goroutine, replacing any previous one; it answers with
 	// a.Connected or a.ConnectFailed (through a.Post).
@@ -198,8 +201,13 @@ type App struct {
 	muted       bool      // the sound is off (not saved: the app starts with sound)
 	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
 	shooting    bool      // a screenshot is being saved
-	checkAt     time.Time // the next watchdog check (zero: the display can't check itself)
-	overwritten bool      // the last check found the screen drawn over
+
+	damage       []gfx.Rect   // changed areas for the next frame (dirty means the whole frame)
+	verify       bool         // check partial frames against full ones
+	verifyFail   func(string) // called when that check fails (tests)
+	verifyCanvas *gfx.Canvas
+	checkAt      time.Time // the next watchdog check (zero: the display can't check itself)
+	overwritten  bool      // the last check found the screen drawn over
 }
 
 func New(o Options) (*App, error) {
@@ -230,6 +238,7 @@ func New(o Options) (*App, error) {
 	if pw != a.P.W || ph != a.P.H { // drawn at the display's size: nothing to scale
 		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
 	}
+	a.verify = o.VerifyRedraw
 	if _, ok := o.Display.(gfx.Checker); ok {
 		a.checkAt = o.Now().Add(watchdogEvery)
 	}
@@ -406,7 +415,7 @@ func (a *App) Run(ctx context.Context) error {
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
 	for !a.quit {
-		if a.dirty {
+		if a.dirty || len(a.damage) > 0 {
 			if err := a.render(); err != nil {
 				return err
 			}
@@ -660,17 +669,32 @@ func (a *App) present(c *gfx.Canvas) error {
 	return a.o.Display.Present(a.scaler.Scale(c))
 }
 
+// render draws the next frame: only the damaged areas when nothing else
+// changed, otherwise the whole frame.
 func (a *App) render() error {
+	full := a.dirty
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {
 		a.saver = false
 	}
 	if a.saver {
+		a.damage = a.damage[:0]
 		a.drawSaver(a.canvas)
 		return a.present(a.canvas)
 	}
+	if !full && len(a.damage) > 0 {
+		if done, err := a.renderDamage(); done || err != nil {
+			return err
+		}
+	}
+	a.damage = a.damage[:0]
+	a.drawFrame(a.canvas)
+	return a.present(a.canvas)
+}
+
+// drawFrame draws everything on c (within its clip).
+func (a *App) drawFrame(c *gfx.Canvas) {
 	a.animate, a.mq.seen, a.mqWake, a.dim = false, false, time.Time{}, false
-	c := a.canvas
 	c.Clear(colBg)
 	top := a.Top()
 	p := a.P
@@ -697,7 +721,6 @@ func (a *App) render() error {
 	if a.confirm {
 		a.drawConfirm(c)
 	}
-	return a.present(c)
 }
 
 func (a *App) drawHeader(c *gfx.Canvas, title string) {

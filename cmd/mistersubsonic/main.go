@@ -37,7 +37,7 @@ var version = "dev"
 
 type flags struct {
 	config, display, viewerAddr, frames, profile, fbdev, keys, log, screenshots string
-	null, restoreConsole                                                        bool
+	null, restoreConsole, verifyRedraw                                          bool
 	volume                                                                      float64
 	exitAfter                                                                   time.Duration
 }
@@ -54,6 +54,7 @@ func main() {
 	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
 	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
 	flag.StringVar(&f.screenshots, "screenshots", "auto", "screenshot folder: auto (/media/fat/screenshots/MiSTer_Subsonic beside the config on the framebuffer, screenshots/ next to the config elsewhere), a path, or \"\" for none")
+	flag.BoolVar(&f.verifyRedraw, "verify-redraw", false, "check every partial redraw against a full one and log any difference (debugging)")
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
 	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
 	flag.BoolVar(&f.restoreConsole, "restore-console", false, "put the console back in text mode and exit (the launcher runs this after the app)")
@@ -303,6 +304,7 @@ func run(f flags) (err error) {
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
 		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),
+		VerifyRedraw:  f.verifyRedraw,
 		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})
 	if err != nil {

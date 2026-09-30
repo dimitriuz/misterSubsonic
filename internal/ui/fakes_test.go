@@ -334,6 +334,8 @@ func newTestApp(t *testing.T, prof Profile) *testApp {
 		t.Fatal(err)
 	}
 	ta.App = a
+	a.verify = true // every partial frame must equal a full one
+	a.verifyFail = func(m string) { t.Errorf("%s", m) }
 	return ta
 }
 
