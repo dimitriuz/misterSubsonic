@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"log"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -12,7 +13,13 @@ import (
 // the values that differ are touched. It reports false when the file has a
 // layout it cannot edit line by line (inline tables, multi-line strings...) or
 // when the edited text does not decode back to cfg; Save then rewrites the file.
-func editConfig(text string, cfg *Config) (string, bool) {
+func editConfig(text string, cfg *Config) (out string, ok bool) {
+	defer func() {
+		if r := recover(); r != nil { // never the file's text: it holds credentials
+			log.Printf("config: editing the file in place failed (%v); rewriting it", r)
+			out, ok = "", false
+		}
+	}()
 	old := Default()
 	if _, err := toml.Decode(text, old); err != nil {
 		return "", false
@@ -35,7 +42,7 @@ func editConfig(text string, cfg *Config) (string, bool) {
 	if !e.servers(old.Servers, cfg.Servers) {
 		return "", false
 	}
-	out := strings.Join(e.lines, "\n")
+	out = strings.Join(e.lines, "\n")
 	got := Default()
 	if _, err := toml.Decode(out, got); err != nil || encodeAll(got) != encodeAll(cfg) {
 		return "", false
@@ -128,7 +135,11 @@ func isHeader(line string) bool {
 
 // keyLine reports whether line assigns key, and where its value starts.
 func keyLine(line, key string) (int, bool) {
-	t := strings.TrimLeft(line, " \t")
+	skip := 0
+	if strings.HasPrefix(line, bom) { // a BOM may start line 0; the index stays into the whole line
+		skip = len(bom)
+	}
+	t := strings.TrimLeft(line[skip:], " \t")
 	if !strings.HasPrefix(t, key) {
 		return 0, false
 	}
@@ -202,7 +213,7 @@ func (e *editor) set(sec, key, v string) bool {
 				first++
 			}
 			e.insert(first, key+" = "+v)
-			if first < e.end() && strings.TrimSpace(e.lines[first+1]) != "" {
+			if first+1 < len(e.lines) && strings.TrimSpace(e.lines[first+1]) != "" {
 				e.insert(first+1, "")
 			}
 			return true

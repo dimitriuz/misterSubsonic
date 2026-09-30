@@ -172,3 +172,64 @@ func TestSaveCreatesAFreshFileWhenThereIsNone(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func addWork(c *Config) {
+	c.AddServer(Server{Name: "work", URL: "https://music.example.com", Username: "bob", Token: "t0k", Salt: "s4lt"})
+}
+
+func TestSaveCommentOnlyFileWithoutNewline(t *testing.T) {
+	got, _ := saveEdited(t, "# only", addWork)
+	wantAll(t, got, `name = "work"`)
+}
+
+func TestSaveEmptyFileGetsAServer(t *testing.T) {
+	got, _ := saveEdited(t, "", addWork)
+	wantAll(t, got, `name = "work"`)
+}
+
+func TestSaveKeepsABOMBeforeTheFirstKey(t *testing.T) {
+	body := "\xEF\xBB\xBFdefault_server = \"home\"   # first\n" + strings.TrimPrefix(commented, "# My own notes on this file.\ndefault_server = \"home\"   # the one at home\n")
+	got, _ := saveEdited(t, body, func(c *Config) {
+		c.AddServer(Server{Name: "work", URL: "https://music.example.com", Username: "bob", Token: "t0k", Salt: "s4lt"})
+		c.DefaultServer = "home"
+		c.Playback.VolumeDB = -6
+	})
+	wantAll(t, got, "\xEF\xBB\xBFdefault_server = \"home\"   # first", "volume_db = -6.0   # keep it quiet at night", "# --- playback ---")
+}
+
+func TestSaveBOMKeyChangeEditsInPlace(t *testing.T) {
+	body := "\xEF\xBB\xBFdefault_server = \"home\"   # first\n" + strings.TrimPrefix(commented, "# My own notes on this file.\ndefault_server = \"home\"   # the one at home\n") +
+		"\n[[server]]\nname = \"work\"\nurl = \"http://w:4533\"\nusername = \"bob\"\npassword = \"pw\"\n"
+	got, _ := saveEdited(t, body, func(c *Config) { c.DefaultServer = "work" })
+	wantAll(t, got, "\xEF\xBB\xBFdefault_server = \"work\"   # first", "# --- playback ---", "custom = 1 # not ours")
+}
+
+func TestSaveQuotedKeyUntouchedIsEditedInPlace(t *testing.T) {
+	got, _ := saveEdited(t, "\"default_server\" = \"home\"   # mine\n"+minimal, func(c *Config) { c.Playback.VolumeDB = -9 })
+	wantAll(t, got, "\"default_server\" = \"home\"   # mine", "volume_db = -9.0")
+}
+
+func TestSaveQuotedKeyThatChangesFallsBack(t *testing.T) {
+	// the line editor does not recognise a quoted key and would add a duplicate; the safety net catches it
+	got, _ := saveEdited(t, "\"default_server\" = \"home\"\n"+minimal, addWork)
+	if !strings.HasPrefix(got, "# MiSTer Subsonic configuration") {
+		t.Fatalf("expected a fresh file:\n%s", got)
+	}
+}
+
+const twoServers = commented + "\n[[server]]\nname = \"work\"\nurl = \"http://w:4533\"\nusername = \"bob\"\npassword = \"pw\"\n"
+
+func TestSaveReorderedServersFallBack(t *testing.T) {
+	got, _ := saveEdited(t, twoServers, func(c *Config) { c.Servers[0], c.Servers[1] = c.Servers[1], c.Servers[0] })
+	if !strings.HasPrefix(got, "# MiSTer Subsonic configuration") {
+		t.Fatalf("expected a fresh file:\n%s", got)
+	}
+}
+
+func TestSaveRenamedServer(t *testing.T) {
+	got, _ := saveEdited(t, twoServers, func(c *Config) { c.Servers[1].Name = "office" })
+	wantAll(t, got, "# My own notes on this file.", `name = "office"`, "# --- playback ---")
+	if strings.Contains(got, `"work"`) {
+		t.Errorf("old name left:\n%s", got)
+	}
+}
