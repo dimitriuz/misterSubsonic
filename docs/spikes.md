@@ -29,9 +29,48 @@ file /tmp/t.mp3 /tmp/t2.mp3
 
 **Decision:** §5 confirmed. Raw FLAC streams return `206` with `Accept-Ranges: bytes` and correct `Content-Range`, so the range-based stream reader design in spec §5 stands as designed for this server. Transcoded streams are `200`, chunked (no `Content-Length`), `Accept-Ranges: none` — as expected for on-the-fly transcoding, and consistent with §5's sequential-read path for transcoded audio. `timeOffset` is honoured by this server (verified above), so seeking on a transcoded stream reopens the connection at the requested offset rather than restarting from 0.
 
-## Spike 2 — pending — MiSTer unavailable (user can't boot it yet)
+## Spike 2 — toolchain and audio on the device (2026-09-30, silent part)
 
-## Spike 3 — pending — MiSTer unavailable (user can't boot it yet)
+- **Device:** ARMv7 (Cortex-A9), Buildroot, glibc 2.31, bash 5.0.18, util-linux `flock`. `socat`, `pidof` and `timeout` are present; `pgrep` is not. About 490 MB RAM, 427 MB available.
+- **Result:** the zig-built `audio.test` (needs glibc 2.29) runs, and every test passes on the device through miniaudio's null backend. That covers decoders, resampler, engine, gapless and the null device.
+- **Still to do (audible, only with the user's go-ahead and the volume low):** `MSS_DEVICE_TEST=1 ./audio.test -test.run RealDevice -test.v`. Listen for the 440 Hz tone and the 44.1k and 96k tones without clicks, and confirm the ALSA device name.
+
+## Spike 3 — Cortex-A9 costs (2026-09-30)
+
+**Decode + resample to 48 kHz (`audio.test -test.bench DecodeResample`), share of one core:**
+
+| Source | q3 | q5 | q7 |
+|---|---|---|---|
+| FLAC 44.1k/16 | 12.0% | **18.0%** | 26.5% |
+| FLAC 96k/24 | — | **14.7%** | — |
+
+- **Decision:** keep quality 5 (the default). It is under the 25% target.
+
+**UI repaint (`ui.test -test.bench Repaint`), per frame:**
+
+| Screen | Time |
+|---|---|
+| albums-hdmi-1080p | 165 ms |
+| nowplaying-hdmi-1080p | 108 ms |
+| feed-hdmi-1080p | 176 ms |
+| search-hdmi-1080p | 74 ms |
+| marquee-hdmi-1080p | 158 ms |
+| albums-crt-240p | **9 ms** |
+
+- **Target:** 30 ms per frame.
+  - CRT meets it.
+  - HDMI at 1080p does not.
+- **Profile of feed-hdmi-1080p on the device:**
+  - 46% goes to the benchmark's `fakeArt.Get`, which makes a gradient image per call with integer division (`runtime.udiv`). The real art source returns cached images.
+  - 19% goes to `Headless.Present`, which copies the frame; the framebuffer packs it instead.
+  - 15% goes to `Scaler.Scale` (1280×720 → 1920×1080).
+  - The rest is `Canvas.Clear`, `Blit` and text.
+- **Estimate for the real app:** excluding the benchmark's own costs, a 1080p frame is roughly 60–90 ms. That is still over the target.
+- **Next:**
+  - Fix the benchmark (cached fake art, a display without the copy).
+  - Profile again.
+  - Work on the scaler, clear and pack paths.
+- **This MiSTer's framebuffer is 960×600 at 32 bpp**, from `video_mode=1920,1200,60`; with `fb_size=0` the framebuffer is halved above 1920×1080. The 1280×720 HDMI layout is therefore scaled down to 0.75. That makes a frame cheaper, but thin text loses rows and columns (nearest neighbour).
 
 ## Plan 2a on the MiSTer
 
