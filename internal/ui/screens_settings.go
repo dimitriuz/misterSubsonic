@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"mistersubsonic/internal/config"
@@ -53,12 +54,14 @@ func (s *SettingsScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 }
 
 // setting is one row of a settings list: Left/Right (or A, forwards)
-// change it.
+// change it. A held key keeps cycling the choices, but an On/Off row
+// (toggle) changes once per press.
 type setting struct {
 	label  string
 	value  func(a *App) string
 	change func(a *App, dir int)
 	help   string // what the setting does, shown under the list while it is focused
+	toggle bool   // On/Off: ignores key repeat
 }
 
 // SettingsListScreen is a list of settings with their values.
@@ -88,6 +91,9 @@ func (s *SettingsListScreen) Handle(a *App, e input.Event) bool {
 		return false
 	}
 	r := rows[min(s.list.Focus, len(rows)-1)]
+	if r.toggle && e.Kind != input.Press {
+		return e.Button == input.BtnLeft || e.Button == input.BtnRight // a held key must not flicker it
+	}
 	switch {
 	case e.Button == input.BtnLeft:
 		r.change(a, -1)
@@ -150,6 +156,29 @@ func cycle[T comparable](choices []T, cur T, dir int) T {
 		}
 	}
 	return choices[(i+dir+len(choices))%len(choices)]
+}
+
+// cycleNear is cycle for ascending numbers, where cur may be a hand-edited
+// value that isn't a choice: the first step goes to the nearest choice in
+// that direction, wrapping when there is none (160 → 192 or 128).
+func cycleNear(choices []int, cur, dir int) int {
+	if slices.Contains(choices, cur) {
+		return cycle(choices, cur, dir)
+	}
+	if dir > 0 {
+		for _, c := range choices {
+			if c > cur {
+				return c
+			}
+		}
+		return choices[0]
+	}
+	for i := len(choices) - 1; i >= 0; i-- {
+		if choices[i] < cur {
+			return choices[i]
+		}
+	}
+	return choices[len(choices)-1]
 }
 
 func onOff(b bool) string {
@@ -220,7 +249,7 @@ func playbackSettings(a *App) []setting {
 				}
 				a.UpdateConfig(func(c *config.Config) { c.Playback.ReplayGain = mode }, false)
 			},
-			"Evens out loudness: track levels each song, album keeps an album's own dynamics. Off plays files as they are."},
+			"Evens out loudness: track levels each song, album keeps an album's own dynamics. Off plays files as they are.", false},
 		{"Scrobbling", func(a *App) string { return onOff(pb().Scrobble) },
 			func(a *App, dir int) {
 				on := !pb().Scrobble
@@ -229,24 +258,24 @@ func playbackSettings(a *App) []setting {
 				}
 				a.UpdateConfig(func(c *config.Config) { c.Playback.Scrobble = on }, false)
 			},
-			"Tells the server (and Last.fm, if the server is set up for it) what you listen to."},
+			"Tells the server (and Last.fm, if the server is set up for it) what you listen to.", true},
 		{"Transcode to", func(a *App) string { return pb().TranscodeFormat },
 			func(a *App, dir int) {
 				f := cycle([]string{"mp3", "flac", "wav"}, pb().TranscodeFormat, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Playback.TranscodeFormat = f }, false)
 				a.Toast("Used from the next connection")
 			},
-			"The server converts files the MiSTer can't play (AAC, OGG, Opus…) to this. FLAC, MP3 and WAV play as they are."},
+			"The server converts files the MiSTer can't play (AAC, OGG, Opus…) to this. FLAC, MP3 and WAV play as they are.", false},
 	}
 	if pb().TranscodeFormat == "mp3" { // the bitrate only matters for mp3
 		rows = append(rows,
 			setting{"Transcode bitrate", func(a *App) string { return fmt.Sprintf("%d kbps", pb().TranscodeBitrate) },
 				func(a *App, dir int) {
-					b := cycle([]int{128, 192, 256, 320}, pb().TranscodeBitrate, dir)
+					b := cycleNear([]int{128, 192, 256, 320}, pb().TranscodeBitrate, dir)
 					a.UpdateConfig(func(c *config.Config) { c.Playback.TranscodeBitrate = b }, false)
 					a.Toast("Used from the next connection")
 				},
-				"Quality of those conversions to MP3: higher sounds better and uses more network."})
+				"Quality of those conversions to MP3: higher sounds better and uses more network.", false})
 	}
 	return rows
 }
@@ -267,7 +296,7 @@ func displaySettings(a *App) []setting {
 				a.UpdateConfig(func(c *config.Config) { c.Display.Profile = p }, false)
 				a.Toast("The layout changes the next time the app starts")
 			},
-			"HDMI or CRT screen layout; auto picks by the screen's lines. Takes effect the next time the app starts."},
+			"HDMI or CRT screen layout; auto picks by the screen's lines. Takes effect the next time the app starts.", false},
 		{"Screensaver", func(a *App) string {
 			if m := d().ScreensaverMinutes; m > 0 {
 				return fmt.Sprintf("after %d min", m)
@@ -275,16 +304,16 @@ func displaySettings(a *App) []setting {
 			return "Off"
 		},
 			func(a *App, dir int) {
-				m := cycle(screensaverChoices, d().ScreensaverMinutes, dir)
+				m := cycleNear(screensaverChoices, d().ScreensaverMinutes, dir)
 				a.UpdateConfig(func(c *config.Config) { c.Display.ScreensaverMinutes = m }, false)
 			},
-			"Dims Now Playing and drifts the cover after this long without input."},
+			"Dims Now Playing and drifts the cover after this long without input.", false},
 		{"Hints", func(a *App) string { return onOff(d().Hints) },
 			func(a *App, dir int) {
 				on := !d().Hints
 				a.UpdateConfig(func(c *config.Config) { c.Display.Hints = on }, false)
 			},
-			"The bar of buttons along the bottom of every screen."},
+			"The bar of buttons along the bottom of every screen.", true},
 	}
 }
 

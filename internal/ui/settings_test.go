@@ -313,3 +313,74 @@ func TestSettingsHelpFitsTwoLines(t *testing.T) {
 		}
 	}
 }
+
+func TestHeldKeyFlipsAnOnOffRowOnce(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.Push(newSettingsList("Playback", playbackSettings))
+	ta.press(input.BtnDown) // Scrobbling (on)
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press})
+	for range 5 {
+		ta.dispatch(input.Event{Button: input.BtnRight, Kind: input.Repeat})
+	}
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Release})
+	if ta.cfg.Playback.Scrobble {
+		t.Fatal("holding Right flipped Scrobbling more than once (it is still on)")
+	}
+	if n := len(ta.pl.calls); n != 1 {
+		t.Fatalf("player calls %v, want one scrobble change", ta.pl.calls)
+	}
+}
+
+func TestHeldKeyKeepsCyclingAChoiceRow(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.Push(newSettingsList("Playback", playbackSettings))
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press})
+	ta.dispatch(input.Event{Button: input.BtnRight, Kind: input.Repeat})
+	if got := ta.cfg.Playback.ReplayGain; got != "album" {
+		t.Fatalf("ReplayGain %q after Press+Repeat, want album", got)
+	}
+}
+
+func TestCycleFromAHandEditedValue(t *testing.T) {
+	bitrates := []int{128, 192, 256, 320}
+	for _, c := range []struct{ cur, dir, want int }{
+		{160, 1, 192}, {160, -1, 128},
+		{500, 1, 128}, {500, -1, 320}, // beyond the ends: wraps like the ends do
+		{50, 1, 128}, {50, -1, 320},
+		{192, 1, 256}, {128, -1, 320}, // listed values are unchanged
+	} {
+		if got := cycleNear(bitrates, c.cur, c.dir); got != c.want {
+			t.Errorf("cycleNear(%d, %+d) = %d, want %d", c.cur, c.dir, got, c.want)
+		}
+	}
+}
+
+func TestSettingsRowsStartFromTheNearestChoice(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.cfg.Playback.TranscodeFormat = "mp3"
+	ta.cfg.Playback.TranscodeBitrate = 160
+	ta.Push(newSettingsList("Playback", playbackSettings))
+	ta.press(input.BtnDown)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnDown) // bitrate
+	ta.press(input.BtnRight)
+	if got := ta.cfg.Playback.TranscodeBitrate; got != 192 {
+		t.Fatalf("160 -> Right = %d, want 192", got)
+	}
+	ta.cfg.Playback.TranscodeBitrate = 160
+	ta.press(input.BtnLeft)
+	if got := ta.cfg.Playback.TranscodeBitrate; got != 128 {
+		t.Fatalf("160 -> Left = %d, want 128", got)
+	}
+}
+
+func TestScreensaverRowStartsFromTheNearestChoice(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.cfg.Display.ScreensaverMinutes = 7
+	ta.Push(newSettingsList("Display", displaySettings))
+	ta.press(input.BtnDown)
+	ta.press(input.BtnRight)
+	if got := ta.cfg.Display.ScreensaverMinutes; got != 10 {
+		t.Fatalf("7 -> Right = %d, want 10", got)
+	}
+}

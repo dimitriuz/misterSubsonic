@@ -183,6 +183,7 @@ type App struct {
 	// swallowed holds buttons whose press was typed into a text field, so
 	// their releases are dropped too.
 	swallowed  map[input.Button]bool
+	wakeKeys   map[input.Button]bool // buttons whose press woke the screensaver: their release is ignored
 	insecure   bool
 	stars      map[starKey]bool       // star changes made in this session
 	starBusy   map[starKey]bool       // star requests in flight
@@ -230,7 +231,7 @@ func New(o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
-		swallowed: map[input.Button]bool{}, stars: map[starKey]bool{}, starBusy: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now()}
+		swallowed: map[input.Button]bool{}, wakeKeys: map[input.Button]bool{}, stars: map[starKey]bool{}, starBusy: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now()}
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err
@@ -410,6 +411,9 @@ func (a *App) After(owner Screen, d time.Duration, f func()) {
 // Toast shows a short message over the current screen.
 func (a *App) Toast(format string, args ...any) {
 	text := fmt.Sprintf(format, args...)
+	if a.wake() { // a toast can't be seen over the screensaver (a failed track must be)
+		a.lastInput = a.o.Now() // else it would start again at once
+	}
 	until := a.o.Now().Add(toastTime)
 	a.Damage(a.toastsArea()) // the toasts move up for the new one
 	if n := len(a.toasts); n > 0 && a.toasts[n-1].text == text {
@@ -585,7 +589,12 @@ func (a *App) onInput(e input.Event) {
 	now := a.o.Now()
 	a.lastInput = now
 	if a.wake() && e.Kind == input.Press && !isMediaButton(e.Button) {
+		a.wakeKeys[e.Button] = true
 		return // the press that wakes the screensaver does nothing else (a media key still acts)
+	}
+	if e.Kind == input.Release && a.wakeKeys[e.Button] {
+		delete(a.wakeKeys, e.Button)
+		return // ...and neither does its release
 	}
 	if e.Rune != 0 && !a.confirm {
 		if e.Kind == input.Press {

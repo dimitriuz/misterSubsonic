@@ -35,7 +35,9 @@ func (a *App) screenshot() {
 				return
 			}
 			log.Printf("screenshot: saved %s", path)
-			a.Toast("Screenshot saved")
+			if !a.saver { // success is silent over the screensaver: a toast would wake it
+				a.Toast("Screenshot saved")
+			}
 		})
 	}()
 }

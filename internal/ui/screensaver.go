@@ -24,10 +24,11 @@ func (a *App) saverMinutes() int {
 	return a.cfg.Display.ScreensaverMinutes
 }
 
-// saverDue is when the screensaver starts, or zero if it can't now.
+// saverDue is when the screensaver starts, or zero if it can't now (not on
+// Now Playing, off, on, or the exit prompt is up).
 func (a *App) saverDue() time.Time {
 	m := a.saverMinutes()
-	if _, np := a.Top().(*NowPlayingScreen); !np || m <= 0 || a.saver {
+	if _, np := a.Top().(*NowPlayingScreen); !np || m <= 0 || a.saver || a.confirm {
 		return time.Time{}
 	}
 	return a.lastInput.Add(time.Duration(m) * time.Minute)
