@@ -150,3 +150,22 @@ func TestRestoreWithBadState(t *testing.T) {
 		t.Fatal("bad state kept")
 	}
 }
+
+func TestSaved(t *testing.T) {
+	c := fakeMenu(t, false)
+	if c.Saved() {
+		t.Fatal("saved before any switch")
+	}
+	if err := c.Switch(Size{960, 600}, Size{1920, 1200}); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Saved() {
+		t.Fatal("not saved after a switch")
+	}
+	if err := c.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Saved() {
+		t.Fatal("still saved after a restore")
+	}
+}

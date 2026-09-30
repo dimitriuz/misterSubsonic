@@ -165,4 +165,6 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
 
 **Full resolution:** the menu accepts `fb_cmd1 8888 1 1920 1200` (the font test card, see "Plan 4 on the MiSTer"). The app's switch and restore were tested against a fake command pipe; on the TV: pending.
 
+- The first TV run (build 8379160) switched to 1920x1200 and the kernel oopsed in fbcon (`sys_imageblit`), because the console was still in text mode during the switch. The app now enters graphics mode before switching and keeps it until the size is back.
+
 **On the TV:** pending. Run `docs/testing-on-mister.md` items 3 and 22–25 and record them here.

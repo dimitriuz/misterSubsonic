@@ -228,15 +228,18 @@ func run(f flags) (err error) {
 	padAtStart := false
 	switch f.display {
 	case "fbdev":
-		fb, err := openFB(f.fbdev, profileName, dataDir, cfg.Display.FullResolution)
+		// The console goes to graphics mode before the framebuffer size can
+		// change: in text mode fbcon redraws its text into the new
+		// framebuffer and crashes the kernel. (Not testable without the
+		// devices; restoreConsole has the same order and is tested.)
+		con, err := graphicsMode()
 		if err != nil {
-			return err
+			log.Printf("console: %v (its text may show over the app)", err)
 		}
 		// Exit order (defers run last-in first-out, and -restore-console does
 		// the same): the framebuffer is closed (unmapped), then the input is
-		// released, then the framebuffer gets its old size back, and last the
-		// console returns to text mode.
-		var con *platform.Console
+		// released, then the framebuffer gets its old size back (the console
+		// still in graphics mode), and last the console returns to text mode.
 		defer func() {
 			if err := fbControl().Restore(); err != nil {
 				log.Printf("display: %v", err)
@@ -245,9 +248,9 @@ func run(f flags) (err error) {
 				log.Printf("console: %v", err)
 			}
 		}()
-		con, err = platform.GraphicsMode()
+		fb, err := openFB(f.fbdev, profileName, dataDir, cfg.Display.FullResolution)
 		if err != nil {
-			log.Printf("console: %v (its text may show over the app)", err)
+			return err
 		}
 		disp = fb
 		mgr := input.NewManager(input.ManagerOptions{Grab: true})

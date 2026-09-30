@@ -12,6 +12,12 @@ import (
 // fbControl is replaceable so tests never touch the real menu.
 var fbControl = platform.DefaultFBControl
 
+// The console calls are replaceable for the same reason.
+var (
+	graphicsMode = platform.GraphicsMode
+	restoreText  = platform.RestoreText
+)
+
 // fullSize is the framebuffer size to ask for, when the HDMI framebuffer fb
 // is the menu's halved output (spec Plan 4b §2): the output size from
 // MiSTer.ini, which sits next to the app's folder (/media/fat).
@@ -61,10 +67,20 @@ func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, error) {
 
 // restoreConsole is -restore-console, which the launcher runs after every
 // exit: the framebuffer size the app switched from (after a crash too),
-// then the console's text mode.
+// then the console's text mode. With a size to restore the console goes to
+// graphics mode first and stays there until the size is back: in text mode
+// fbcon redraws its text into the new framebuffer and crashes the kernel.
 func restoreConsole() error {
-	if err := fbControl().Restore(); err != nil {
-		log.Printf("display: %v", err)
+	ctl := fbControl()
+	if ctl.Saved() {
+		// The console is not "restored" to the mode it had: after a crash that
+		// is graphics mode. restoreText sets text mode, and the process ends.
+		if _, err := graphicsMode(); err != nil {
+			log.Printf("console: %v", err)
+		}
+		if err := ctl.Restore(); err != nil {
+			log.Printf("display: %v", err)
+		}
 	}
-	return platform.RestoreText()
+	return restoreText()
 }

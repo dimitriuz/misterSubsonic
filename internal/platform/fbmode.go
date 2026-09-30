@@ -126,6 +126,12 @@ func (c FBControl) Switch(from, to Size) error {
 	return nil
 }
 
+// Saved reports whether Switch left a size to restore.
+func (c FBControl) Saved() bool {
+	_, err := os.Stat(c.State)
+	return err == nil
+}
+
 // Restore puts back the size Switch saved, if any, and forgets it. Without
 // a saved size it does nothing.
 func (c FBControl) Restore() error {
