@@ -18,12 +18,13 @@ Suggested order:
 - **Accurate VBR MP3 seeks.** Read the Xing/Info header's 100-point table of contents (in the first frame after the ID3v2 tag), and use it instead of pure proportion. Without a table, keep the proportional estimate.
 - **Text fields trim by width, not by rune** (`drawField`).
 - **Faster redraws at 1080p.** A native 1920×1080 frame takes about 68 ms on the MiSTer (Plan 4's measurements in `docs/spikes.md`). Redraw only what changed for the common cases: the focus moving in a list or grid, the progress bar, the marquee, the volume panel. Present only the changed rows.
-- **The deferred minors** in `docs/superpowers/plan-2a-followups.md`, under "Plan 2c minors", "Plan 3a minors" and "Plan 3b minors". Pick the ones that still matter, for example:
+- **The deferred minors** in `docs/superpowers/plan-2a-followups.md`, under "Plan 2c minors", "Plan 3a minors", "Plan 3b minors" and "Plan 4 minors". Pick the ones that still matter, for example:
   - `Promote` allocating under the stream lock;
   - the launcher's TERM handling;
   - the log's rename-failure loop;
   - toggle rows flipping on key repeat;
   - `check-notices.sh` without `pipefail`;
+  - the volume panel covering Settings → Playback → Volume on CRT (Plan 4 minors);
   - the missing tests those reviews listed.
 
 **Needs:** nothing new. It can run on the host, except anything the device plan finds.

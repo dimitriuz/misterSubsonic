@@ -273,3 +273,27 @@ Still open:
   - In an MP3 byte-estimate open, the Seek failure paths don't rewind after the header read (practically unreachable).
   - `fromOffset` allows seeks before its base.
   - No opener-level test covers the estimate-failure fallback.
+
+## Plan 4 minors (deferred)
+
+- **Build:**
+  - `bin/arm/tests/` is only removed by `make clean`, so a test binary for a deleted package can linger.
+  - `mister-test` repeats the list of copied binaries in the `cp` and `check-glibc.sh` lines.
+- **Render:**
+  - The 32 bpp pack copies the canvas's top byte into X. The canvas keeps `0x00RRGGBB`, and XRGB ignores X.
+  - `fakeArtCache` is shared by every ui test (images are never mutated today).
+- **Media keys:**
+  - The dev viewer's help line doesn't list the media keys.
+  - `evmap.go`'s media-key constants sit between `keyPageUp` and the arrow keys.
+- **Volume panel:**
+  - Muted, the bar keeps the level lit in grey.
+  - `setVolume` while muted calls `showVolume` twice.
+  - There is no test for `drawVolumeInline`'s too-narrow return.
+  - On CRT (320×240) the panel partly covers the value of Settings → Playback → Volume while it shows.
+- **Screenshots:**
+  - The free-name check and the `Create` are not atomic across processes (`O_EXCL` would close it; the app saves one at a time).
+  - The failure test ignores its `os.WriteFile` error.
+  - A press during a save is dropped without a word.
+- **Docs:**
+  - The README names Alt+Scroll Lock; Scroll Lock alone works too.
+  - The README's screenshot folder is the MiSTer one; elsewhere it is `screenshots/` next to the config, or `-screenshots`.
