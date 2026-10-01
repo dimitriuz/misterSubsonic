@@ -15,12 +15,14 @@ import (
 // Hint is one entry: a button (and a second one for pairs such as L/R or
 // Left/Right) and what it does on this screen. A hint for a typing key
 // (Backspace, Enter) has Key, the cap drawn on a keyboard, and Rune, what
-// that key types; only a keyboard shows it.
+// that key types; only a keyboard shows it. A Hold hint is for holding the
+// button, drawn "hold X Star".
 type Hint struct {
 	Button, Pair input.Button
 	Label        string
 	Key          string
 	Rune         rune
+	Hold         bool
 }
 
 // Hinter is a screen with its own hints, most important first. The app adds
@@ -42,6 +44,7 @@ type textTaker interface {
 }
 
 func hk(b input.Button, label string) Hint        { return Hint{Button: b, Label: label} }
+func hkHold(b input.Button, label string) Hint    { return Hint{Button: b, Label: label, Hold: true} }
 func hkPair(b, p input.Button, label string) Hint { return Hint{Button: b, Pair: p, Label: label} }
 
 // commonHints are for screens without their own list.
@@ -207,9 +210,17 @@ func (a *App) drawHints(c *gfx.Canvas) {
 			}
 			cw += (len(caps) - 1) * pad
 		}
-		need := cw + pad + f.Measure(h.Label)
+		holdW := 0
+		if h.Hold {
+			holdW = f.Measure("hold") + pad
+		}
+		need := holdW + cw + pad + f.Measure(h.Label)
 		if x+need > end {
 			break
+		}
+		if h.Hold {
+			f.Draw(c, x, base, "hold", colDim, c.Bounds())
+			x += holdW
 		}
 		if arrows {
 			chip := gfx.R(x, chipY, cw, chipH)
@@ -279,7 +290,7 @@ func hintLabels(hs []Hint) string {
 func hintKey(hs []Hint) string {
 	var b strings.Builder
 	for _, h := range hs {
-		fmt.Fprintf(&b, "%d/%d/%s/%s;", h.Button, h.Pair, h.Label, h.Key)
+		fmt.Fprintf(&b, "%d/%d/%s/%s/%v;", h.Button, h.Pair, h.Label, h.Key, h.Hold)
 	}
 	return b.String()
 }

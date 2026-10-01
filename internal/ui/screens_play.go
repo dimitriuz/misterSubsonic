@@ -21,8 +21,10 @@ const (
 	// the player's position catches up.
 	seekShow = time.Second
 	volStep  = 1.0 // dB per Up/Down
-	// Select held this long mutes (a shorter press cycles the play mode).
+	// Select held this long mutes (a shorter press changes the visualizer).
 	muteHold = time.Second
+	// X held this long stars or unstars the song (a shorter press opens the menu).
+	starHold = time.Second
 )
 
 // NowPlayingScreen is the full-screen player (spec §8.2).
@@ -35,6 +37,12 @@ type NowPlayingScreen struct {
 	selDown  bool // Select is held
 	selMuted bool // ...and has already muted: its release does nothing
 	selHold  int  // counts holds, so an old timer can't fire in a newer one
+
+	xDown    bool // X is held
+	xStarred bool // ...and has already starred: its release does nothing
+	xHold    int  // like selHold
+
+	host Screen // the full screen while it forwards a release here: menus open over it (nil: this screen)
 }
 
 func NewNowPlayingScreen() *NowPlayingScreen { return &NowPlayingScreen{} }
@@ -42,27 +50,35 @@ func NewNowPlayingScreen() *NowPlayingScreen { return &NowPlayingScreen{} }
 func (s *NowPlayingScreen) Title() string { return "Now Playing" }
 func (s *NowPlayingScreen) Enter(a *App)  {}
 
-// playModes is the Select cycle: (shuffle, repeat).
-var playModes = []struct {
-	shuffle bool
-	repeat  player.Repeat
-	label   string
-}{
-	{false, player.RepeatOff, "In order"},
-	{true, player.RepeatOff, "Shuffle"},
-	{false, player.RepeatAll, "Repeat all"},
-	{false, player.RepeatOne, "Repeat one"},
-}
-
 // Release flushes a seek target the throttle held back, and ends a Select
-// press: a short one cycles the play mode.
+// or X press: a short Select changes the visualizer, a short X opens the menu.
 func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 	if b == input.BtnSelect && s.selDown {
 		muted := s.selMuted
 		s.selDown, s.selMuted = false, false
 		if !muted {
-			s.cycleMode(a)
-			a.dirty = true // the mode label may change without a player event
+			next := (a.VizStyle() + 1) % VizStyle(len(vizNames))
+			if next == VizOff && s.host != nil {
+				next = VizBars // an empty full screen is no use: it cycles through the four pictures
+			}
+			a.SetVizStyle(next)
+			a.Toast("Visualizer: %s", next.Label())
+		}
+		return
+	}
+	if b == input.BtnX && s.xDown {
+		starred := s.xStarred
+		s.xDown, s.xStarred = false, false
+		if !starred {
+			var parent Screen = s
+			if s.host != nil {
+				parent = s.host
+			}
+			var entries []menuEntry
+			if e, ok := s.starEntry(a); ok {
+				entries = append(entries, e)
+			}
+			a.Push(NewMenuScreen(parent, "Now Playing", append(entries, modeEntries(a)...)))
 		}
 		return
 	}
@@ -82,20 +98,44 @@ func (s *NowPlayingScreen) settle(a *App, st player.State) {
 	s.unsent, s.song = false, ""
 }
 
-// cycleMode steps through the shuffle/repeat modes.
-func (s *NowPlayingScreen) cycleMode(a *App) {
-	pl := a.Player()
-	st := pl.State()
-	cur := 0
-	for i, m := range playModes {
-		if m.shuffle == st.Shuffle && m.repeat == st.Repeat {
-			cur = i
-		}
+// starEntry is the menu's Star or Unstar for the current song.
+func (s *NowPlayingScreen) starEntry(a *App) (menuEntry, bool) {
+	song, ok := a.state().Current()
+	if !ok {
+		return menuEntry{}, false // nothing to star
 	}
-	m := playModes[(cur+1)%len(playModes)]
-	pl.SetShuffle(m.shuffle)
-	pl.SetRepeat(m.repeat)
-	a.Toast("%s", m.label)
+	label := "Star"
+	if a.isStarred(songStar(song)) {
+		label = "Unstar"
+	}
+	return menuEntry{label, func(a *App) { a.toggleStar(songStar(song)) }}, true
+}
+
+// modeEntries are the Shuffle and Repeat menu entries (Now Playing's and the
+// queue's), labelled with the current state.
+func modeEntries(a *App) []menuEntry {
+	st := a.state()
+	shuffle, repeat := "Shuffle: Off", "Repeat: Off"
+	next := player.RepeatAll
+	if st.Shuffle {
+		shuffle = "Shuffle: On"
+	}
+	switch st.Repeat {
+	case player.RepeatAll:
+		repeat, next = "Repeat: All", player.RepeatOne
+	case player.RepeatOne:
+		repeat, next = "Repeat: One", player.RepeatOff
+	}
+	return []menuEntry{
+		{shuffle, func(a *App) {
+			a.Player().SetShuffle(!st.Shuffle)
+			a.dirty = true // the mode label changes without a player event
+		}},
+		{repeat, func(a *App) {
+			a.Player().SetRepeat(next)
+			a.dirty = true
+		}},
+	}
 }
 
 func (s *NowPlayingScreen) curID(st player.State) subsonic.ID {
@@ -167,22 +207,35 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 	switch e.Button {
 	case input.BtnA:
 		pl.TogglePause()
-	case input.BtnX:
-		if song, ok := st.Current(); ok {
-			a.toggleStar(songStar(song))
-		}
+	case input.BtnX: // every press starts a fresh hold (a lost release is recovered): short opens the menu, long stars
+		s.xDown, s.xStarred = true, false
+		s.xHold++
+		hold := s.xHold
+		a.After(s, starHold, func() {
+			if s.xDown && s.xHold == hold && a.onNowPlaying(s) {
+				if song, ok := a.state().Current(); ok {
+					s.xStarred = true
+					a.toggleStar(songStar(song))
+				}
+			}
+		})
 	case input.BtnL:
 		pl.Prev()
 	case input.BtnR:
 		pl.Next()
 	case input.BtnY:
 		a.Push(NewQueueScreen())
-	case input.BtnSelect: // every press starts a fresh hold (a lost release is recovered): short cycles the mode, long mutes
+	case input.BtnStart: // the full screen (elsewhere Start pauses)
+		if !a.canFullScreen() {
+			return false
+		}
+		a.Push(NewVizScreen(s))
+	case input.BtnSelect: // every press starts a fresh hold (a lost release is recovered): short changes the visualizer, long mutes
 		s.selDown, s.selMuted = true, false
 		s.selHold++
 		hold := s.selHold
 		a.After(s, muteHold, func() {
-			if s.selDown && s.selHold == hold && a.Top() == Screen(s) {
+			if s.selDown && s.selHold == hold && a.onNowPlaying(s) {
 				s.selMuted = true
 				a.toggleMute()
 			}
@@ -191,6 +244,15 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		return false
 	}
 	return true
+}
+
+// onNowPlaying reports whether s is what the user is looking at: on top, or
+// under its full screen.
+func (a *App) onNowPlaying(s *NowPlayingScreen) bool {
+	if v, ok := a.Top().(*VizScreen); ok {
+		return v.np == s
+	}
+	return a.Top() == Screen(s)
 }
 
 func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
@@ -205,6 +267,12 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	barH := max(p.Margin/6, 3)
 	// Height of the text block, used to centre everything vertically.
 	textH := ft.Height() + 2*fb.Height() + fs.Height() + p.Margin + barH + p.Margin/4 + fs.Height() + p.Margin/2 + fb.Height() + 2*fs.Height()
+	// With the visualizer on, the panel is part of the block when the cover
+	// is too short to hold it beside the text (a CRT).
+	vizGapY := p.Margin / 4
+	if a.vizShown() {
+		textH += vizGapY + max(p.Margin*5/4, 20)
+	}
 	// Art left, text right, centred as a block. The gap is narrower on a
 	// CRT, where the text needs the width.
 	gap := 2 * p.Margin
@@ -254,10 +322,14 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	y += fs.Height() + p.Margin/2
 
 	mode := statusLabel(st.Status)
-	for _, m := range playModes {
-		if m.shuffle == st.Shuffle && m.repeat == st.Repeat && m.label != "In order" {
-			mode += "  ·  " + m.label
-		}
+	if st.Shuffle {
+		mode += "  ·  Shuffle"
+	}
+	switch st.Repeat {
+	case player.RepeatAll:
+		mode += "  ·  Repeat all"
+	case player.RepeatOne:
+		mode += "  ·  Repeat one"
 	}
 	iconText(c, fb, statusIcon(st.Status), text.X, y+fb.Ascent(), fb.Truncate(mode, text.W-fb.Ascent()), colText, c.Bounds())
 	y += fb.Height()
@@ -268,6 +340,9 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	if a.insecure {
 		line(fs, "insecure: certificate not checked", colError)
 	}
+	// The visualizer takes the rest of the column, down to the cover's bottom
+	// edge (or the text block's, when that is lower).
+	a.drawVizPanel(c, gfx.R(text.X, y+vizGapY, text.W, text.Bottom()-y-vizGapY))
 }
 
 // QueueScreen lists the play queue.
@@ -312,7 +387,7 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 	case input.BtnX:
 		i := s.list.Focus
 		title := st.Queue[i].Title
-		a.Push(NewMenuScreen(s, "Queue", []menuEntry{
+		a.Push(NewMenuScreen(s, "Queue", append([]menuEntry{
 			{"Remove " + title, func(a *App) {
 				a.Player().Remove(i)
 				a.Toast("Removed %s", title)
@@ -324,7 +399,7 @@ func (s *QueueScreen) Handle(a *App, e input.Event) bool {
 				}
 				a.Toast("Queue cleared")
 			}},
-		}))
+		}, modeEntries(a)...)))
 		return true
 	}
 	return false

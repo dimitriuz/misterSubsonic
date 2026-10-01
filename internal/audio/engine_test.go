@@ -1424,3 +1424,30 @@ func TestEngineReplaceOpenFailureThenQueueNextStarts(t *testing.T) {
 	}()
 	expectEvent(t, e, EventStarted, 2)
 }
+
+// A track played through a Tap over the null device leaves a window of what
+// was heard.
+func TestEngineThroughTapFillsWindow(t *testing.T) {
+	dev, err := OpenDevice(DeviceOptions{Null: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tp := NewTap(dev, TapFrames)
+	tp.Window(make([]float32, 2)) // a reader is present
+	e := NewEngine(EngineOptions{Output: tp, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond})
+	defer tp.Close()
+	defer e.Close()
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(OutputRate, 1), OutputRate)})
+	dst := make([]float32, 2*512)
+	deadline := time.After(3 * time.Second)
+	for {
+		if n := tp.Window(dst); n == 512 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the tap's window never filled")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}

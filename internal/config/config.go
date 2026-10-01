@@ -54,6 +54,7 @@ type Display struct {
 	ScreensaverMinutes int    `toml:"screensaver_minutes"`
 	FullResolution     bool   `toml:"full_resolution"`
 	Hints              bool   `toml:"hints"`
+	Visualizer         string `toml:"visualizer"` // off, bars, scope, vu or waterfall
 }
 
 type Cache struct {
@@ -64,7 +65,7 @@ type Cache struct {
 func Default() *Config {
 	return &Config{
 		Playback: Playback{TranscodeFormat: "mp3", TranscodeBitrate: 320, ReplayGain: "off", Scrobble: true, BufferMB: 32, ALSADevice: "default"},
-		Display:  Display{Profile: "auto", ScreensaverMinutes: 5, FullResolution: true, Hints: true},
+		Display:  Display{Profile: "auto", ScreensaverMinutes: 5, FullResolution: true, Hints: true, Visualizer: "off"},
 		Cache:    Cache{CoverArtMB: 200},
 	}
 }
@@ -89,6 +90,12 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 	}
 	for _, k := range md.Undecoded() {
 		warnings = append(warnings, "unknown key "+k.String())
+	}
+	switch cfg.Display.Visualizer {
+	case "off", "bars", "scope", "vu", "waterfall":
+	default: // a typo must not stop the app: show nothing and say so
+		warnings = append(warnings, fmt.Sprintf("display.visualizer: unknown value %q, using off", cfg.Display.Visualizer))
+		cfg.Display.Visualizer = "off"
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, warnings, fmt.Errorf("config: %s: %w", path, err)

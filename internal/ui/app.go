@@ -123,7 +123,20 @@ type Options struct {
 	// goroutine, replacing any previous one; it answers with
 	// a.Connected or a.ConnectFailed (through a.Post).
 	Connect func(a *App, cfg *config.Config)
+	// Visual is what the visualizer reads: the frames being heard right now
+	// (nil: no sound device, so nothing to show).
+	Visual Visual
 }
+
+// Visual gives the visualizer the audio that is playing: Window fills dst
+// (interleaved stereo float32) with the latest frames ending at the playback
+// position and returns how many frames it filled. *audio.Tap implements it.
+type Visual interface {
+	Window(dst []float32) int
+}
+
+// Visual returns Options.Visual.
+func (a *App) Visual() Visual { return a.o.Visual }
 
 // Fonts used by the screens.
 type Fonts struct {
@@ -231,6 +244,8 @@ type App struct {
 	verifyCanvas *gfx.Canvas
 	checkAt      time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten  bool      // the last check found the screen drawn over
+	viz          vizState
+	mergeBuf     []gfx.Rect // renderDamage's merged rectangles, reused
 }
 
 func New(o Options) (*App, error) {
@@ -506,6 +521,8 @@ func (a *App) untilWake() time.Duration {
 	if !a.volumeUntil.IsZero() {
 		consider(a.volumeUntil)
 	}
+	consider(a.vizDue())
+	consider(a.vizCornerDue())
 	consider(a.saverDue())
 	if a.saver {
 		consider(now.Add(saverStep)) // the drift; nothing else moves
@@ -565,6 +582,12 @@ func (a *App) onWake() {
 		a.saveConfig()
 	}
 	a.checkScreen(now)
+	if a.vizActive() && !now.Before(a.viz.next) {
+		a.vizTick(now)
+	}
+	if v := a.vizHost(); v != nil {
+		v.refresh(a)
+	}
 	if !a.volumeUntil.IsZero() && !now.Before(a.volumeUntil) {
 		a.Damage(a.volumePanelRect()) // the panel goes
 		a.volumeUntil = time.Time{}
@@ -749,6 +772,10 @@ func (a *App) present(c *gfx.Canvas) error {
 // changed, otherwise the whole frame.
 func (a *App) render() error {
 	a.frameNow = a.o.Now()
+	if a.viz.pending { // the frame's cost: its analysis, and this draw and present
+		start := a.frameNow
+		defer func() { a.vizCost(a.viz.work + a.o.Now().Sub(start)) }()
+	}
 	if a.o.Player != nil {
 		st := a.o.Player.State()
 		a.frameState = &st
@@ -759,7 +786,7 @@ func (a *App) render() error {
 	}
 	full := a.dirty
 	a.dirty = false
-	if _, np := a.Top().(*NowPlayingScreen); !np {
+	if !saverScreen(a.Top()) {
 		a.saver = false
 	}
 	if a.saver {
@@ -787,9 +814,13 @@ func (a *App) drawFrame(c *gfx.Canvas) {
 	// Content stays inside the title-safe area (SafeY lines top and bottom;
 	// panels still run to the edges).
 	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY-a.hintH())
+	vs := a.vizHost()
+	if vs != nil { // the hint bar is drawn over the picture's bottom edge
+		body = a.vizBody()
+	}
 	if top != nil {
 		_, fullscreen := top.(*NowPlayingScreen)
-		if !fullscreen {
+		if !fullscreen && vs == nil {
 			a.drawHeader(c, top.Title())
 			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, body.Bottom()-p.SafeY-p.HeaderH)
 			if a.hasCurrent() {
@@ -803,7 +834,9 @@ func (a *App) drawFrame(c *gfx.Canvas) {
 		c.SetClip(body.Intersect(outer))
 		top.Draw(a, c, body)
 		c.SetClip(outer)
-		a.drawHints(c)
+		if a.hintsUp() {
+			a.drawHints(c)
+		}
 	}
 	if !a.mq.seen {
 		a.mq = marquee{}

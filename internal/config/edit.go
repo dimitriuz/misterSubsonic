@@ -81,6 +81,7 @@ func scalars(c *Config) []scalar {
 		{"display", "screensaver_minutes", c.Display.ScreensaverMinutes},
 		{"display", "full_resolution", c.Display.FullResolution},
 		{"display", "hints", c.Display.Hints},
+		{"display", "visualizer", c.Display.Visualizer},
 		{"cache", "cover_art_mb", c.Cache.CoverArtMB},
 	}
 }

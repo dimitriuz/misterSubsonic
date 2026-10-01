@@ -19,7 +19,9 @@ Plans 5 and 5b did most of this list; see "Resolved by Plan 5" and "Resolved by 
 
 ---
 
-## B. Visualizer
+## B. Visualizer (done in Plan 6, except the device numbers)
+
+**Status:** built in Plan 6 (spec `docs/superpowers/specs/2026-10-01-mister-subsonic-visualizer-design.md`): four styles, a panel and a full-screen mode. The frame rates, the listening check and the TV check wait for the MiSTer; see "Plan 6 on the MiSTer" in `docs/spikes.md`. The text below is the original sketch.
 
 **What:** an optional visualizer on Now Playing: spectrum bars and/or an oscilloscope drawn from the music as it is heard. Spec §2 left it out of v1, and §13 lists it as a candidate.
 

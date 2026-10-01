@@ -448,3 +448,36 @@ Still open:
   - A reorder with `[server.*]` subtables falls back to a full rewrite that drops the subtable keys (unknown keys, as for any unknown table; older than Plan 5b).
   - Comment placement at `engine.go:767`; `g_ring` and `g_device` use after a concurrent close relies on the same-goroutine contract.
 - **Stale:** the CRT volume-panel check (D2): Volume/Mute left Settings in 663a377.
+
+## Plan 6 minors (deferred)
+
+- **Tap:**
+  - A seek made while paused for more than 1 s blanks the picture for up to about 0.5 s after resume. The idle branch drops the device's refill. Fix: in `Tap.Write`, measure idle time from `pausedAt` when it is set, instead of from `now`.
+  - The first frames after turning the visualizer on are blank, for at most 0.5 s. That is the idle skip, by design.
+  - `TapFrames` assumes 48 kHz and the 500 ms device ring.
+- **Analysis:**
+  - A sample rate other than 48 kHz is unguarded: a band's `lo` isn't clamped. The engine always outputs 48 kHz.
+  - Short windows read low, because the full Hann window is applied over the zero-padded tail.
+  - Bands narrower than a bin share it.
+  - VU denormals.
+  - `(l+r)/2` overflows for samples near ±3e38. That affects the scope only, never real audio.
+- **Controls:**
+  - A keyboard can't change the visualizer from Now Playing: Select has no key, so only Settings works.
+  - `modeEntries` captures the state when the menu opens.
+  - No test covers X and Select pressed together.
+- **The frame clock and the valve:**
+  - A wait in `Present` for vsync would count as cost. Check on the device.
+  - Playing with a stalled tap keeps the clock running.
+  - An input-triggered full redraw can count towards a frame's cost.
+  - No tests cover the >500 ms gap reset or the 960×600 and CRT 288 layouts.
+- **Allocations:**
+  - Now Playing's own `Draw` allocates about 60 objects per frame: hints, the `Sprintf` clock, the "Next:" string. Partial frames re-run it at 30 fps, about 2,000 small allocations a second.
+  - Follow-up: cache the strings, and avoid a full `Draw` per clipped rect.
+  - The whole-frame allocation test is one-sided (`n > base`).
+- **Full screen:**
+  - The path Stopped → pop → screensaver on Now Playing is inferred, not tested.
+  - The waterfall goldens show a half sweep, by design.
+  - VU in full screen keeps its low segments at fixed places, a possible OLED burn-in risk over hours. That is a design question.
+- **Tests:**
+  - `defer log.SetOutput(log.Writer())` in vizdraw_test.go restores nothing. Use `t.Cleanup(func() { log.SetOutput(os.Stderr) })`.
+  - README.md:128 and the visualizer spec (lines 34 and 57) don't say that the Star entry and the hold-X hint go away with no song.

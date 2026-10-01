@@ -115,8 +115,9 @@ func fillRoundRect(c *gfx.Canvas, r gfx.Rect, rad int, col gfx.Color) {
 		c.Fill(r, col)
 		return
 	}
-	var pts [][2]float64
 	const n = 6
+	var ptsBuf [4 * (n + 1)][2]float64 // on the stack: drawn every frame
+	pts := ptsBuf[:0]
 	corner := func(cx, cy, from float64) {
 		for j := 0; j <= n; j++ {
 			ang := from + math.Pi/2*float64(j)/n

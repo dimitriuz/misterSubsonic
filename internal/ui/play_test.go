@@ -26,19 +26,41 @@ func TestNowPlayingVolumeKeys(t *testing.T) {
 	}
 }
 
-func TestNowPlayingXStarsTheSong(t *testing.T) {
+func TestNowPlayingHoldXStarsTheSong(t *testing.T) {
 	ta := newTestApp(t, ProfileHDMI)
 	playingState(ta)
 	ta.Push(NewNowPlayingScreen())
-	ta.press(input.BtnX)
+	hold(ta, input.BtnX, starHold)
 	ta.settle(t)
 	if !slices.Equal(ta.lib.stars, []string{"star s1"}) || !ta.isStarred(songStar(ta.pl.st.Queue[0])) {
 		t.Fatalf("stars %v", ta.lib.stars)
 	}
-	ta.press(input.BtnX)
+	hold(ta, input.BtnX, starHold)
 	ta.settle(t)
 	if !slices.Equal(ta.lib.stars, []string{"star s1", "unstar s1"}) {
 		t.Fatalf("stars %v", ta.lib.stars)
+	}
+}
+
+func TestNowPlayingWithoutASongHasNoStar(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewNowPlayingScreen())
+	ta.settle(t)
+	for _, h := range ta.screenHints() {
+		if h.Hold && h.Button == input.BtnX {
+			t.Errorf("hold X hinted with no song: %q", h.Label)
+		}
+	}
+	hold(ta, input.BtnX, starHold) // the menu opens instead
+	ta.settle(t)
+	menu, ok := ta.Top().(*MenuScreen)
+	if !ok {
+		t.Fatalf("hold X opened %T, want the menu", ta.Top())
+	}
+	for _, e := range menu.entries {
+		if e.label == "Star" || e.label == "Unstar" {
+			t.Errorf("menu has a %q entry with no song", e.label)
+		}
 	}
 }
 
@@ -56,7 +78,7 @@ func TestQueueMenuRemoveAndClear(t *testing.T) {
 		t.Fatalf("X opened %T, want the menu", ta.Top())
 	}
 	menu := ta.Top().(*MenuScreen)
-	if menu.title != "Queue" || menu.entries[0].label != "Remove Время Луны" || menu.entries[1].label != "Clear queue" {
+	if menu.title != "Queue" || menu.entries[0].label != "Remove Время Луны" || menu.entries[1].label != "Clear queue" || len(menu.entries) != 4 {
 		t.Fatalf("menu %q with entries %q, %q", menu.title, menu.entries[0].label, menu.entries[1].label)
 	}
 	ta.press(input.BtnA) // Remove

@@ -72,7 +72,8 @@ func fillPolygon(c *gfx.Canvas, pts [][2]float64, col gfx.Color) {
 	}
 	for y := int(minY); y <= int(maxY); y++ {
 		py := float64(y) + 0.5
-		var xs []float64
+		var xbuf [16]float64 // on the stack: no allocation per scanline
+		xs := xbuf[:0]
 		for i := range pts {
 			a, b := pts[i], pts[(i+1)%len(pts)]
 			if (a[1] <= py) != (b[1] <= py) {

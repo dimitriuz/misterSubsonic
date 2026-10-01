@@ -207,3 +207,29 @@ func encodeForCompare(c *Config) string {
 	}
 	return b.String()
 }
+
+func TestVisualizerDefaultsToOffAndLoads(t *testing.T) {
+	cfg, warns, err := Load(write(t, minimal))
+	if err != nil || len(warns) != 0 || cfg.Display.Visualizer != "off" {
+		t.Fatalf("default: %q, %v, %v", cfg.Display.Visualizer, warns, err)
+	}
+	for _, v := range []string{"off", "bars", "scope", "vu", "waterfall"} {
+		cfg, warns, err := Load(write(t, minimal+"\n[display]\nvisualizer = \""+v+"\"\n"))
+		if err != nil || len(warns) != 0 || cfg.Display.Visualizer != v {
+			t.Errorf("%s: loaded %q, %v, %v", v, cfg.Display.Visualizer, warns, err)
+		}
+	}
+}
+
+func TestUnknownVisualizerLoadsAsOffWithAWarning(t *testing.T) {
+	cfg, warns, err := Load(write(t, minimal+"\n[display]\nvisualizer = \"disco\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Display.Visualizer != "off" {
+		t.Fatalf("visualizer = %q, want off", cfg.Display.Visualizer)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "display.visualizer") || !strings.Contains(warns[0], "disco") {
+		t.Fatalf("warnings = %v", warns)
+	}
+}

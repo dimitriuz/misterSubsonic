@@ -36,6 +36,7 @@ profile = "auto"           # auto, hdmi or crt (set crt for a 480i/576i CRT)
 screensaver_minutes = 5    # minutes idle on Now Playing; 0 turns it off
 full_resolution = true     # HDMI above 1080p (e.g. 1920x1200): draw at the output's size, not half
 hints = true               # the bar of buttons (or keys) along the bottom of every screen
+visualizer = "off"         # moving picture on Now Playing: off, bars, scope, vu or waterfall (Select there changes it)
 
 [cache]
 cover_art_mb = 200         # cover art kept on the SD card, per server

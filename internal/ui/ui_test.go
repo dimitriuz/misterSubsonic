@@ -174,12 +174,8 @@ func TestNowPlayingControls(t *testing.T) {
 		}
 	}
 	ta.press(input.BtnSelect)
-	if !ta.pl.st.Shuffle {
-		t.Fatal("Select should switch to shuffle")
-	}
-	ta.press(input.BtnSelect)
-	if ta.pl.st.Shuffle || ta.pl.st.Repeat != player.RepeatAll {
-		t.Fatalf("second Select: shuffle %v repeat %v", ta.pl.st.Shuffle, ta.pl.st.Repeat)
+	if ta.VizStyle() != VizBars {
+		t.Fatalf("Select should switch to Bars, got %v", ta.VizStyle())
 	}
 	ta.press(input.BtnY)
 	if _, ok := ta.Top().(*QueueScreen); !ok {
