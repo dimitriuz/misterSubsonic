@@ -10,6 +10,7 @@ import (
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/player"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -56,6 +57,29 @@ var hintFixtures = map[string]func(ta *testApp) Screen{
 			sr.inSidebar = false
 		}
 		return r
+	},
+	"message": func(ta *testApp) Screen {
+		return NewMessageScreen("Oops", "Something broke", func() { ta.Toast("retrying") })
+	},
+	"message without retry": func(ta *testApp) Screen { return NewMessageScreen("Oops", "Nothing to do", nil) },
+	"unreachable": func(ta *testApp) Screen {
+		srv := config.Server{Name: "home", URL: "http://h:4533", Username: "u", Password: "p"}
+		ta.cfg.AddServer(srv)
+		ta.o.Connect = func(*App, *config.Config) {} // "Try again" connects
+		return NewUnreachableScreen(srv, errors.New("refused"))
+	},
+	"feed with resume": func(ta *testApp) Screen {
+		ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+		return NewFeedScreen()
+	},
+	"search results": func(ta *testApp) Screen {
+		s := NewSearchScreen()
+		s.query, s.searched, s.inResults = []rune("bj"), "bj", true
+		s.artists.artists = ta.lib.artists[2].Artists
+		s.albums.albums = ta.lib.albums[:3]
+		s.songs.songs = ta.lib.tracks["al-1"]
+		s.relabel()
+		return s
 	},
 	"menu with a queue": func(ta *testApp) Screen {
 		playingState(ta)
@@ -407,5 +431,47 @@ func TestBackIsHintedWhereBReturns(t *testing.T) {
 	}
 	if got := hintLabels(ta.screenHints()); strings.Contains(got, "Back") {
 		t.Errorf("root, sidebar focused: %s", got)
+	}
+}
+
+// The sidebar root types only when a section that takes typed keys has the
+// focus (a letter on the sidebar or on a list is not text).
+func TestSidebarRootTyping(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.cfg = config.Default()
+	root := newSidebarRoot()
+	ta.Push(root)
+	section := func(label string) {
+		t.Helper()
+		for i, l := range root.labels {
+			if l == label {
+				root.sel = i
+				root.open(ta.App)
+				return
+			}
+		}
+		t.Fatalf("no section %q", label)
+	}
+	section("Search")
+	root.inSidebar = true
+	if root.Typing() {
+		t.Error("typing with the sidebar focused")
+	}
+	root.inSidebar = false
+	if !root.Typing() {
+		t.Error("not typing in the Search field")
+	}
+	root.current().(*SearchScreen).inResults = true
+	if root.Typing() {
+		t.Error("typing with the search results focused")
+	}
+	section("Albums")
+	if root.Typing() {
+		t.Error("typing in a section that takes no text")
+	}
+	root.sel = 0 // Home: the feed is not loaded as a child yet
+	root.children[0] = nil
+	if root.Typing() {
+		t.Error("typing with no section open")
 	}
 }
