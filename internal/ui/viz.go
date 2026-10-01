@@ -97,6 +97,7 @@ type vizState struct {
 	n       int
 	since   time.Time
 	calm    time.Time // when the cheap spell began (zero: not in one)
+	warned  bool      // the over-budget line was logged in this stay at the floor
 }
 
 func (a *App) isCRT() bool { return a.P.Name == "crt" }
@@ -236,12 +237,18 @@ func (a *App) vizCost(cost time.Duration) {
 		v.level++
 		v.calm = time.Time{}
 		log.Printf("visualizer: slowing to %d fps", v.rates[v.level])
+	case float64(avg) > vizSlow*float64(budget(v.level)): // already at the lowest rate
+		v.calm = time.Time{}
+		if !v.warned {
+			v.warned = true
+			log.Printf("visualizer: over budget at %d fps", v.rates[v.level])
+		}
 	case v.level > 0 && float64(avg) < vizCalm*float64(budget(v.level-1)):
 		if v.calm.IsZero() {
 			v.calm = now
 		} else if now.Sub(v.calm) >= vizCalmFor {
 			v.level--
-			v.calm = time.Time{}
+			v.calm, v.warned = time.Time{}, false
 		}
 	default:
 		v.calm = time.Time{}

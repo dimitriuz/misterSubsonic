@@ -74,7 +74,11 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 			if s.host != nil {
 				parent = s.host
 			}
-			a.Push(NewMenuScreen(parent, "Now Playing", append([]menuEntry{s.starEntry(a)}, modeEntries(a)...)))
+			var entries []menuEntry
+			if e, ok := s.starEntry(a); ok {
+				entries = append(entries, e)
+			}
+			a.Push(NewMenuScreen(parent, "Now Playing", append(entries, modeEntries(a)...)))
 		}
 		return
 	}
@@ -95,16 +99,16 @@ func (s *NowPlayingScreen) settle(a *App, st player.State) {
 }
 
 // starEntry is the menu's Star or Unstar for the current song.
-func (s *NowPlayingScreen) starEntry(a *App) menuEntry {
+func (s *NowPlayingScreen) starEntry(a *App) (menuEntry, bool) {
 	song, ok := a.state().Current()
 	if !ok {
-		return menuEntry{"Star", func(a *App) {}}
+		return menuEntry{}, false // nothing to star
 	}
 	label := "Star"
 	if a.isStarred(songStar(song)) {
 		label = "Unstar"
 	}
-	return menuEntry{label, func(a *App) { a.toggleStar(songStar(song)) }}
+	return menuEntry{label, func(a *App) { a.toggleStar(songStar(song)) }}, true
 }
 
 // modeEntries are the Shuffle and Repeat menu entries (Now Playing's and the
@@ -209,8 +213,8 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		hold := s.xHold
 		a.After(s, starHold, func() {
 			if s.xDown && s.xHold == hold && a.onNowPlaying(s) {
-				s.xStarred = true
 				if song, ok := a.state().Current(); ok {
+					s.xStarred = true
 					a.toggleStar(songStar(song))
 				}
 			}

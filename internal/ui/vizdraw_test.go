@@ -297,6 +297,32 @@ func TestVizSafetyValveStepsDownAndUp(t *testing.T) {
 	}
 }
 
+func TestVizSafetyValveLogsOnceAtTheFloor(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(log.Writer())
+	ta := vizApp(t, ProfileCRT240, VizBars) // rates 20, 10
+	cost := 100 * time.Millisecond
+	ta.o.Display = slowDisplay{ta.disp, ta, &cost}
+	for end := ta.now.Add(10 * time.Second); ta.now.Before(end); {
+		runFrames(t, ta, 1)
+	}
+	if got := strings.Count(logs.String(), "visualizer: over budget at 10 fps"); got != 1 {
+		t.Fatalf("over-budget lines = %d, want 1 (log: %q)", got, logs.String())
+	}
+	cost = time.Millisecond // calm: steps up, and a new stay at the floor logs again
+	for end := ta.now.Add(20 * time.Second); ta.now.Before(end); {
+		runFrames(t, ta, 1)
+	}
+	cost = 100 * time.Millisecond
+	for end := ta.now.Add(10 * time.Second); ta.now.Before(end); {
+		runFrames(t, ta, 1)
+	}
+	if got := strings.Count(logs.String(), "visualizer: over budget at 10 fps"); got != 2 {
+		t.Fatalf("after a second stay: %d lines, want 2 (log: %q)", got, logs.String())
+	}
+}
+
 func TestVizFrameAllocatesNothing(t *testing.T) {
 	for _, l := range vizLayouts {
 		for style := VizBars; style <= VizWaterfall; style++ {

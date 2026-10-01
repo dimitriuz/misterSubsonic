@@ -42,6 +42,28 @@ func TestNowPlayingHoldXStarsTheSong(t *testing.T) {
 	}
 }
 
+func TestNowPlayingWithoutASongHasNoStar(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewNowPlayingScreen())
+	ta.settle(t)
+	for _, h := range ta.screenHints() {
+		if h.Hold && h.Button == input.BtnX {
+			t.Errorf("hold X hinted with no song: %q", h.Label)
+		}
+	}
+	hold(ta, input.BtnX, starHold) // the menu opens instead
+	ta.settle(t)
+	menu, ok := ta.Top().(*MenuScreen)
+	if !ok {
+		t.Fatalf("hold X opened %T, want the menu", ta.Top())
+	}
+	for _, e := range menu.entries {
+		if e.label == "Star" || e.label == "Unstar" {
+			t.Errorf("menu has a %q entry with no song", e.label)
+		}
+	}
+}
+
 func TestQueueMenuRemoveAndClear(t *testing.T) {
 	ta := newTestApp(t, ProfileHDMI)
 	playingState(ta)
