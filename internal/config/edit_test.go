@@ -255,3 +255,9 @@ func TestSaveChangedServerKeepsItsSubtable(t *testing.T) {
 		t.Errorf("the subtable moved above the server's keys:\n%s", got)
 	}
 }
+
+func TestSaveChangedServerKeepsTheCommentAboveItsSubtable(t *testing.T) {
+	src := strings.Replace(withSubtable, "[server.extra]", "# about the extras\n[server.extra]", 1)
+	got, _ := saveEdited(t, src, func(c *Config) { c.Servers[0].Password = "other" })
+	wantAll(t, got, "\n\n# about the extras\n[server.extra]", `note = "mine"`, `password = "other"`)
+}

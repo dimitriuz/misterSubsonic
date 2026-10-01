@@ -359,9 +359,16 @@ func (e *editor) servers(old, now []Server) bool {
 			}
 			out = append(out, ls...)
 			if b.sub < b.end { // its subtables are not ours to rewrite
-				if b.sub > b.start && strings.TrimSpace(e.lines[b.sub-1]) == "" {
-					out = append(out, e.lines[b.sub-1])
+				// the blank and comment lines after its last key go with the subtable
+				k := b.sub
+				for k > b.start+1 {
+					t := strings.TrimSpace(e.lines[k-1])
+					if t != "" && !strings.HasPrefix(t, "#") {
+						break
+					}
+					k--
 				}
+				out = append(out, e.lines[k:b.sub]...)
 				out = append(out, e.lines[b.sub:b.end]...)
 			}
 		}
