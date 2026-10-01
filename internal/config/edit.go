@@ -140,10 +140,18 @@ func keyLine(line, key string) (int, bool) {
 		skip = len(bom)
 	}
 	t := strings.TrimLeft(line[skip:], " \t")
-	if !strings.HasPrefix(t, key) {
+	var rest string
+	switch {
+	case t != "" && (t[0] == '"' || t[0] == '\''): // a quoted key
+		if !strings.HasPrefix(t[1:], key) || len(t) < len(key)+2 || t[len(key)+1] != t[0] {
+			return 0, false
+		}
+		rest = strings.TrimLeft(t[len(key)+2:], " \t")
+	case strings.HasPrefix(t, key):
+		rest = strings.TrimLeft(t[len(key):], " \t")
+	default:
 		return 0, false
 	}
-	rest := strings.TrimLeft(t[len(key):], " \t")
 	if !strings.HasPrefix(rest, "=") {
 		return 0, false
 	}
@@ -234,9 +242,10 @@ func (e *editor) set(sec, key, v string) bool {
 	return true
 }
 
-type block struct{ start, end int } // lines [start, end) of one [[server]] table
+type block struct{ start, sub, end int } // lines [start, end) of one [[server]] table; its [server.*] subtables start at sub
 
-// serverBlocks finds the [[server]] tables. Comments and blank lines right
+// serverBlocks finds the [[server]] tables, each with the [server.*] tables
+// that follow it. Comments and blank lines right
 // before the next table belong to it, not to this one.
 func (e *editor) serverBlocks() []block {
 	var bs []block
@@ -245,10 +254,16 @@ func (e *editor) serverBlocks() []block {
 			continue
 		}
 		if n := len(bs); n > 0 && bs[n-1].end < 0 {
+			if h := header(l); strings.HasPrefix(h, "server.") {
+				if bs[n-1].sub < 0 {
+					bs[n-1].sub = i
+				}
+				continue // a subtable of this server
+			}
 			bs[n-1].end = i
 		}
 		if strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(l, bom)), "[[") && header(l) == "server" {
-			bs = append(bs, block{i, -1})
+			bs = append(bs, block{i, -1, -1})
 		}
 	}
 	for i := range bs {
@@ -261,6 +276,9 @@ func (e *editor) serverBlocks() []block {
 				break
 			}
 			bs[i].end--
+		}
+		if bs[i].sub < 0 || bs[i].sub > bs[i].end {
+			bs[i].sub = bs[i].end
 		}
 	}
 	return bs
@@ -340,6 +358,12 @@ func (e *editor) servers(old, now []Server) bool {
 				return false
 			}
 			out = append(out, ls...)
+			if b.sub < b.end { // its subtables are not ours to rewrite
+				if b.sub > b.start && strings.TrimSpace(e.lines[b.sub-1]) == "" {
+					out = append(out, e.lines[b.sub-1])
+				}
+				out = append(out, e.lines[b.sub:b.end]...)
+			}
 		}
 		if i == len(bs)-1 {
 			addNew()

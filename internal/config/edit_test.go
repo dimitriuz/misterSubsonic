@@ -209,11 +209,12 @@ func TestSaveQuotedKeyUntouchedIsEditedInPlace(t *testing.T) {
 	wantAll(t, got, "\"default_server\" = \"home\"   # mine", "volume_db = -9.0")
 }
 
-func TestSaveQuotedKeyThatChangesFallsBack(t *testing.T) {
-	// the line editor does not recognise a quoted key and would add a duplicate; the safety net catches it
-	got, _ := saveEdited(t, "\"default_server\" = \"home\"\n"+minimal, addWork)
-	if !strings.HasPrefix(got, "# MiSTer Subsonic configuration") {
-		t.Fatalf("expected a fresh file:\n%s", got)
+func TestSaveQuotedKeyThatChangesIsEditedInPlace(t *testing.T) {
+	for _, q := range []string{`"default_server"`, `'default_server'`, `"default_server" `} {
+		got, _ := saveEdited(t, q+"= \"home\"   # mine\n"+minimal, addWork)
+		if !strings.HasPrefix(got, q+"= ") || strings.Count(got, "default_server") != 1 {
+			t.Errorf("quoted key %s was not edited in place:\n%s", q, got)
+		}
 	}
 }
 
@@ -231,5 +232,26 @@ func TestSaveRenamedServer(t *testing.T) {
 	wantAll(t, got, "# My own notes on this file.", `name = "office"`, "# --- playback ---")
 	if strings.Contains(got, `"work"`) {
 		t.Errorf("old name left:\n%s", got)
+	}
+}
+
+// a [server.x] table belongs to the [[server]] above it
+const withSubtable = "" +
+	"# My own notes on this file.\ndefault_server = \"home\"\n\n[[server]]\nname = \"home\"\nurl = \"http://192.168.1.10:4533\"\nusername = \"alice\"\npassword = \"sesame\"\n\n" +
+	"[server.extra]\nnote = \"mine\"\n\n[[server]]\nname = \"work\"\nurl = \"http://w:4533\"\nusername = \"bob\"\npassword = \"pw\"\n\n[extra]\ncustom = 1 # not ours\n"
+
+func TestSaveRemovedServerTakesItsSubtable(t *testing.T) {
+	got, _ := saveEdited(t, withSubtable, func(c *Config) { c.RemoveServer("home") })
+	if strings.Contains(got, "server.extra") || strings.Contains(got, `note = "mine"`) {
+		t.Errorf("the subtable of the removed server was left behind:\n%s", got)
+	}
+	wantAll(t, got, `name = "work"`, "[extra]")
+}
+
+func TestSaveChangedServerKeepsItsSubtable(t *testing.T) {
+	got, _ := saveEdited(t, withSubtable, func(c *Config) { c.Servers[0].Password = "other" })
+	wantAll(t, got, "[server.extra]", `note = "mine"`, `password = "other"`, `name = "work"`)
+	if i, j := strings.Index(got, `password = "other"`), strings.Index(got, "[server.extra]"); i > j {
+		t.Errorf("the subtable moved above the server's keys:\n%s", got)
 	}
 }
