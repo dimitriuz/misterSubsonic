@@ -26,16 +26,16 @@ func TestNowPlayingVolumeKeys(t *testing.T) {
 	}
 }
 
-func TestNowPlayingXStarsTheSong(t *testing.T) {
+func TestNowPlayingHoldXStarsTheSong(t *testing.T) {
 	ta := newTestApp(t, ProfileHDMI)
 	playingState(ta)
 	ta.Push(NewNowPlayingScreen())
-	ta.press(input.BtnX)
+	hold(ta, input.BtnX, starHold)
 	ta.settle(t)
 	if !slices.Equal(ta.lib.stars, []string{"star s1"}) || !ta.isStarred(songStar(ta.pl.st.Queue[0])) {
 		t.Fatalf("stars %v", ta.lib.stars)
 	}
-	ta.press(input.BtnX)
+	hold(ta, input.BtnX, starHold)
 	ta.settle(t)
 	if !slices.Equal(ta.lib.stars, []string{"star s1", "unstar s1"}) {
 		t.Fatalf("stars %v", ta.lib.stars)
@@ -56,7 +56,7 @@ func TestQueueMenuRemoveAndClear(t *testing.T) {
 		t.Fatalf("X opened %T, want the menu", ta.Top())
 	}
 	menu := ta.Top().(*MenuScreen)
-	if menu.title != "Queue" || menu.entries[0].label != "Remove Время Луны" || menu.entries[1].label != "Clear queue" {
+	if menu.title != "Queue" || menu.entries[0].label != "Remove Время Луны" || menu.entries[1].label != "Clear queue" || len(menu.entries) != 4 {
 		t.Fatalf("menu %q with entries %q, %q", menu.title, menu.entries[0].label, menu.entries[1].label)
 	}
 	ta.press(input.BtnA) // Remove

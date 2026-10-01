@@ -7,7 +7,6 @@ import (
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
-	"mistersubsonic/internal/player"
 )
 
 func saverApp(t *testing.T, p Profile, minutes int) *testApp {
@@ -129,12 +128,12 @@ func TestScreensaverWakeSwallowsTheReleaseToo(t *testing.T) {
 	ta.onWake()
 	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Press}) // wakes
 	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Release})
-	if len(ta.toasts) != 0 || ta.pl.st.Shuffle || ta.pl.st.Repeat != player.RepeatOff {
-		t.Fatalf("the wake press's release cycled the mode: toasts %v, %+v", ta.toasts, ta.pl.st)
+	if len(ta.toasts) != 0 || ta.VizStyle() != VizOff {
+		t.Fatalf("the wake press's release changed the visualizer: toasts %v, %v", ta.toasts, ta.VizStyle())
 	}
-	ta.press(input.BtnSelect) // a real tap still cycles
-	if !ta.pl.st.Shuffle {
-		t.Fatal("the next tap didn't cycle the mode")
+	ta.press(input.BtnSelect) // a real tap still changes it
+	if ta.VizStyle() != VizBars {
+		t.Fatal("the next tap didn't change the visualizer")
 	}
 }
 

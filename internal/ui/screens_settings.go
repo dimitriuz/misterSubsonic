@@ -315,6 +315,11 @@ func displaySettings(a *App) []setting {
 				a.UpdateConfig(func(c *config.Config) { c.Display.Hints = on }, false)
 			},
 			help: "The bar of buttons along the bottom of every screen.", toggle: true},
+		{label: "Visualizer", value: func(a *App) string { return a.VizStyle().Label() },
+			change: func(a *App, dir int) {
+				a.SetVizStyle(VizStyle((int(a.VizStyle()) + dir + len(vizNames)) % len(vizNames)))
+			},
+			help: "A moving picture of the music on Now Playing. Select there changes it too.", toggle: false},
 	}
 }
 

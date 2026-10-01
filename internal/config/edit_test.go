@@ -261,3 +261,16 @@ func TestSaveChangedServerKeepsTheCommentAboveItsSubtable(t *testing.T) {
 	got, _ := saveEdited(t, src, func(c *Config) { c.Servers[0].Password = "other" })
 	wantAll(t, got, "\n\n# about the extras\n[server.extra]", `note = "mine"`, `password = "other"`)
 }
+
+func TestEditSetsTheVisualizerInPlace(t *testing.T) {
+	got, cfg := saveEdited(t, commented, func(c *Config) { c.Display.Visualizer = "scope" })
+	wantAll(t, got, "[display]\nhints = true\nvisualizer = \"scope\"", "# My own notes on this file.", "keep it quiet at night")
+	if cfg.Display.Visualizer != "scope" {
+		t.Fatal(cfg.Display.Visualizer)
+	}
+	again, _ := saveEdited(t, got, func(c *Config) { c.Display.Visualizer = "vu" })
+	wantAll(t, again, "visualizer = \"vu\"")
+	if strings.Count(again, "visualizer") != 1 {
+		t.Fatalf("visualizer written twice:\n%s", again)
+	}
+}

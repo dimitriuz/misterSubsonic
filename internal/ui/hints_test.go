@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
@@ -135,6 +136,8 @@ func TestEveryHintedButtonDoesSomething(t *testing.T) {
 					depth, calls, top := len(ta.stack), len(ta.pl.calls), ta.Top()
 					if h.Rune != 0 { // a typing key: Backspace, Enter
 						ta.pressKey(h.Rune)
+					} else if h.Hold {
+						hold(ta, b, 2*time.Second)
 					} else {
 						ta.press(b)
 					}
