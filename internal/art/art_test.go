@@ -143,7 +143,7 @@ func TestFailedKeysDropExpiredFirst(t *testing.T) {
 	l := h.l
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for i := 0; i < maxFailed/2; i++ { // expired, though not the oldest of all below
+	for i := 0; i < maxFailed/2; i++ { // expired: with one RetryAfter, the expired keys are always the oldest
 		l.failed[Key{subsonic.ID(fmt.Sprintf("old-%d", i)), 64}] = now.Add(-time.Hour)
 	}
 	for i := 0; i < maxFailed/2; i++ { // still blocked

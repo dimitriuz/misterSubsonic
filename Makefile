@@ -5,7 +5,9 @@ MISTER  ?= mister.local
 DEVDIR  := /media/fat/mistersubsonic/dev
 REL     := $(BIN)/release
 # With no tag yet, a bare hash would be no version: 0.0.0-<hash> sorts and reads like one.
-VERSION ?= $(shell d=$$(git describe --tags --dirty 2>/dev/null) || d=0.0.0-$$(git describe --always --dirty 2>/dev/null); echo "$${d:-dev}")
+VERSION ?= $(shell d=$$(git describe --tags --dirty 2>/dev/null) || { h=$$(git describe --always --dirty 2>/dev/null); d=$${h:+0.0.0-$$h}; }; echo "$${d:-dev}")
+# The source link names a ref GitHub has: the exact tag, else the commit.
+SRCREF  ?= $(shell git describe --tags --exact-match 2>/dev/null || git rev-parse HEAD 2>/dev/null || echo main)
 ARM_ENV := GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 \
            CC="$(ZIG) cc -target arm-linux-gnueabihf.2.31 -mcpu=cortex_a9"
 
@@ -53,7 +55,7 @@ release:
 	cp sdcard/Scripts/MiSTer_Subsonic.sh $(REL)/sdcard/Scripts/
 	cp sdcard/mistersubsonic/config.example.toml LICENSE $(REL)/sdcard/mistersubsonic/
 	{ echo "MiSTer Subsonic includes this third-party software."; \
-	  echo "Source code: https://github.com/dimitriuz/misterSubsonic/tree/$(VERSION)"; \
+	  echo "Source code: https://github.com/dimitriuz/misterSubsonic/tree/$(SRCREF)"; \
 	  echo; echo "== speexdsp resampler (BSD) =="; cat third_party/speexdsp/COPYING; \
 	  echo; echo "== Noto Sans fonts (SIL Open Font License 1.1) =="; cat internal/gfx/fonts/OFL.txt; \
 	  echo; echo "== Go (runtime, standard library, golang.org/x/image, golang.org/x/text, golang.org/x/sys) (BSD-3-Clause) =="; cat third_party/licenses/GO-LICENSE; \
