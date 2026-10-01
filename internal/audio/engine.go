@@ -117,11 +117,12 @@ type Engine struct {
 	seekReq *seekReq  // guarded by mu: latest requested seek, not yet run
 	// Replace calls whose command hasn't run yet, guarded by mu.
 	replacing int
+	// Play and Stop calls whose command hasn't run yet, guarded by mu.
+	superseding int
 
 	// Owned by the run goroutine.
 	cur        *voice
-	finishedID uint64 // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
-	ended      bool   // decoding reached the end of the queue naturally (not Stop)
+	ended      bool // decoding reached the end of the queue naturally (not Stop)
 	next       *voice
 	opening    *Track
 	openedAt   time.Time // when opening was queued
@@ -131,12 +132,21 @@ type Engine struct {
 	chainOut   uint64
 	chainIn    uint64
 	written    uint64
+	finishedID uint64    // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
 	pending    []float32 // resampled output not yet taken by the device
 	pendBuf    []float32 // pending's backing array, reused so decoding doesn't allocate
 	scratch    []float32
 }
 
 func NewEngine(o EngineOptions) *Engine {
+	e := newEngine(o)
+	go e.run()
+	go e.monitor()
+	return e
+}
+
+// newEngine builds an Engine without starting its goroutines.
+func newEngine(o EngineOptions) *Engine {
 	if o.OpenDecoder == nil {
 		o.OpenDecoder = OpenDecoder
 	}
@@ -163,8 +173,6 @@ func NewEngine(o EngineOptions) *Engine {
 		segs:    []segment{{start: 0, id: 0}},
 		scratch: make([]float32, o.ChunkFrames*2),
 	}
-	go e.run()
-	go e.monitor()
 	return e
 }
 
@@ -173,7 +181,10 @@ func (e *Engine) Events() <-chan Event { return e.events }
 // Play stops whatever is playing and starts t immediately.
 func (e *Engine) Play(t Track) {
 	e.dropSeekReq()
-	e.send(func() { e.doPlay(t) }, t.Source)
+	e.addSuperseding(1)
+	if !e.send(func() { e.addSuperseding(-1); e.doPlay(t) }, t.Source) {
+		e.addSuperseding(-1)
+	}
 	e.interrupt(t.Source)
 }
 
@@ -202,6 +213,12 @@ func (e *Engine) Replace(cur uint64, t Track, prep func()) {
 	e.interruptIf(t.Source, func(id uint64) bool { return id == cur })
 }
 
+func (e *Engine) addSuperseding(d int) {
+	e.mu.Lock()
+	e.superseding += d
+	e.mu.Unlock()
+}
+
 func (e *Engine) doneReplacing() {
 	e.mu.Lock()
 	e.replacing--
@@ -221,7 +238,10 @@ func (e *Engine) ClearNext() { e.send(e.cancelNext, nil) }
 // Stop halts playback and discards everything buffered.
 func (e *Engine) Stop() {
 	e.dropSeekReq()
-	e.send(e.doStop, nil)
+	e.addSuperseding(1)
+	if !e.send(func() { e.addSuperseding(-1); e.doStop() }, nil) {
+		e.addSuperseding(-1)
+	}
 	e.interrupt(nil)
 }
 
@@ -311,8 +331,8 @@ func (e *Engine) Position() (id uint64, pos time.Duration, ok bool) {
 
 // Close stops the engine and closes every track source it still holds,
 // including those of commands it never got to and of successors that
-// finished opening too late. Events() is closed afterwards. The Output is
-// not closed.
+// finished opening too late. Events() is closed shortly afterwards, by the
+// monitor goroutine, not before Close returns. The Output is not closed.
 func (e *Engine) Close() {
 	e.closeOnce.Do(func() { close(e.closing) }) // before sendMu: a blocked send holds it
 	e.sendMu.Lock()
@@ -686,6 +706,9 @@ func (e *Engine) startSuccessorOrEnd() {
 func (e *Engine) breakChain() {
 	if e.rs != nil {
 		e.pending = e.rs.Flush(e.pending)
+		if cap(e.pending) > cap(e.pendBuf) {
+			e.pendBuf = e.pending[:0] // it grew: keep the bigger buffer
+		}
 		e.rs.Close()
 		e.rs = nil
 	}
@@ -742,10 +765,13 @@ func (e *Engine) doReplace(cur uint64, t Track) {
 		e.queueEvent(Event{Kind: EventSeekFailed, TrackID: t.ID, Err: ErrNotCurrent})
 		// finishCur left the successor queued for a Replace that is now
 		// refused: nothing else will start it.
+		// A Play or Stop queued behind the refusal replaces the successor
+		// anyway: starting it for an instant would be wasted.
 		e.mu.Lock()
-		more := e.replacing > 0
+		more := e.replacing > 0 || e.superseding > 0
 		e.mu.Unlock()
-		if e.cur == nil && e.finishedID != 0 && !more {
+		strandedSuccessor := e.cur == nil && e.finishedID != 0 && !more
+		if strandedSuccessor {
 			e.startSuccessorOrEnd()
 		}
 		return

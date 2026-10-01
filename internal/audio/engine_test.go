@@ -1326,6 +1326,39 @@ func TestEngineRefusedReplaceWithoutSuccessorEnds(t *testing.T) {
 	expectEvent(t, e, EventStarted, 5)
 }
 
+// A refused Replace must not start the queued successor when a Play or Stop
+// is already queued behind it: the successor would start for an instant only
+// to be stopped again. The run loop isn't started, so the test drives
+// doReplace itself and looks at the state it leaves.
+func refusedReplaceWithQueuedCommand(t *testing.T, queue func(e *Engine)) *Engine {
+	e := newEngine(EngineOptions{Output: newFakeOutput(300), OpenDecoder: fakeOpen})
+	v, err := e.openVoice(Track{ID: 2, Source: newFakeSource(ramp(200, 5000), OutputRate)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the state finishCur leaves for a Replace pending after track 1 ended
+	e.next, e.finishedID, e.replacing = v, 1, 1
+	queue(e)
+	e.doReplace(7, Track{ID: 3, Source: newFakeSource(ramp(100, 100), OutputRate)}) // 7 is stale
+	return e
+}
+
+func TestEngineRefusedReplaceBeforeAQueuedPlayDoesNotStartTheSuccessor(t *testing.T) {
+	e := refusedReplaceWithQueuedCommand(t, func(e *Engine) {
+		e.Play(Track{ID: 4, Source: newFakeSource(ramp(50, 0), OutputRate)})
+	})
+	if e.cur != nil {
+		t.Fatalf("the successor %d started with a Play queued behind the refusal", e.cur.t.ID)
+	}
+}
+
+func TestEngineRefusedReplaceBeforeAQueuedStopDoesNotStartTheSuccessor(t *testing.T) {
+	e := refusedReplaceWithQueuedCommand(t, func(e *Engine) { e.Stop() })
+	if e.cur != nil {
+		t.Fatalf("the successor %d started with a Stop queued behind the refusal", e.cur.t.ID)
+	}
+}
+
 // A second Replace for the track whose replacement is still opening is
 // accepted, and the queued successor stays queued.
 func TestEngineReplaceDuringTheReplacementsOpen(t *testing.T) {

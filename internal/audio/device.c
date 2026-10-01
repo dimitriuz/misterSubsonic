@@ -9,7 +9,7 @@
 static ma_device g_device;
 static ma_context g_context;
 static ma_pcm_rb g_ring;
-static int g_open;
+static int g_open; /* read and written with __atomic */
 static volatile int g_paused;
 static volatile int g_flush_req;
 static volatile uint64_t g_consumed;
@@ -67,7 +67,7 @@ static void data_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames)
 }
 
 int mss_device_open(const char* device_name, int null_backend, uint32_t ring_frames) {
-    if (g_open) {
+    if (__atomic_load_n(&g_open, __ATOMIC_SEQ_CST)) {
         return MA_INVALID_OPERATION;
     }
     ma_backend null_only[1] = { ma_backend_null };
@@ -119,25 +119,25 @@ int mss_device_open(const char* device_name, int null_backend, uint32_t ring_fra
         ma_context_uninit(&g_context);
         return r;
     }
-    g_open = 1;
+    __atomic_store_n(&g_open, 1, __ATOMIC_SEQ_CST);
     return MA_SUCCESS;
 }
 
 void mss_device_close(void) {
-    if (!g_open) {
+    if (!__atomic_load_n(&g_open, __ATOMIC_SEQ_CST)) {
         return;
     }
     ma_device_uninit(&g_device);
     ma_pcm_rb_uninit(&g_ring);
     ma_context_uninit(&g_context);
-    g_open = 0;
+    __atomic_store_n(&g_open, 0, __ATOMIC_SEQ_CST);
 }
 
 /* After mss_device_close the ring and device are gone: every call below is
    a no-op then (write takes nothing, flush does nothing). */
 
 uint32_t mss_device_write(const float* frames, uint32_t frame_count) {
-    if (!g_open) {
+    if (!__atomic_load_n(&g_open, __ATOMIC_SEQ_CST)) {
         return 0;
     }
     uint32_t done = 0;
@@ -155,7 +155,7 @@ uint32_t mss_device_write(const float* frames, uint32_t frame_count) {
 }
 
 uint32_t mss_device_space(void) {
-    if (!g_open) {
+    if (!__atomic_load_n(&g_open, __ATOMIC_SEQ_CST)) {
         return 0;
     }
     return ma_pcm_rb_available_write(&g_ring);
@@ -180,7 +180,7 @@ static int device_stopped(void) {
 }
 
 void mss_device_flush(void) {
-    if (!g_open) {
+    if (!__atomic_load_n(&g_open, __ATOMIC_SEQ_CST)) {
         return;
     }
     if (device_stopped()) {
@@ -204,7 +204,7 @@ void mss_device_flush(void) {
 
 /* Test hook: stops the device callback as a failed or unplugged device would. */
 void mss_device_stop_for_test(void) {
-    if (g_open) {
+    if (__atomic_load_n(&g_open, __ATOMIC_SEQ_CST)) {
         ma_device_stop(&g_device);
     }
 }
