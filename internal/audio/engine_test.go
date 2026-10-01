@@ -1350,6 +1350,13 @@ func TestEngineRefusedReplaceBeforeAQueuedPlayDoesNotStartTheSuccessor(t *testin
 	if e.cur != nil {
 		t.Fatalf("the successor %d started with a Play queued behind the refusal", e.cur.t.ID)
 	}
+	(<-e.cmds).run() // the queued Play now runs
+	if e.cur == nil || e.cur.t.ID != 4 {
+		t.Fatalf("the queued Play did not start track 4: cur %v", e.cur)
+	}
+	if e.superseding != 0 {
+		t.Fatalf("superseding = %d after the queued Play ran, want 0", e.superseding)
+	}
 }
 
 func TestEngineRefusedReplaceBeforeAQueuedStopDoesNotStartTheSuccessor(t *testing.T) {

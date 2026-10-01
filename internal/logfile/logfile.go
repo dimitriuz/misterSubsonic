@@ -80,6 +80,8 @@ func (l *File) Write(p []byte) (int, error) {
 // takes at most maxFailedRotations+1 caps before it is truncated.
 const maxFailedRotations = 3
 
+const truncatedMarker = "log truncated after failed rotations\n"
+
 // rotate moves log.txt to log.txt.1 and starts a new log.txt. If the rename
 // fails the log goes on growing rather than losing lines, and the next try
 // comes when it has grown by the cap again; after maxFailedRotations failures
@@ -90,6 +92,8 @@ func (l *File) rotate() {
 		l.failed++
 		if l.failed > maxFailedRotations && l.f.Truncate(0) == nil { // O_APPEND: the next write lands at 0
 			l.size, l.retryAt, l.failed = 0, 0, 0
+			n, _ := l.f.WriteString(truncatedMarker)
+			l.size = int64(n)
 			return
 		}
 		l.retryAt = l.size + l.max

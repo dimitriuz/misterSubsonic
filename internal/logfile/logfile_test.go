@@ -149,7 +149,7 @@ func TestAPermanentlyFailingRotationIsCapped(t *testing.T) {
 		if _, err := l.Write([]byte(fmt.Sprintf("%03d\n", i))); err != nil {
 			t.Fatal(err)
 		}
-		if st, _ := os.Stat(p); st.Size() > int64(10*(maxFailedRotations+1)+4) {
+		if st, _ := os.Stat(p); st.Size() > int64(10*(maxFailedRotations+1)+4+len(truncatedMarker)) {
 			t.Fatalf("log.txt grew to %d bytes after %d lines", st.Size(), i+1)
 		}
 	}
@@ -218,4 +218,17 @@ func mustPipe(t *testing.T) (*os.File, *os.File) {
 		t.Fatal(err)
 	}
 	return r, w
+}
+
+func TestTruncationLeavesAMarkerLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "log.txt")
+	l, _ := Open(p, 10)
+	defer l.Close()
+	blockRotation(t, p)
+	for i := 0; i < 200; i++ {
+		l.Write([]byte(fmt.Sprintf("%03d\n", i)))
+	}
+	if got := read(t, p); !strings.Contains(got, truncatedMarker) {
+		t.Errorf("no marker after the truncation: %q", got)
+	}
 }
