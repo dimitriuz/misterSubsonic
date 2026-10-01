@@ -301,7 +301,7 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 | X | context menu: Play now · Play next · Add to queue · Star/Unstar · Go to artist · Go to album | press: menu (Star/Unstar · Shuffle · Repeat), closed after a choice; hold 1 s: star/unstar |
 | Y | open Now Playing | open Queue |
 | L / R | page up/down (letter jump on Artists) | previous / next track |
-| Start | play/pause | full-screen visualizer when something is playing, else play/pause |
+| Start | play/pause | full-screen visualizer when a song is loaded and not stopped, else play/pause |
 | Select | shuffle-play current list | press: next visualizer style (Off → Bars → Scope → VU → Waterfall; in full screen without Off); hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.

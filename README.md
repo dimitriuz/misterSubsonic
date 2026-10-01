@@ -104,11 +104,11 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | X | menu: play now/next, add to queue, star, go to artist/album | press: menu (star, shuffle, repeat); hold 1 s: star/unstar |
 | Y | Now Playing | queue |
 | L / R | page (letter jump on Artists) | previous / next track |
-| Start | play/pause | full screen visualizer (play/pause when nothing is playing) |
+| Start | play/pause | full screen visualizer (play/pause when no song is loaded) |
 | Select | shuffle-play the list | press: next visualizer style; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute, PgUp/PgDn =
-L/R, Space = Start. In Search and the setup wizard, letters type and Backspace deletes. With a
+L/R, Space = Start; the visualizer style is changed with Select, which has no keyboard key, or in Settings → Display → Visualizer. In Search and the setup wizard, letters type and Backspace deletes. With a
 controller, hold Select on Now Playing to mute (and hold X to star); changing the volume turns the sound back on. A
 multimedia keyboard's media keys work on every screen: volume up/down (held to repeat), mute,
 play/pause, next, previous, and fast-forward/rewind to seek. A volume panel shows the level for a
@@ -118,13 +118,12 @@ moment whenever it changes.
 info: Bars (spectrum), Scope (waveform), VU (two level meters) or Waterfall (a scrolling
 spectrogram). Select cycles Off, Bars, Scope, VU and Waterfall, and the choice is saved
 (Settings → Display → Visualizer, or `visualizer = "off"|"bars"|"scope"|"vu"|"waterfall"` under
-`[display]`; off by default). Start on Now Playing, while something is playing, opens it full
+`[display]`; off by default). Start on Now Playing, while a song is loaded and not stopped, opens it full
 screen inside the title-safe area, with a small title and time line that moves to another corner
 every minute; the hint bar hides after 3 s. In full screen Select cycles the styles without Off,
 and B or Start leaves. If drawing is too slow for the device, it lowers its own frame rate and
 logs "visualizer: slowing to N fps". In full screen the screensaver stays away while music plays, loads or buffers, and starts
-when it is paused or stopped. The screensaver does not start while the visualizer is
-playing music.
+when it is paused or stopped.
 
 **Shuffle and repeat** are in the menu: X on Now Playing opens star/unstar, Shuffle and Repeat
 (off, all, one), and the menu closes after a choice. The queue's X menu has them too. Shuffle and
