@@ -177,6 +177,7 @@ func TestTapPassesThrough(t *testing.T) {
 func TestTapConcurrentWriteAndWindow(t *testing.T) {
 	out := newFakeOutput(1 << 30)
 	tp := NewTap(out, 256)
+	tp.Window(make([]float32, 2)) // a reader is present, so Write copies
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 	wg.Add(2)
@@ -207,4 +208,20 @@ func TestTapConcurrentWriteAndWindow(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// A write bigger than the tap returns what the device took, and the tap keeps
+// the newest frames.
+func TestTapOversizeWriteReturnsDeviceCount(t *testing.T) {
+	tp, out, _ := newTestTap(100, 16)
+	if n := tp.Write(stereo(1, 40)); n != 40 {
+		t.Fatalf("Write returned %d, want the device's 40", n)
+	}
+	out.consume(40)
+	dst := make([]float32, 2*16)
+	n := tp.Window(dst)
+	got := lefts(dst[:2*n])
+	if n != 16 || got[0] != 25 || got[15] != 40 {
+		t.Fatalf("window = %v, want 25..40", got)
+	}
 }

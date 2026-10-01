@@ -1435,8 +1435,8 @@ func TestEngineThroughTapFillsWindow(t *testing.T) {
 	tp := NewTap(dev, TapFrames)
 	tp.Window(make([]float32, 2)) // a reader is present
 	e := NewEngine(EngineOptions{Output: tp, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond})
-	defer e.Close()
 	defer tp.Close()
+	defer e.Close()
 	e.Play(Track{ID: 1, Source: newFakeSource(ramp(OutputRate, 1), OutputRate)})
 	dst := make([]float32, 2*512)
 	deadline := time.After(3 * time.Second)

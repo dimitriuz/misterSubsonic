@@ -36,7 +36,8 @@ func NewTap(out Output, frames int) *Tap {
 // Write passes frames to the device, then keeps the ones it took, unless
 // nobody has looked for a second.
 func (t *Tap) Write(frames []float32) int {
-	n := t.out.Write(frames)
+	took := t.out.Write(frames)
+	n := took
 	idle := t.now().UnixNano()-t.lastRead.Load() > int64(tapIdle)
 	t.mu.Lock()
 	if idle {
@@ -55,7 +56,7 @@ func (t *Tap) Write(frames []float32) int {
 		t.written += uint64(n)
 	}
 	t.mu.Unlock()
-	return n
+	return took
 }
 
 // Window fills dst (interleaved stereo, len(dst)/2 frames wanted) with the
