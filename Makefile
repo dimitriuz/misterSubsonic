@@ -80,7 +80,7 @@ deploy: release
 # Every package's tests are built for ARM too, so 32-bit-only breakage (an
 # int overflow, say) fails here and in CI; the ones run on the device are
 # copied by deploy-dev. Old test binaries (of removed packages) are cleared first.
-TESTS := audio ui gfx
+TESTS := audio ui gfx viz
 mister-test:
 	rm -rf $(BIN)/arm/tests
 	$(ARM_ENV) $(GO) test -c -o $(BIN)/arm/tests/ ./...

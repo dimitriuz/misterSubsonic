@@ -34,7 +34,7 @@
 
 ## 2. Non-goals for v1
 
-- Visualizer, EQ, lyrics, internet radio, local or SMB files, CD playback.
+- EQ, lyrics, internet radio, local or SMB files, CD playback. (The visualizer was a non-goal for v1; Plan 6 added it, see `2026-10-01-mister-subsonic-visualizer-design.md`.)
 - Chapter navigation inside single-file album FLACs using the embedded CUESHEET. The file plays as one track with full seek; chapters are the first item for v2.
 - Playing music in the background while another MiSTer core runs. Exiting the app stops playback.
 - A web remote or phone control.
@@ -298,13 +298,15 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 | D-pad | move focus | ←/→ seek ±10 s (hold: ±30 s) |
 | A | open / play | play/pause |
 | B | back | back to previous screen |
-| X | context menu: Play now · Play next · Add to queue · Star/Unstar · Go to artist · Go to album | star/unstar |
+| X | context menu: Play now · Play next · Add to queue · Star/Unstar · Go to artist · Go to album | press: menu (Star/Unstar · Shuffle · Repeat), closed after a choice; hold 1 s: star/unstar |
 | Y | open Now Playing | open Queue |
 | L / R | page up/down (letter jump on Artists) | previous / next track |
-| Start | play/pause (global) | play/pause |
-| Select | shuffle-play current list | press: cycle shuffle → repeat modes; hold 1 s: mute |
+| Start | play/pause | full-screen visualizer when something is playing, else play/pause |
+| Select | shuffle-play current list | press: next visualizer style (Off → Bars → Scope → VU → Waterfall; in full screen without Off); hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
+
+**Shuffle and repeat** are independent and can be on together; they live in the X menu on Now Playing and in the queue's X menu. **Visualizer:** see the Plan 6 spec (`2026-10-01-mister-subsonic-visualizer-design.md`).
 
 **Mute** is M on a keyboard, the media Mute key, or holding Select on Now Playing for one second (the release after that hold does nothing). Settings → Playback has no Volume or Mute rows; volume is Up/Down on Now Playing and the media keys. **Settings help:** the focused setting's help text (one or two dim lines) shows under a settings list, and Transcode bitrate is listed only while Transcode to is mp3.
 
@@ -444,7 +446,7 @@ If a spike fails, the design section it tests gets revised before implementation
 
 - CUESHEET chapters in single-file album FLACs.
 - Internet radio stations from Navidrome's `getInternetRadioStations`.
-- Visualizer and EQ.
+- EQ. (The visualizer is done, Plan 6.)
 - Lyrics (`getLyricsBySongId`).
 - A phone web remote.
 - An in-app updater.

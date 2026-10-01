@@ -194,3 +194,32 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
 - What remains is Go's standard JPEG decoder, about 0.77 s for this size.
 
 **On the TV:** pending. Run `docs/testing-on-mister.md` items 26–29 and record them here.
+
+## Plan 6 on the MiSTer
+
+**Visualizer cost.** Desktop reference (Ryzen 9 6900HS, 0 allocs/op), measured as analysis plus drawing into the panel or the full body, without the present:
+
+| Case | Bars | Scope | VU | Waterfall |
+|---|---|---|---|---|
+| Panel 1920×1200 (1050×153) | 88 µs | 99 µs | 111 µs | 157 µs |
+| Panel 320×240 (162×34) | 23 µs | 22 µs | 24 µs | 23 µs |
+| Full screen 1920×1200 | 670 µs | 683 µs | 1.13 ms | 1.97 ms |
+| Full screen 320×240 | 48 µs | 52 µs | 61 µs | 73 µs |
+
+The analysis alone (`internal/viz`, `BenchmarkAnalyzerUpdate`): 49 µs on HDMI settings, 18 µs on CRT settings. The cost on the A9 will be mostly the present of up to 1920×1200 per frame, which these numbers leave out.
+
+**On the MiSTer:** pending. After `make deploy-dev MISTER=<ip>`, on the device:
+
+```
+./ui.test -test.run '^$' -test.bench VizFrame -test.benchtime 30x
+./viz.test -test.run '^$' -test.bench AnalyzerUpdate
+```
+
+| Case | Bars | Scope | VU | Waterfall |
+|---|---|---|---|---|
+| Panel 1920×1200 | pending | pending | pending | pending |
+| Panel 320×240 | pending | pending | pending | pending |
+| Full screen 1920×1200 | pending | pending | pending | pending |
+| Full screen 320×240 | pending | pending | pending | pending |
+
+Then run `docs/testing-on-mister.md` items 31–35 and record them here, with the frame-rate defaults that fit 60% of each budget.
