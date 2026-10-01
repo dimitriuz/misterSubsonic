@@ -386,3 +386,24 @@ func TestSearchResultTitleStopsScrollingOnTheTabs(t *testing.T) {
 		}
 	}
 }
+
+// On a physical keyboard Enter is A: in the results it opens the focused item.
+func TestSearchEnterOpensTheFocusedResult(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.Push(NewHomeScreen())
+	s := NewSearchScreen()
+	ta.Push(s)
+	typeKeys(ta, "a")
+	ta.now = ta.now.Add(searchDelay)
+	ta.onWake()
+	ta.settle(t)
+	s.inResults, s.onTabs = true, false
+	s.tabs.Sel = resAlbums
+	ta.pressKey('\n')
+	if al, ok := ta.Top().(*AlbumScreen); !ok || al.stub.ID != "al-3" {
+		t.Fatalf("Enter in album results opened %T", ta.Top())
+	}
+	if string(s.query) != "a" {
+		t.Fatalf("Enter changed the query to %q", string(s.query))
+	}
+}

@@ -401,7 +401,9 @@ func TestWizardPlaintextConsentDoesNotCarryToAnotherHost(t *testing.T) {
 	}
 }
 
-// The keyboard stays inside the title-safe area, with or without a problem line.
+// The keyboard stays inside the screen's body: below the header, above the
+// hint bar and the mini bar, in the title-safe area, on every typing step,
+// with or without a problem line.
 func TestWizardKeyboardFitsTheScreen(t *testing.T) {
 	crt288 := ProfileCRT240
 	crt288.H = 288
@@ -414,19 +416,32 @@ func TestWizardKeyboardFitsTheScreen(t *testing.T) {
 				w.setStep(stepPassword)
 				w.problem = "Enter a password (step 3) or an API key"
 			},
+			"api key": func(w *WizardScreen) { w.setStep(stepAPIKey) },
+			"api key problem": func(w *WizardScreen) {
+				w.setStep(stepAPIKey)
+				w.problem = "Enter a password (step 3) or an API key"
+			},
 		} {
-			ta := newTestApp(t, p)
-			w := NewWizardScreen(true, false)
-			ta.Push(w)
-			setup(w)
-			if strings.Contains(name, "problem") && w.problem == "" {
-				t.Fatalf("%s %d: no problem shown", p.Name, p.H)
-			}
-			ta.settle(t)
-			body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY)
-			kb := w.kbArea
-			if kb.H == 0 || kb.Bottom() > body.Bottom() || kb.Y < body.Y || kb.Right() > body.Right() {
-				t.Errorf("%s %d %s: keyboard %+v outside %+v", p.Name, p.H, name, kb, body)
+			for _, playing := range []bool{false, true} {
+				ta := newTestApp(t, p)
+				if playing {
+					playingState(ta) // the mini bar takes its line
+				}
+				w := NewWizardScreen(true, false)
+				ta.Push(w)
+				setup(w)
+				if strings.Contains(name, "problem") && w.problem == "" {
+					t.Fatalf("%s %d: no problem shown", p.Name, p.H)
+				}
+				ta.settle(t)
+				body := gfx.R(0, p.SafeY+p.HeaderH, p.W, p.H-2*p.SafeY-p.HeaderH-ta.hintH())
+				if playing {
+					body.H -= p.MiniBarH
+				}
+				kb := w.kbArea
+				if kb.H == 0 || kb.Bottom() > body.Bottom() || kb.Y < body.Y || kb.Right() > body.Right() {
+					t.Errorf("%s %d %s (playing %v): keyboard %+v outside %+v", p.Name, p.H, name, playing, kb, body)
+				}
 			}
 		}
 	}

@@ -189,3 +189,32 @@ func TestDrainInputForgetsWakeKeys(t *testing.T) {
 		t.Fatalf("wakeKeys %v survive drainInput", ta.wakeKeys)
 	}
 }
+
+// A typed character wakes the screensaver and does nothing else: the letter
+// isn't typed into the screen, and its release is swallowed too.
+func TestScreensaverWakesOnATypedRune(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	typed := &typingScreen{}
+	ta.Push(typed)
+	ta.saver = true // no frame is drawn here: it stays on until a key wakes it
+	ta.onInput(input.Event{Button: input.BtnNone, Kind: input.Press, Rune: 'x'})
+	if ta.saver {
+		t.Fatal("a typed letter left the screensaver on")
+	}
+	if len(typed.got) != 0 {
+		t.Fatalf("the waking letter was typed: %q", string(typed.got))
+	}
+	ta.onInput(input.Event{Button: input.BtnNone, Kind: input.Press, Rune: 'y'})
+	if string(typed.got) != "y" {
+		t.Fatalf("the next letter wasn't typed: %q", string(typed.got))
+	}
+}
+
+// typingScreen records the characters it is given.
+type typingScreen struct{ got []rune }
+
+func (s *typingScreen) Title() string                    { return "Typing" }
+func (s *typingScreen) Enter(*App)                       {}
+func (s *typingScreen) Handle(*App, input.Event) bool    { return false }
+func (s *typingScreen) Draw(*App, *gfx.Canvas, gfx.Rect) {}
+func (s *typingScreen) Text(a *App, r rune) bool         { s.got = append(s.got, r); return true }
