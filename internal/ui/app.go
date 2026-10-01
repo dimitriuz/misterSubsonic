@@ -582,7 +582,9 @@ func (a *App) onWake() {
 		a.dirty = true
 	}
 	if a.o.Player != nil && a.o.Player.State().Status == player.Playing {
-		a.damageAll(a.ticks) // progress
+		for _, r := range a.ticks { // progress; none drawn means nothing follows the clock
+			a.Damage(r)
+		}
 	}
 }
 
