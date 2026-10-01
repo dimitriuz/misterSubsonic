@@ -170,6 +170,120 @@ func TestShortWindowZeroPads(t *testing.T) {
 	a.Update(big, cfg.FFTSize*2, 33*time.Millisecond) // n larger than the FFT
 	out := make([]float32, 50)
 	a.Scope(out)
+	for _, v := range out {
+		if v < -1 || v > 1 {
+			t.Fatalf("scope point %v out of range", v)
+		}
+	}
+	// a short burst reads no higher than the same tone over a full window
+	b := bandOf(1000, cfg.Bars)
+	short, full := New(cfg), New(cfg)
+	short.Update(sine(100, 1000, 1, 1, 0), 100, time.Second)
+	full.Update(sine(cfg.FFTSize, 1000, 1, 1, 0), cfg.FFTSize, time.Second)
+	sl, _ := short.Bars()
+	fl, _ := full.Bars()
+	if sl[b] > fl[b] {
+		t.Errorf("short burst %v reads above full window %v", sl[b], fl[b])
+	}
+	short.Scope(out)
+	for _, v := range out {
+		if v < -1 || v > 1 {
+			t.Fatalf("burst scope point %v out of range", v)
+		}
+	}
+}
+
+func finite(x float32) bool { return x-x == 0 }
+
+func TestNonFiniteInputCannotPoison(t *testing.T) {
+	nan := float32(math.NaN())
+	inf := float32(math.Inf(1))
+	for _, cfg := range []Config{HDMI(), CRT()} {
+		a := New(cfg)
+		bad := sine(cfg.FFTSize, 1000, 1, 1, 0)
+		bad[0], bad[1], bad[10], bad[21], bad[40] = nan, nan, inf, -inf, nan
+		settle(a, bad, cfg.FFTSize, 33*time.Millisecond, 3)
+		lvl, peak := a.Bars()
+		for i := range lvl {
+			if !finite(lvl[i]) || !finite(peak[i]) {
+				t.Fatalf("fft %d: band %d: %v %v", cfg.FFTSize, i, lvl[i], peak[i])
+			}
+		}
+		for _, v := range a.Column() {
+			if !finite(v) {
+				t.Fatalf("fft %d: column %v", cfg.FFTSize, v)
+			}
+		}
+		vl, vp := a.VU()
+		for c := 0; c < 2; c++ {
+			if !finite(vl[c]) || !finite(vp[c]) {
+				t.Fatalf("fft %d: VU %v %v", cfg.FFTSize, vl, vp)
+			}
+		}
+		out := make([]float32, 64)
+		a.Scope(out)
+		for _, v := range out {
+			if !finite(v) {
+				t.Fatalf("fft %d: scope %v", cfg.FFTSize, v)
+			}
+		}
+		settle(a, make([]float32, 2*cfg.FFTSize), cfg.FFTSize, 33*time.Millisecond, 200)
+		if !a.Idle() {
+			t.Errorf("fft %d: not Idle after silence following NaN/Inf", cfg.FFTSize)
+		}
+	}
+}
+
+func TestOddDT(t *testing.T) {
+	cfg := HDMI()
+	s := sine(cfg.FFTSize, 1000, 1, 1, 0)
+	a := New(cfg)
+	settle(a, s, cfg.FFTSize, 33*time.Millisecond, 3)
+	l0, p0 := a.Bars()
+	l0, p0 = append([]float32(nil), l0...), append([]float32(nil), p0...)
+	v0, vp0 := a.VU()
+	for _, dt := range []time.Duration{0, -time.Second} {
+		a.Update(nil, 0, dt)
+		l1, p1 := a.Bars()
+		for i := range l0 {
+			if l1[i] != l0[i] || p1[i] != p0[i] {
+				t.Fatalf("dt %v changed band %d: %v %v -> %v %v", dt, i, l0[i], p0[i], l1[i], p1[i])
+			}
+		}
+		v1, vp1 := a.VU()
+		if v1 != v0 || vp1 != vp0 {
+			t.Fatalf("dt %v changed VU", dt)
+		}
+	}
+	h := New(cfg)
+	h.Update(s, cfg.FFTSize, time.Hour)
+	lvl, peak := h.Bars()
+	for i := range lvl {
+		if !finite(lvl[i]) || !finite(peak[i]) || lvl[i] < 0 || lvl[i] > 1 {
+			t.Fatalf("hour: band %d: %v %v", i, lvl[i], peak[i])
+		}
+	}
+	h.Update(nil, 0, time.Hour)
+	if !h.Idle() {
+		t.Error("not Idle after an hour of silence")
+	}
+}
+
+func TestBandEdges(t *testing.T) {
+	for _, cfg := range []Config{HDMI(), CRT()} {
+		a := New(cfg)
+		settle(a, sine(cfg.FFTSize, 40, 1, 1, 0), cfg.FFTSize, time.Second, 3)
+		lvl, _ := a.Bars()
+		if got := argmax(lvl); got > 1 {
+			t.Errorf("fft %d: 40 Hz peaks in band %d, want 0 or 1 (%v)", cfg.FFTSize, got, lvl)
+		}
+		b := New(cfg)
+		settle(b, sine(cfg.FFTSize, 16000, 1, 1, 0), cfg.FFTSize, time.Second, 3)
+		lvl, _ = b.Bars()
+		if got := argmax(lvl); got != cfg.Bars-1 {
+			t.Errorf("fft %d: 16 kHz peaks in band %d, want %d (%v)", cfg.FFTSize, got, cfg.Bars-1, lvl)
+		}
+	}
 }
 
 func TestBallisticsFollowDT(t *testing.T) {

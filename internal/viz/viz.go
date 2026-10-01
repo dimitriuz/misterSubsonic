@@ -72,7 +72,10 @@ func (b *bandSet) update(power []float32, win2 float32, dt float32) {
 			p = max(p, v)
 		}
 		db := 10 * math.Log10(float64(p*win2)+1e-20)
-		target := float32(min(max((db-floorDB)/-floorDB, 0), 1))
+		var target float32 // NaN or below the floor: silence
+		if db > floorDB {
+			target = float32(min((db-floorDB)/-floorDB, 1))
+		}
 		if l := b.level[i]; target > l {
 			b.level[i] = l + (target-l)*atk
 		} else {
@@ -155,6 +158,12 @@ func (a *Analyzer) Update(stereo []float32, n int, dt time.Duration) {
 	var sq [2]float64
 	for i := 0; i < n; i++ {
 		l, r := stereo[2*i], stereo[2*i+1]
+		if l-l != 0 { // NaN or Inf: treat as silence
+			l = 0
+		}
+		if r-r != 0 {
+			r = 0
+		}
 		a.mono[i] = (l + r) / 2
 		sq[0] += float64(l) * float64(l)
 		sq[1] += float64(r) * float64(r)
