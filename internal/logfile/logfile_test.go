@@ -1,6 +1,7 @@
 package logfile
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -122,17 +123,38 @@ func TestAFailedRotationBacksOff(t *testing.T) {
 	rename = func(a, b string) error { renames++; return os.Rename(a, b) }
 	defer func() { rename = os.Rename }()
 	line := []byte("aaaa\n")
-	for i := 0; i < 10; i++ { // 50 bytes: well past the cap
+	for i := 0; i < 8; i++ { // 40 bytes: well past the cap
 		if _, err := l.Write(line); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := read(t, p); got != strings.Repeat("aaaa\n", 10) {
+	if got := read(t, p); got != strings.Repeat("aaaa\n", 8) {
 		t.Errorf("lines were lost: %q", got)
 	}
 	// A try at 10 bytes, the next only after the file has grown by the cap again.
-	if renames > 4 {
-		t.Errorf("%d rename attempts for 50 bytes; want a back-off", renames)
+	if renames > 3 {
+		t.Errorf("%d rename attempts for 40 bytes; want a back-off", renames)
+	}
+}
+
+// A rotation that keeps failing must not let the log grow for ever: after
+// maxFailedRotations tries the file is truncated in place and the newest
+// lines stay.
+func TestAPermanentlyFailingRotationIsCapped(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "log.txt")
+	l, _ := Open(p, 10)
+	defer l.Close()
+	blockRotation(t, p)
+	for i := 0; i < 200; i++ {
+		if _, err := l.Write([]byte(fmt.Sprintf("%03d\n", i))); err != nil {
+			t.Fatal(err)
+		}
+		if st, _ := os.Stat(p); st.Size() > int64(10*(maxFailedRotations+1)+4) {
+			t.Fatalf("log.txt grew to %d bytes after %d lines", st.Size(), i+1)
+		}
+	}
+	if got := read(t, p); !strings.HasSuffix(got, "199\n") {
+		t.Errorf("the newest line is missing: %q", got)
 	}
 }
 

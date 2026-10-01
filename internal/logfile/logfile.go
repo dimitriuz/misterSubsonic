@@ -25,6 +25,7 @@ type File struct {
 	size int64
 
 	retryAt int64 // after a failed rotation: the size to try again at
+	failed  int   // failed rotations in a row
 	closed  bool
 }
 
@@ -75,16 +76,26 @@ func (l *File) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// maxFailedRotations bounds the growth when rotating keeps failing: the log
+// takes at most maxFailedRotations+1 caps before it is truncated.
+const maxFailedRotations = 3
+
 // rotate moves log.txt to log.txt.1 and starts a new log.txt. If the rename
 // fails the log goes on growing rather than losing lines, and the next try
-// comes when it has grown by the cap again. If the new file can't be opened
-// l.f stays nil.
+// comes when it has grown by the cap again; after maxFailedRotations failures
+// in a row the file is truncated in place instead (the SD card must not fill
+// up). If the new file can't be opened l.f stays nil.
 func (l *File) rotate() {
 	if err := rename(l.path, l.path+".1"); err != nil {
+		l.failed++
+		if l.failed > maxFailedRotations && l.f.Truncate(0) == nil { // O_APPEND: the next write lands at 0
+			l.size, l.retryAt, l.failed = 0, 0, 0
+			return
+		}
 		l.retryAt = l.size + l.max
 		return
 	}
-	l.retryAt = 0
+	l.retryAt, l.failed = 0, 0
 	l.f.Close()
 	l.f = nil
 	l.open()
