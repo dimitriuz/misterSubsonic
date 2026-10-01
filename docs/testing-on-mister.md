@@ -110,8 +110,7 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 27. **MP3 seeking.** In a long MP3 album, seek a little forward and back with Left and Right on Now Playing. In the last 20 s of a track (when the next one is queued), tap Left once: it plays on from there and the next track starts without a gap. A VBR MP3 lands near the time shown.
 28. **Config comments.** Add a comment line to `config.toml`, change a setting in the app, and exit: the comment is still there.
 29. **Launcher signals.** Start the launcher in one ssh session with `/media/fat/Scripts/MiSTer_Subsonic.sh; echo $?`. From a second ssh session, run `kill -TERM $(ps | grep '[S]cripts/MiSTer_Subsonic.sh' | awk '{print $1}')`. Expected: the app exits, the screen and menu come back, and the first session prints "MiSTer Subsonic closed." and `0`.
-30. **Volume panel on a CRT.** With `profile = "crt"` (320x240), open Settings → Playback → Volume and change it: the panel appears for a moment. Check whether it covers the value in the row (a known cosmetic overlap).
-31. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+30. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks

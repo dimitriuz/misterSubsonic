@@ -206,9 +206,9 @@ And also:
   - No case covers a missing SAM script.
 - **Releases:**
   - `mkdb` doesn't normalize `-base-url` or guard `-o` inside `-dir` or non-regular files.
-  - With no tags, `VERSION` is a bare hash.
+  - With no tags, `VERSION` is a bare hash (resolved by Plan 5b).
   - `check-notices.sh` passes when `go list` fails (no `pipefail`) and checks the host dependency graph, not the ARM one.
-- **Docs:** the README's Install section doesn't list `config.example.toml`, `LICENSE` and `THIRD_PARTY.txt`.
+- **Docs:** the README's Install section doesn't list `config.example.toml`, `LICENSE` and `THIRD_PARTY.txt` (resolved by Plan 5b).
 - **To check on the device:** `flock --help` and `bash --version`; `pidof`/`ps` with SAM running; what Main_MiSTer sends a script it cancels; `RestoreText` on `/dev/tty0` if Main_MiSTer switched terminals; whether Downloader accepts `"v": 1` and the `mistersubsonic/` folder.
 
 ## Resolved by Plan 3b
@@ -435,15 +435,16 @@ Still open:
 
 - **On the device** (checks in `docs/testing-on-mister.md`):
   - Repeated `wait` in the launcher was verified on bash 5.3 only; item 29 runs it on the MiSTer's bash 5.0.18.
-  - On CRT (320x240) the volume panel partly covers the value of Settings > Playback > Volume (item 30).
   - Launcher on the device: `flock --help`, `bash --version`, `pidof` and `ps` with SAM running, what Main_MiSTer sends a script it cancels, RestoreText on `/dev/tty0` if Main_MiSTer switched terminals, and Downloader accepting `"v": 1` with the `mistersubsonic/` folder. Not a numbered check: it needs ssh and a Downloader run (flock, bash and pidof are noted in `docs/spikes.md`).
 - **Faster list scrolling at full resolution:** needs measuring on the device (see `docs/superpowers/plans/backlog.md`, section A).
 - **Left by a group:**
   - Screenshot loop: a non-ErrNotExist Lstat error shows as "too many screenshots", and a stale `.tmp` from a crash blocks its name.
+  - `FeedScreen` still syncs from `Draw` (`screens_root.go:340`).
   - `Sync` runs only on `Top()`: a Home under an overlay draws a stale Resume row (cosmetic).
   - Hint tests: the pixel-change check can't judge whether a label is right (needs a per-hint expectation table).
   - Connecting: re-selecting the same server is swallowed while it connects.
-  - Log truncation after failed rotations leaves no marker line; no test for the guard released mid-wait in the forced exit; `int()` of Xres/LineLength before the 64-bit maths (theoretical).
-  - The MP3 probe skip can't fire with the shipped defaults (5 MiB ring, `maxProbedTag` guard first): harmless, wants a comment; the comment at `art_test.go:41` is wrong; cache `retryAt` with `max < 10`; `promoting` stays true if the allocation panicked (theoretical).
+  - Log truncation after failed rotations leaves no marker line; `int()` of Xres/LineLength before the 64-bit maths (theoretical).
+  - The MP3 probe skip can't fire with the shipped defaults (5 MiB ring, `maxProbedTag` guard first): harmless, wants a comment; cache `retryAt` with `max < 10`; `promoting` stays true if the allocation panicked (theoretical).
   - A reorder with `[server.*]` subtables falls back to a full rewrite that drops the subtable keys (unknown keys, as for any unknown table; older than Plan 5b).
-  - The O30 unit test doesn't drain the queued command or check `superseding == 0`; comment placement at `engine.go:767`; `g_ring` and `g_device` use after a concurrent close relies on the same-goroutine contract.
+  - Comment placement at `engine.go:767`; `g_ring` and `g_device` use after a concurrent close relies on the same-goroutine contract.
+- **Stale:** the CRT volume-panel check (D2): Volume/Mute left Settings in 663a377.
