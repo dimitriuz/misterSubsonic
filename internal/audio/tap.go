@@ -20,6 +20,7 @@ type Tap struct {
 	now func() time.Time // the clock (tests set it)
 
 	lastRead atomic.Int64 // when Window last ran, UnixNano
+	pausedAt atomic.Int64 // when the pause began, UnixNano (0: not paused)
 
 	mu      sync.Mutex
 	ring    []float32 // interleaved stereo; frame i is at ring[2*(i%size)]
@@ -41,8 +42,10 @@ func (t *Tap) Write(frames []float32) int {
 	idle := t.now().UnixNano()-t.lastRead.Load() > int64(tapIdle)
 	t.mu.Lock()
 	if idle {
-		t.written += uint64(n)
-		t.floor = t.written
+		if n > 0 { // a paused device takes nothing: what it holds is still to be heard
+			t.written += uint64(n)
+			t.floor = t.written
+		}
 	} else {
 		if n > t.size { // only the last size frames can matter
 			frames = frames[2*(n-t.size):]
@@ -86,9 +89,22 @@ func (t *Tap) Window(dst []float32) int {
 }
 
 func (t *Tap) Consumed() uint64    { return t.out.Consumed() }
-func (t *Tap) SetPaused(p bool)    { t.out.SetPaused(p) }
 func (t *Tap) SetVolume(v float32) { t.out.SetVolume(v) }
 func (t *Tap) Close() error        { return t.out.Close() }
+
+// SetPaused passes the pause on. A pause doesn't count as idle time for a tap
+// that was being read when it began, so the picture is there on resume.
+func (t *Tap) SetPaused(p bool) {
+	t.out.SetPaused(p)
+	now := t.now().UnixNano()
+	if p {
+		t.pausedAt.CompareAndSwap(0, now)
+		return
+	}
+	if at := t.pausedAt.Swap(0); at != 0 && at-t.lastRead.Load() <= int64(tapIdle) {
+		t.lastRead.Store(now)
+	}
+}
 
 // Flush discards what the device buffered and what the tap kept.
 func (t *Tap) Flush() {

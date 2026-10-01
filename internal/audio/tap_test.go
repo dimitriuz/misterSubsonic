@@ -100,6 +100,36 @@ func TestTapUnplayedFramesAreSkipped(t *testing.T) {
 	}
 }
 
+func TestTapPauseKeepsTheWindow(t *testing.T) {
+	tp, out, clk := newTestTap(100, 128)
+	tp.Write(stereo(1, 100))
+	out.consume(40)
+	tp.Write(stereo(101, 40))       // the device ring is full again
+	tp.Window(make([]float32, 2*4)) // read once, then paused
+	tp.SetPaused(true)
+	for i := 0; i < 8; i++ { // 2 s of polling; the device takes nothing
+		clk.t = clk.t.Add(250 * time.Millisecond)
+		if n := tp.Write(stereo(101, 10)); n != 0 {
+			t.Fatalf("paused Write took %d, want 0", n)
+		}
+	}
+	tp.SetPaused(false)
+	out.consume(20)
+	dst := make([]float32, 2*16)
+	n := tp.Window(dst)
+	if got := lefts(dst[:2*n]); n != 16 || got[0] != 45 || got[15] != 60 {
+		t.Fatalf("window = %v, want 45..60", got)
+	}
+	// An early refill write after the resume is kept too.
+	clk.t = clk.t.Add(100 * time.Millisecond)
+	tp.Write(stereo(141, 20))
+	out.consume(20)
+	n = tp.Window(dst)
+	if got := lefts(dst[:2*n]); n != 16 || got[0] != 65 || got[15] != 80 {
+		t.Fatalf("after refill window = %v, want 65..80", got)
+	}
+}
+
 func TestTapShortRingReturnsFewer(t *testing.T) {
 	tp, out, _ := newTestTap(100, 64)
 	tp.Write(stereo(1, 5))
