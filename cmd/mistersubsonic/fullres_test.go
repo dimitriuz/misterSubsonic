@@ -421,3 +421,38 @@ func TestRestoreConsoleWithoutGraphicsModeSendsNoSizeCommand(t *testing.T) {
 		t.Fatalf("restoreText ran %d times, want 1", texts)
 	}
 }
+
+// A restore that hangs while holding the guard must not hold up the forced
+// exit: past the wait it logs and skips the display and console restore (the
+// launcher's -restore-console does it, in graphics mode).
+func TestForceExitGivesUpOnAHungRestore(t *testing.T) {
+	resetExitRestore(t)
+	old := forcedExitWait
+	forcedExitWait = 100 * time.Millisecond
+	defer func() { forcedExitWait = old }()
+	dir := t.TempDir()
+	c := platform.FBControl{Cmd: filepath.Join(dir, "cmd"), Sys: dir, State: filepath.Join(dir, "state"), Wait: 200 * time.Millisecond}
+	os.WriteFile(c.Cmd, nil, 0o644)
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	oldC := fbControl
+	fbControl = func() platform.FBControl { return c }
+	defer func() { fbControl = oldC }()
+	texts := 0
+	fakeConsole(t, nil, func() { texts++ })
+	exitRestore.mu.Lock() // the hung restore
+	done := make(chan struct{})
+	go func() { restoreOnForcedExit(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		exitRestore.mu.Unlock()
+		t.Fatal("the forced exit is stuck behind the guard")
+	}
+	exitRestore.mu.Unlock()
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("size command sent without the guard: %q", b)
+	}
+	if texts != 0 {
+		t.Fatalf("restoreText ran %d times", texts)
+	}
+}

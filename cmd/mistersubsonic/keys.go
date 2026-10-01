@@ -31,7 +31,9 @@ type scripted struct {
 // "a:2s,a:1s,a,a:1s". "enter" is the Enter key (A, also typing a newline),
 // "pause:<duration>" only waits, and an item starting with ' types the
 // rest as keyboard text, verbatim ("'127.0.0.1:4533"). The default wait
-// is 400 ms.
+// is 400 ms. Items are split at every comma and trimmed, so a text item
+// can't contain a comma or start or end with a space (no escape: this is a
+// development flag).
 func parseKeys(s string) ([]scripted, error) {
 	var out []scripted
 	for _, part := range strings.Split(s, ",") {

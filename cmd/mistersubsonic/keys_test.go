@@ -34,3 +34,33 @@ func TestParseKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestPlayKeys(t *testing.T) {
+	ch := playKeys([]scripted{
+		{b: input.BtnDown},
+		{pause: true, wait: time.Millisecond},
+		{text: "ab"},
+		{b: input.BtnA, r: '\n'},
+	})
+	want := []input.Event{
+		{Button: input.BtnDown, Kind: input.Press}, {Button: input.BtnDown, Kind: input.Release},
+		{Kind: input.Press, Rune: 'a'}, {Kind: input.Release, Rune: 'a'},
+		{Kind: input.Press, Rune: 'b'}, {Kind: input.Release, Rune: 'b'},
+		{Button: input.BtnA, Kind: input.Press, Rune: '\n'}, {Button: input.BtnA, Kind: input.Release, Rune: '\n'},
+	}
+	for i, w := range want {
+		select {
+		case got := <-ch:
+			if got != w {
+				t.Fatalf("event %d: got %+v, want %+v", i, got, w)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("event %d missing", i)
+		}
+	}
+	select {
+	case e := <-ch:
+		t.Fatalf("extra event %+v", e)
+	case <-time.After(50 * time.Millisecond):
+	}
+}

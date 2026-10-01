@@ -128,3 +128,51 @@ func TestPresentRectsUpdatesOnlyTheRectangles(t *testing.T) {
 		t.Fatal("a frame of the wrong size was accepted")
 	}
 }
+
+// The last line ends at its pixels: the stride's padding after it is not
+// needed, so a framebuffer exactly that long is accepted.
+func TestFBLayoutEndIgnoresTheLastLinesPadding(t *testing.T) {
+	v, fx := xrgb(640, 480, 0, 0, 2816, 2816*479+2560)
+	_, off, end, err := fbLayout(&v, &fx)
+	if err != nil || off != 0 || end != 2816*479+2560 {
+		t.Fatalf("off %d end %d err %v", off, end, err)
+	}
+	v, fx = xrgb(640, 480, 0, 0, 2816, 2816*479+2559)
+	if _, _, _, err := fbLayout(&v, &fx); err == nil {
+		t.Fatal("a framebuffer one byte short was accepted")
+	}
+}
+
+// Offsets near 2^32 must not wrap (int is 32 bits on the MiSTer).
+func TestFBLayoutRefusesHugeOffsets(t *testing.T) {
+	v, fx := xrgb(640, 480, 0, 0xFFFFFFFF, 2560, 0xFFFFFFFF)
+	if _, _, _, err := fbLayout(&v, &fx); err == nil {
+		t.Fatal("a huge yoffset was accepted")
+	}
+	v, fx = xrgb(640, 480, 0xFFFFFFFF, 0, 4096, 0xFFFFFFFF)
+	if _, _, _, err := fbLayout(&v, &fx); err == nil {
+		t.Fatal("a huge xoffset was accepted")
+	}
+}
+
+func TestScreenSliceBounds(t *testing.T) {
+	m := make([]byte, 100)
+	for i := range m {
+		m[i] = byte(i)
+	}
+	// Through the device: the mapping is [0, end).
+	s, err := screenSlice(m[:80], 20, 80, 0)
+	if err != nil || len(s) != 60 || s[0] != 20 {
+		t.Fatalf("device: %d %v %v", len(s), s[:1], err)
+	}
+	// Through /dev/mem: delta bytes in front.
+	s, err = screenSlice(m, 20, 80, 15)
+	if err != nil || len(s) != 60 || s[0] != 35 {
+		t.Fatalf("devmem: %d %v", len(s), err)
+	}
+	for _, c := range [][3]int{{20, 80, 21}, {-1, 80, 0}, {81, 80, 0}, {0, 101, 0}, {0, 80, -1}} {
+		if _, err := screenSlice(m, c[0], c[1], c[2]); err == nil {
+			t.Errorf("off %d end %d delta %d accepted", c[0], c[1], c[2])
+		}
+	}
+}

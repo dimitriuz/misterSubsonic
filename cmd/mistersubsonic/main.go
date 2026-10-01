@@ -52,7 +52,7 @@ func main() {
 	flag.StringVar(&f.profile, "profile", "", "layout: auto | hdmi | crt (default: config display.profile)")
 	flag.StringVar(&f.fbdev, "fb", "/dev/fb0", "framebuffer device")
 	flag.BoolVar(&f.null, "null", false, "use the null audio device (silent)")
-	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
+	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go; items are split at commas and trimmed, so a typed text can't hold either)`)
 	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
 	flag.StringVar(&f.screenshots, "screenshots", "auto", "screenshot folder: auto (/media/fat/screenshots/MiSTer_Subsonic beside the config on the framebuffer, screenshots/ next to the config elsewhere), a path, or \"\" for none")
 	flag.BoolVar(&f.verifyRedraw, "verify-redraw", false, "check every partial redraw against a full one and log any difference (debugging)")
@@ -135,11 +135,15 @@ func openLog(flagPath, display, dataDir string) func() {
 	log.SetOutput(lf)
 	crash := filepath.Join(filepath.Dir(path), "crash.txt")
 	if st, err := os.Stat(crash); err == nil && st.Size() > logMax {
-		os.Remove(crash)
+		if err := os.Rename(crash, crash+".1"); err != nil { // like log.txt: one older file is kept
+			log.Printf("log: %v", err)
+		}
 	}
 	if cf, err := os.OpenFile(crash, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644); err == nil {
 		debug.SetCrashOutput(cf, debug.CrashOptions{}) // keeps its own copy of the file
 		cf.Close()
+	} else {
+		log.Printf("log: crash file: %v (crashes the app can't catch are not recorded)", err)
 	}
 	return func() {
 		debug.SetCrashOutput(nil, debug.CrashOptions{})
@@ -206,13 +210,24 @@ func restoreDisplay(con *platform.Console) {
 	exitRestore.done = true
 }
 
+// forcedExitWait is how long the forced exit waits for the guard before it
+// gives up on the display and console restore.
+var forcedExitWait = 2 * time.Second
+
 // restoreOnForcedExit is the shutdown deadline's restore: the same steps in
 // the same order as restoreDisplay, unless the exit path already did them
 // (or is doing them: it waits for that). The console is still in graphics
 // mode here when it runs first (run entered it at start, and only the exit
 // path leaves it), as the size change needs.
 func restoreOnForcedExit() {
-	exitRestore.mu.Lock()
+	// A restore stuck in an ioctl holds the guard for good; the forced exit
+	// must still end. Without the guard it sends no size command and leaves
+	// the console alone (the launcher's -restore-console runs afterwards, in
+	// graphics mode).
+	if !lockWithin(&exitRestore.mu, forcedExitWait) {
+		log.Printf("display: the restore is stuck; exiting without restoring (the launcher restores the console)")
+		return
+	}
 	defer exitRestore.mu.Unlock()
 	if exitRestore.done {
 		return
@@ -222,6 +237,18 @@ func restoreOnForcedExit() {
 		log.Printf("console: %v", err)
 	}
 	exitRestore.done = true
+}
+
+// lockWithin takes mu, polling, and reports false when d passed first.
+func lockWithin(mu *sync.Mutex, d time.Duration) bool {
+	for end := time.Now().Add(d); ; time.Sleep(5 * time.Millisecond) {
+		if mu.TryLock() {
+			return true
+		}
+		if !time.Now().Before(end) {
+			return false
+		}
+	}
 }
 
 // armDeadline starts the shutdown deadline (once).
@@ -271,9 +298,9 @@ func run(f flags) (err error) {
 		if err != nil {
 			log.Printf("error: %v", err) // stderr isn't seen on the MiSTer
 		}
+		log.Printf("MiSTer Subsonic exiting") // last, after the error line
 	}()
 	log.Printf("MiSTer Subsonic %s starting (%s, config %s)", version, f.display, f.config)
-	defer log.Printf("MiSTer Subsonic exiting")
 
 	cfg, warns, cfgErr := config.Load(f.config)
 	if cfg == nil {
