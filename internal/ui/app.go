@@ -522,6 +522,7 @@ func (a *App) untilWake() time.Duration {
 		consider(a.volumeUntil)
 	}
 	consider(a.vizDue())
+	consider(a.vizCornerDue())
 	consider(a.saverDue())
 	if a.saver {
 		consider(now.Add(saverStep)) // the drift; nothing else moves
@@ -583,6 +584,9 @@ func (a *App) onWake() {
 	a.checkScreen(now)
 	if a.vizActive() && !now.Before(a.viz.next) {
 		a.vizTick(now)
+	}
+	if v := a.vizHost(); v != nil {
+		v.refresh(a)
 	}
 	if !a.volumeUntil.IsZero() && !now.Before(a.volumeUntil) {
 		a.Damage(a.volumePanelRect()) // the panel goes
@@ -782,7 +786,7 @@ func (a *App) render() error {
 	}
 	full := a.dirty
 	a.dirty = false
-	if _, np := a.Top().(*NowPlayingScreen); !np {
+	if !saverScreen(a.Top()) {
 		a.saver = false
 	}
 	if a.saver {
@@ -810,9 +814,13 @@ func (a *App) drawFrame(c *gfx.Canvas) {
 	// Content stays inside the title-safe area (SafeY lines top and bottom;
 	// panels still run to the edges).
 	body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY-a.hintH())
+	vs := a.vizHost()
+	if vs != nil { // the hint bar is drawn over the picture's bottom edge
+		body = a.vizBody()
+	}
 	if top != nil {
 		_, fullscreen := top.(*NowPlayingScreen)
-		if !fullscreen {
+		if !fullscreen && vs == nil {
 			a.drawHeader(c, top.Title())
 			body = gfx.R(0, p.SafeY+p.HeaderH, p.W, body.Bottom()-p.SafeY-p.HeaderH)
 			if a.hasCurrent() {
@@ -826,7 +834,9 @@ func (a *App) drawFrame(c *gfx.Canvas) {
 		c.SetClip(body.Intersect(outer))
 		top.Draw(a, c, body)
 		c.SetClip(outer)
-		a.drawHints(c)
+		if a.hintsUp() {
+			a.drawHints(c)
+		}
 	}
 	if !a.mq.seen {
 		a.mq = marquee{}

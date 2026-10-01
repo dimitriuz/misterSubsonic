@@ -80,10 +80,14 @@ func (s *NowPlayingScreen) Hints(a *App) []Hint {
 	if song, ok := st.Current(); ok && a.isStarred(songStar(song)) {
 		star = "Unstar"
 	}
-	return []Hint{hk(input.BtnA, play), hkPair(input.BtnLeft, input.BtnRight, "Seek"),
+	hs := []Hint{hk(input.BtnA, play), hkPair(input.BtnLeft, input.BtnRight, "Seek"),
 		hkPair(input.BtnUp, input.BtnDown, "Volume"), hkPair(input.BtnL, input.BtnR, "Prev/Next"),
 		menuHint, hkHold(input.BtnX, star), hk(input.BtnY, "Queue"),
 		hk(input.BtnSelect, "Visualizer"), hkHold(input.BtnSelect, "Mute")}
+	if a.canFullScreen() {
+		hs = append(hs, hk(input.BtnStart, "Full screen"))
+	}
+	return hs
 }
 
 func (s *QueueScreen) Hints(a *App) []Hint {

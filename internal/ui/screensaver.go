@@ -5,6 +5,7 @@ import (
 
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
+	"mistersubsonic/internal/player"
 )
 
 // The screensaver (spec §8.2): after display.screensaver_minutes without
@@ -25,13 +26,26 @@ func (a *App) saverMinutes() int {
 }
 
 // saverDue is when the screensaver starts, or zero if it can't now (not on
-// Now Playing, off, on, or the exit prompt is up).
+// Now Playing or its full screen, off, on, or the exit prompt is up).
 func (a *App) saverDue() time.Time {
 	m := a.saverMinutes()
-	if _, np := a.Top().(*NowPlayingScreen); !np || m <= 0 || a.saver || a.confirm {
+	if !saverScreen(a.Top()) || m <= 0 || a.saver || a.confirm {
 		return time.Time{}
 	}
+	if _, full := a.Top().(*VizScreen); full && a.state().Status == player.Playing {
+		return time.Time{} // the full screen is for watching the music
+	}
 	return a.lastInput.Add(time.Duration(m) * time.Minute)
+}
+
+// saverScreen is a screen the screensaver can cover: Now Playing and its
+// full screen.
+func saverScreen(s Screen) bool {
+	switch s.(type) {
+	case *NowPlayingScreen, *VizScreen:
+		return true
+	}
+	return false
 }
 
 // wake ends the screensaver; it reports whether it was on.

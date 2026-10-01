@@ -41,6 +41,8 @@ type NowPlayingScreen struct {
 	xDown    bool // X is held
 	xStarred bool // ...and has already starred: its release does nothing
 	xHold    int  // like selHold
+
+	host Screen // the full screen while it forwards a release here: menus open over it (nil: this screen)
 }
 
 func NewNowPlayingScreen() *NowPlayingScreen { return &NowPlayingScreen{} }
@@ -56,6 +58,9 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 		s.selDown, s.selMuted = false, false
 		if !muted {
 			next := (a.VizStyle() + 1) % VizStyle(len(vizNames))
+			if next == VizOff && s.host != nil {
+				next = VizBars // an empty full screen is no use: it cycles through the four pictures
+			}
 			a.SetVizStyle(next)
 			a.Toast("Visualizer: %s", next.Label())
 		}
@@ -65,7 +70,11 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 		starred := s.xStarred
 		s.xDown, s.xStarred = false, false
 		if !starred {
-			a.Push(NewMenuScreen(s, "Now Playing", append([]menuEntry{s.starEntry(a)}, modeEntries(a)...)))
+			var parent Screen = s
+			if s.host != nil {
+				parent = s.host
+			}
+			a.Push(NewMenuScreen(parent, "Now Playing", append([]menuEntry{s.starEntry(a)}, modeEntries(a)...)))
 		}
 		return
 	}
@@ -199,7 +208,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		s.xHold++
 		hold := s.xHold
 		a.After(s, starHold, func() {
-			if s.xDown && s.xHold == hold && a.Top() == Screen(s) {
+			if s.xDown && s.xHold == hold && a.onNowPlaying(s) {
 				s.xStarred = true
 				if song, ok := a.state().Current(); ok {
 					a.toggleStar(songStar(song))
@@ -212,12 +221,17 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		pl.Next()
 	case input.BtnY:
 		a.Push(NewQueueScreen())
+	case input.BtnStart: // the full screen (elsewhere Start pauses)
+		if !a.canFullScreen() {
+			return false
+		}
+		a.Push(NewVizScreen(s))
 	case input.BtnSelect: // every press starts a fresh hold (a lost release is recovered): short changes the visualizer, long mutes
 		s.selDown, s.selMuted = true, false
 		s.selHold++
 		hold := s.selHold
 		a.After(s, muteHold, func() {
-			if s.selDown && s.selHold == hold && a.Top() == Screen(s) {
+			if s.selDown && s.selHold == hold && a.onNowPlaying(s) {
 				s.selMuted = true
 				a.toggleMute()
 			}
@@ -226,6 +240,15 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		return false
 	}
 	return true
+}
+
+// onNowPlaying reports whether s is what the user is looking at: on top, or
+// under its full screen.
+func (a *App) onNowPlaying(s *NowPlayingScreen) bool {
+	if v, ok := a.Top().(*VizScreen); ok {
+		return v.np == s
+	}
+	return a.Top() == Screen(s)
 }
 
 func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {

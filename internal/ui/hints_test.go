@@ -31,11 +31,23 @@ var hintFixtures = map[string]func(ta *testApp) Screen{
 	"search":      func(ta *testApp) Screen { return NewSearchScreen() },
 	"queue":       func(ta *testApp) Screen { playingState(ta); return NewQueueScreen() },
 	"now playing": func(ta *testApp) Screen { playingState(ta); return NewNowPlayingScreen() },
-	"settings":    func(ta *testApp) Screen { return NewSettingsScreen() },
-	"playback":    func(ta *testApp) Screen { return newSettingsList("Playback", playbackSettings) },
-	"display":     func(ta *testApp) Screen { return newSettingsList("Display", displaySettings) },
-	"servers":     func(ta *testApp) Screen { return NewServersScreen() },
-	"wizard":      func(ta *testApp) Screen { return NewWizardScreen(false, false) },
+	"now playing with a visualizer": func(ta *testApp) Screen {
+		ta.o.Visual = &fakeVisual{}
+		playingState(ta)
+		return NewNowPlayingScreen()
+	},
+	"full screen": func(ta *testApp) Screen {
+		ta.o.Visual = &fakeVisual{}
+		playingState(ta)
+		np := NewNowPlayingScreen()
+		ta.Push(np)
+		return NewVizScreen(np)
+	},
+	"settings": func(ta *testApp) Screen { return NewSettingsScreen() },
+	"playback": func(ta *testApp) Screen { return newSettingsList("Playback", playbackSettings) },
+	"display":  func(ta *testApp) Screen { return newSettingsList("Display", displaySettings) },
+	"servers":  func(ta *testApp) Screen { return NewServersScreen() },
+	"wizard":   func(ta *testApp) Screen { return NewWizardScreen(false, false) },
 	"wizard with text": func(ta *testApp) Screen {
 		w := NewWizardScreen(false, false)
 		w.fields[stepURL] = []rune("http://h:4533")

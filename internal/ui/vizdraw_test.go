@@ -11,6 +11,7 @@ import (
 
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
+	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/player"
 )
 
@@ -299,23 +300,32 @@ func TestVizSafetyValveStepsDownAndUp(t *testing.T) {
 func TestVizFrameAllocatesNothing(t *testing.T) {
 	for _, l := range vizLayouts {
 		for style := VizBars; style <= VizWaterfall; style++ {
-			ta := vizApp(t, l.prof, style)
-			runFrames(t, ta, 3) // setup: the analyzer, the buffers, the image
-			c, r := ta.canvas, ta.viz.rect
-			if n := testing.AllocsPerRun(20, func() {
-				ta.now = ta.now.Add(40 * time.Millisecond)
-				ta.damage = ta.damage[:0] // the app clears it with every frame
-				ta.vizTick(ta.now)
-				ta.drawViz(c, r, style)
-			}); n != 0 {
-				t.Errorf("%s %v: %v allocations per frame", l.name, style, n)
+			for _, full := range []bool{false, true} {
+				ta := vizApp(t, l.prof, style)
+				if full {
+					ta.press(input.BtnStart)
+				}
+				runFrames(t, ta, 3) // setup: the analyzer, the buffers, the image
+				c, r := ta.canvas, ta.viz.rect
+				if n := testing.AllocsPerRun(20, func() {
+					ta.now = ta.now.Add(40 * time.Millisecond)
+					ta.damage = ta.damage[:0] // the app clears it with every frame
+					ta.vizTick(ta.now)
+					ta.drawViz(c, r, style)
+					if vs, ok := ta.Top().(*VizScreen); ok {
+						vs.refresh(ta.App) // the wake checks the corner line every frame
+					}
+				}); n != 0 {
+					t.Errorf("%s %v full=%v: %v allocations per frame", l.name, style, full, n)
+				}
 			}
 		}
 	}
 }
 
 // BenchmarkVizFrame is one visualizer frame: the analysis and the drawing
-// into the panel, for each style on a big HDMI panel and a CRT strip.
+// into the panel (or the full screen), for each style on a big HDMI panel and
+// a CRT strip.
 // On the device: ./ui.test -test.run '^$' -test.bench VizFrame
 func BenchmarkVizFrame(b *testing.B) {
 	for _, l := range []struct {
@@ -323,24 +333,33 @@ func BenchmarkVizFrame(b *testing.B) {
 		prof Profile
 	}{{"hdmi-1920x1200", PickProfile(1920, 1200, "auto")}, {"crt-320x240", ProfileCRT240}} {
 		for style := VizBars; style <= VizWaterfall; style++ {
-			b.Run(l.name+"/"+style.String(), func(b *testing.B) {
-				t := &testing.T{}
-				ta := vizApp(t, l.prof, style)
-				ta.verify = false
-				sig := make([]float32, 4096)
-				(&fakeVisual{}).Window(sig)
-				ta.o.Visual = &cachedVisual{sig}
-				runFrames(t, ta, 3)
-				c, r := ta.canvas, ta.viz.rect
-				b.ReportAllocs()
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					ta.now = ta.now.Add(40 * time.Millisecond)
-					ta.damage = ta.damage[:0] // the app clears it with every frame
-					ta.vizTick(ta.now)
-					ta.drawViz(c, r, style)
+			for _, full := range []bool{false, true} {
+				name := l.name
+				if full {
+					name += "-full"
 				}
-			})
+				b.Run(name+"/"+style.String(), func(b *testing.B) {
+					t := &testing.T{}
+					ta := vizApp(t, l.prof, style)
+					if full {
+						ta.press(input.BtnStart)
+					}
+					ta.verify = false
+					sig := make([]float32, 4096)
+					(&fakeVisual{}).Window(sig)
+					ta.o.Visual = &cachedVisual{sig}
+					runFrames(t, ta, 3)
+					c, r := ta.canvas, ta.viz.rect
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						ta.now = ta.now.Add(40 * time.Millisecond)
+						ta.damage = ta.damage[:0] // the app clears it with every frame
+						ta.vizTick(ta.now)
+						ta.drawViz(c, r, style)
+					}
+				})
+			}
 		}
 	}
 }
