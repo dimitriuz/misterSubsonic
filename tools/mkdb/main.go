@@ -89,7 +89,8 @@ func checkBaseURL(baseURL string) (string, error) {
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("-base-url %q: want an http:// or https:// address", baseURL)
 	}
-	if u.RawQuery != "" || u.Fragment != "" {
+	// ForceQuery and an empty fragment ("?", "#") leave no trace in the URL fields.
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || strings.Contains(baseURL, "#") {
 		return "", fmt.Errorf("-base-url %q: a query or fragment would break the file names appended to it", baseURL)
 	}
 	if !strings.HasSuffix(baseURL, "/") {

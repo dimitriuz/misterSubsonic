@@ -4,7 +4,8 @@ BIN     := bin
 MISTER  ?= mister.local
 DEVDIR  := /media/fat/mistersubsonic/dev
 REL     := $(BIN)/release
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# With no tag yet, a bare hash would be no version: 0.0.0-<hash> sorts and reads like one.
+VERSION ?= $(shell d=$$(git describe --tags --dirty 2>/dev/null) || d=0.0.0-$$(git describe --always --dirty 2>/dev/null); echo "$${d:-dev}")
 ARM_ENV := GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 \
            CC="$(ZIG) cc -target arm-linux-gnueabihf.2.31 -mcpu=cortex_a9"
 
@@ -77,18 +78,16 @@ deploy: release
 # Every package's tests are built for ARM too, so 32-bit-only breakage (an
 # int overflow, say) fails here and in CI; the ones run on the device are
 # copied by deploy-dev. Old test binaries (of removed packages) are cleared first.
+TESTS := audio ui gfx
 mister-test:
 	rm -rf $(BIN)/arm/tests
 	$(ARM_ENV) $(GO) test -c -o $(BIN)/arm/tests/ ./...
-	cp $(BIN)/arm/tests/audio.test $(BIN)/arm/tests/ui.test $(BIN)/arm/tests/gfx.test $(BIN)/arm/
-	./scripts/check-glibc.sh $(BIN)/arm/audio.test
-	./scripts/check-glibc.sh $(BIN)/arm/ui.test
-	./scripts/check-glibc.sh $(BIN)/arm/gfx.test
+	for t in $(TESTS); do cp $(BIN)/arm/tests/$$t.test $(BIN)/arm/ && ./scripts/check-glibc.sh $(BIN)/arm/$$t.test || exit 1; done
 
 # Copies the dev tools to the MiSTer (default root password is "1").
 deploy-dev: mister mister-test
 	ssh root@$(MISTER) mkdir -p $(DEVDIR)/testdata
-	scp $(BIN)/arm/mss-cli $(BIN)/arm/mistersubsonic $(BIN)/arm/audio.test $(BIN)/arm/ui.test $(BIN)/arm/gfx.test root@$(MISTER):$(DEVDIR)/
+	scp $(BIN)/arm/mss-cli $(BIN)/arm/mistersubsonic $(TESTS:%=$(BIN)/arm/%.test) root@$(MISTER):$(DEVDIR)/
 	scp internal/audio/testdata/*.flac internal/audio/testdata/*.wav internal/audio/testdata/*.mp3 root@$(MISTER):$(DEVDIR)/testdata/
 
 vendor-check:

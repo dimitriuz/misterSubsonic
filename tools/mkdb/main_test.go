@@ -79,7 +79,7 @@ func TestCheckBaseURL(t *testing.T) {
 			t.Errorf("checkBaseURL(%q) = %q, %v; want %q", c.in, got, err, c.want)
 		}
 	}
-	for _, bad := range []string{"", "example.com/v1/", "ftp://example.com/", "https:///v1/", "https://example.com/v1/?x=1", "https://example.com/#top", "https://exa mple.com/"} {
+	for _, bad := range []string{"", "example.com/v1/", "ftp://example.com/", "https:///v1/", "https://example.com/v1/?x=1", "https://example.com/#top", "https://example.com/v1/?", "https://example.com/v1/#", "https://exa mple.com/"} {
 		if got, err := checkBaseURL(bad); err == nil {
 			t.Errorf("checkBaseURL(%q) accepted as %q", bad, got)
 		}

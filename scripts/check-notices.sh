@@ -15,6 +15,8 @@ notice_for() {
 }
 
 # The host's build and the MiSTer's (ARM) build can link different modules.
+# (The "VAR=x deps" form below sets the variables for that call only; deps is a
+# function, which bash allows, and it does not leak them into later calls.)
 deps() { go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./cmd/mistersubsonic; }
 host=$(deps) || exit 1
 arm=$(GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 deps) || exit 1

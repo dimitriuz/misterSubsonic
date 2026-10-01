@@ -28,7 +28,12 @@ exit "$APP_EXIT"
 S
 	cat >"$c/bin/socat" <<'S'
 #!/bin/bash
-cmd=$(cat)
+# BGM wants the command without a newline, and the launcher must not hang on
+# a silent socket: log a line that fails the case when either is broken.
+[ "$1 $2" = "-t 2" ] || echo "socat: bad timeout args: $*" >>"$LOG"
+in=$(cat; printf x)
+cmd=${in%x}
+[ "${cmd%$'\n'}" = "$cmd" ] || echo "socat: input ended with a newline" >>"$LOG"
 echo "bgm $cmd" >>"$LOG"
 [ "$cmd" = status ] && printf '%s' "$BGM_STATUS"
 exit 0

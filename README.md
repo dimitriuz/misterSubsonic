@@ -22,7 +22,8 @@ db_url = https://raw.githubusercontent.com/dimitriuz/misterSubsonic/db/db.json
 ```
 
 Or unzip a release's `MiSTer_Subsonic-<version>.zip` onto the SD card: it holds
-`Scripts/MiSTer_Subsonic.sh` and the `mistersubsonic/` folder.
+`Scripts/MiSTer_Subsonic.sh` and the `mistersubsonic/` folder (the app, `config.example.toml`,
+`LICENSE` and `THIRD_PARTY.txt`).
 
 Start it from the Scripts menu: **MiSTer_Subsonic**. While it runs, background music (BGM) is
 stopped and Super Attract Mode (SAM) is disabled; both come back when you exit (Exit in the main menu,
@@ -107,8 +108,8 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | Select | shuffle-play the list | press: shuffle / repeat modes; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute,
-PgUp/PgDn = L/R, Space = Start. In Search and the setup wizard, letters type and Backspace deletes. With a controller, hold Select on
-Now Playing to mute; changing the volume turns the sound back on. A multimedia keyboard's media
+PgUp/PgDn = L/R, Space = Start. In Search and the setup wizard, letters type and Backspace
+deletes. With a controller, hold Select on Now Playing to mute; changing the volume turns the sound back on. A multimedia keyboard's media
 keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
 fast-forward/rewind to seek. A volume panel shows the level for a moment whenever it changes.
 

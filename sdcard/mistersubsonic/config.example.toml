@@ -20,7 +20,7 @@ password = "change-me"             # the wizard saves a token and salt instead
 # api_key = "…"                    # an OpenSubsonic API key, for servers that give them out
 # ca_file = "/media/fat/mistersubsonic/myca.pem"   # trust a self-signed certificate
 # insecure_skip_verify = false     # true skips the certificate check (not recommended)
-# allow_plaintext_password = false # true sends the password itself, not a token; only for servers that need it (LDAP), and best over https
+# allow_plaintext_password = false # true sends the password itself, not a token; only for servers that need it (LDAP). Only matters for http://: https always allows it
 
 [playback]
 transcode_format = "mp3"   # for formats the MiSTer can't decode: mp3, flac or wav
