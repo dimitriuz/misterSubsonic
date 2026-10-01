@@ -38,6 +38,8 @@ var (
 	ErrClosed  = errors.New("stream: reader closed")
 	errStale   = errors.New("stream: stale fetch")
 	errStalled = errors.New("stream: stalled")
+	// errBudgetSpent is Open's retry budget running out on a request.
+	errBudgetSpent = fmt.Errorf("stream: retry budget spent: %w", context.DeadlineExceeded)
 )
 
 // HTTPError is a non-success HTTP status.
@@ -85,20 +87,21 @@ type Reader struct {
 	url string
 	o   Options
 
-	mu       sync.Mutex
-	cond     *sync.Cond
-	ring     []byte
-	lo, hi   int64 // file offsets held in ring: [lo, hi)
-	pos      int64
-	size     int64 // -1 when unknown
-	seekable bool
-	eof      bool
-	err      error
-	closed   bool
-	prefetch int64
-	gen      int
-	cancel   context.CancelFunc
-	alloc    func(n int64) []byte // makes the ring Promote grows to; a test hook
+	mu        sync.Mutex
+	cond      *sync.Cond
+	ring      []byte
+	lo, hi    int64 // file offsets held in ring: [lo, hi)
+	pos       int64
+	size      int64 // -1 when unknown
+	seekable  bool
+	eof       bool
+	err       error
+	closed    bool
+	prefetch  int64
+	promoting bool // a Promote is allocating the window; another needn't
+	gen       int
+	cancel    context.CancelFunc
+	alloc     func(n int64) []byte // makes the ring Promote grows to; a test hook
 }
 
 // Open issues the first request and returns once response headers arrive.
@@ -195,7 +198,7 @@ func (r *Reader) SeekIfBuffered(off int64) bool {
 // Promote lifts the prefetch limit and grows the ring to the full window.
 // The new ring is allocated without the lock (a Read meanwhile isn't held up
 // by up to 32 MiB of zeroing); what the fetcher added during that is copied
-// over under it.
+// over under it. A second Promote meanwhile doesn't allocate again.
 func (r *Reader) Promote() {
 	r.mu.Lock()
 	if r.closed {
@@ -204,13 +207,15 @@ func (r *Reader) Promote() {
 	}
 	r.prefetch = 0
 	r.cond.Broadcast()
-	grow := int64(len(r.ring)) < r.o.WindowBytes
+	grow := int64(len(r.ring)) < r.o.WindowBytes && !r.promoting
+	r.promoting = grow
 	r.mu.Unlock()
 	if !grow {
 		return
 	}
 	ring := r.alloc(r.o.WindowBytes)
 	r.mu.Lock()
+	r.promoting = false
 	if !r.closed && int64(len(r.ring)) < int64(len(ring)) {
 		r.growLocked(ring)
 		r.cond.Broadcast()
@@ -427,7 +432,9 @@ func (r *Reader) budgetedRequest(ctx context.Context, limit time.Time) (*http.Re
 		if err == nil {
 			resp.Body.Close()
 			reqCancel()
-			err = context.DeadlineExceeded
+		}
+		if err == nil || (ctx.Err() == nil && errors.Is(err, context.Canceled)) {
+			err = errBudgetSpent // the limit cut it, not the caller
 		}
 		lcancel()
 		return nil, nil, err

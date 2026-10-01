@@ -943,6 +943,102 @@ func TestPromoteAllocatesOutsideTheLock(t *testing.T) {
 	checkBytes(t, readAt(t, r, 0, 64<<10), 0)
 }
 
+// Two Promote calls at once allocate the window once: the second sees the
+// first at work and only lifts the prefetch limit.
+func TestConcurrentPromoteAllocatesOnce(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	var allocs atomic.Int32
+	inAlloc, release := make(chan struct{}), make(chan struct{})
+	r.alloc = func(n int64) []byte {
+		if allocs.Add(1) == 1 {
+			close(inAlloc)
+			<-release
+		}
+		return make([]byte, n)
+	}
+	first := make(chan struct{})
+	go func() { r.Promote(); close(first) }()
+	<-inAlloc
+	second := make(chan struct{})
+	go func() { r.Promote(); close(second) }()
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second Promote waited for the first")
+	}
+	close(release)
+	<-first
+	if n := allocs.Load(); n != 1 {
+		t.Fatalf("%d allocations, want 1", n)
+	}
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes", big)
+	}
+	// And a later Promote has nothing left to do.
+	r.alloc = func(int64) []byte { t.Error("Promote of a full ring allocated"); return nil }
+	r.Promote()
+}
+
+// A Close that lands while Promote allocates keeps the old ring and
+// doesn't panic.
+func TestCloseDuringPromoteAllocation(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	r.alloc = func(n int64) []byte {
+		r.Close()
+		return make([]byte, n)
+	}
+	r.Promote()
+	r.mu.Lock()
+	ring := len(r.ring)
+	r.mu.Unlock()
+	if ring != 80<<10 {
+		t.Fatalf("ring %d bytes after a Close mid-Promote, want the old 81920", ring)
+	}
+	if _, err := r.Read(make([]byte, 1)); err == nil {
+		t.Fatal("Read on a closed reader succeeded")
+	}
+}
+
+// A Seek out of the window while Promote allocates restarts the fetch; the
+// grown ring then serves the new position, not stale bytes.
+func TestSeekDuringPromoteAllocation(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	if _, err := io.ReadFull(r, make([]byte, 10<<10)); err != nil {
+		t.Fatal(err)
+	}
+	const target = 5<<20 + 123
+	r.alloc = func(n int64) []byte {
+		if _, err := r.Seek(target, io.SeekStart); err != nil {
+			t.Error(err)
+		}
+		return make([]byte, n)
+	}
+	r.Promote()
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes", big)
+	}
+	buf := make([]byte, 100<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, target)
+}
+
 // A file that is shorter on reconnect ends at its new size: the 416-versus-
 // size check goes by the latest response, not the first.
 func TestShrunkFileEndsAtTheNewSize(t *testing.T) {
@@ -996,8 +1092,32 @@ func TestOpenBudgetBoundsTheRetryRequest(t *testing.T) {
 	o.RetryBudget = 300 * time.Millisecond
 	start := time.Now()
 	_, err := Open(context.Background(), s.URL, o)
-	if err == nil {
-		t.Fatal("Open succeeded")
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Open error = %v, want the server's 503", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Open took %v, the budget is 300ms", d)
+	}
+}
+
+// A first request the budget cuts short says so, not a bare "context
+// canceled".
+func TestOpenBudgetCutsTheFirstRequest(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		<-r.Context().Done() // never answers
+		return true
+	})
+	o := testOptions()
+	o.StallTimeout = 10 * time.Second
+	o.RetryBudget = 300 * time.Millisecond
+	start := time.Now()
+	_, err := Open(context.Background(), s.URL, o)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "retry budget spent") {
+		t.Fatalf("Open error = %v, want a spent retry budget (DeadlineExceeded)", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("Open error = %v, reports a cancel nobody asked for", err)
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("Open took %v, the budget is 300ms", d)
