@@ -304,7 +304,7 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 | Start | play/pause | full-screen visualizer when a song is loaded and not stopped, else play/pause |
 | Select | shuffle-play current list | press: next visualizer style (Off → Bars → Scope → VU → Waterfall; in full screen without Off); hold 1 s: mute |
 
-Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = play/pause, PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
+Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pause; full screen on Now Playing), PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
 
 **Shuffle and repeat** are independent and can be on together; they live in the X menu on Now Playing and in the queue's X menu. **Visualizer:** see the Plan 6 spec (`2026-10-01-mister-subsonic-visualizer-design.md`).
 

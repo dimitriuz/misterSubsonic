@@ -104,7 +104,7 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | X | menu: play now/next, add to queue, star, go to artist/album | press: menu (star, shuffle, repeat); hold 1 s: star/unstar |
 | Y | Now Playing | queue |
 | L / R | page (letter jump on Artists) | previous / next track |
-| Start | play/pause | full screen visualizer (play/pause when no song is loaded) |
+| Start | play/pause | full screen visualizer (play/pause when nothing is loaded or it is stopped) |
 | Select | shuffle-play the list | press: next visualizer style; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute, PgUp/PgDn =
@@ -115,7 +115,7 @@ play/pause, next, previous, and fast-forward/rewind to seek. A volume panel show
 moment whenever it changes.
 
 **Visualizer:** Now Playing can draw the music as it is heard, in a panel under the track
-info: Bars (spectrum), Scope (waveform), VU (two level meters) or Waterfall (a scrolling
+info: Bars (spectrum), Scope (waveform), VU (two level meters) or Waterfall (a sweeping
 spectrogram). Select cycles Off, Bars, Scope, VU and Waterfall, and the choice is saved
 (Settings → Display → Visualizer, or `visualizer = "off"|"bars"|"scope"|"vu"|"waterfall"` under
 `[display]`; off by default). Start on Now Playing, while a song is loaded and not stopped, opens it full
