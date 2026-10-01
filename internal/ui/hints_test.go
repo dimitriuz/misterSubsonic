@@ -69,8 +69,9 @@ var hintFixtures = map[string]func(ta *testApp) Screen{
 		return NewUnreachableScreen(srv, errors.New("refused"))
 	},
 	"feed with resume": func(ta *testApp) Screen {
-		ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
-		return NewFeedScreen()
+		s := NewFeedScreen() // set here, not on the player: a load of the Home screen reads that
+		s.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+		return s
 	},
 	"search results": func(ta *testApp) Screen {
 		s := NewSearchScreen()
