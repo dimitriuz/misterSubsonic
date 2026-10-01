@@ -32,6 +32,12 @@ const (
 	keyScrollLock = 70
 	keySysRq      = 99
 	keyPageUp     = 104
+	keyUp         = 103
+	keyLeft       = 105
+	keyRight      = 106
+	keyPageDown   = 109
+	keyDown       = 108
+	keyKPEnter    = 96
 
 	// Media keys.
 	keyMute         = 113
@@ -45,12 +51,6 @@ const (
 	keyPauseCD      = 201
 	keyPlay         = 207
 	keyFastForward  = 208
-	keyUp           = 103
-	keyLeft         = 105
-	keyRight        = 106
-	keyPageDown     = 109
-	keyDown         = 108
-	keyKPEnter      = 96
 
 	btnMisc   = 0x100 // the first BTN_* code: below it are keyboard keys
 	btnSouth  = 0x130
