@@ -11,25 +11,11 @@ Suggested order:
 
 ## A. Small follow-ups
 
-**What:** tidy up what the reviews of Plans 2a–3b deferred. No new features.
+Plans 5 and 5b did most of this list; see "Resolved by Plan 5" and "Resolved by Plan 5b" in `docs/superpowers/plan-2a-followups.md`. What remains is in "Plan 5b leftovers" there. Still open here:
 
-**Scope:**
-- **Seeks in a sized MP3 reuse the stream.** Every seek in a raw MP3 of known size reopens the stream: a few HTTP requests, and the queued next track is dropped. When the byte estimate falls inside the reader's window, seek that reader and open a fresh decoder on it instead.
-- **Accurate VBR MP3 seeks.** Read the Xing/Info header's 100-point table of contents (in the first frame after the ID3v2 tag), and use it instead of pure proportion. Without a table, keep the proportional estimate.
-- **Text fields trim by width, not by rune** (`drawField`).
-- **Faster list scrolling at full resolution.** Plan 4b made focus moves, the tick and the marquee partial (≤ 12 ms at 1920×1200); a scroll step still redraws the list area, about 40 ms. The A9 is memory-bound (shifting the pixels measured slower than redrawing them), so the next step would be fewer bytes per frame, not a smarter redraw.
-- **The deferred minors** in `docs/superpowers/plan-2a-followups.md`, under "Plan 2c minors", "Plan 3a minors", "Plan 3b minors" and "Plan 4 minors". Pick the ones that still matter, for example:
-  - `Promote` allocating under the stream lock;
-  - the launcher's TERM handling;
-  - the log's rename-failure loop;
-  - toggle rows flipping on key repeat;
-  - `check-notices.sh` without `pipefail`;
-  - the volume panel covering Settings → Playback → Volume on CRT (Plan 4 minors);
-  - the missing tests those reviews listed.
+- **Faster list scrolling at full resolution.** Plan 4b made focus moves, the tick and the marquee partial (≤ 12 ms at 1920×1200). A scroll step still redraws the list area, which takes about 40 ms. The A9 is memory-bound: shifting the pixels measured slower than redrawing them. The next step is fewer bytes per frame, not a smarter redraw, and it needs measuring on the device.
 
-**Needs:** nothing new. It can run on the host, except anything the device plan finds.
-
-**Size:** one plan of about 6–8 tasks.
+(Faster JPEG decoding is no longer open: covers are already requested at display size, `getCoverArt` with `size=` in `internal/art/art.go`, so the 0.77 s decode of a 2000×2000 cover applies only to servers that ignore `size=`.)
 
 ---
 

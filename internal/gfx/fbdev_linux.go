@@ -5,6 +5,7 @@ package gfx
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"syscall"
 	"unsafe"
@@ -81,17 +82,21 @@ func OpenFB(path string) (*FB, error) {
 		return nil, err
 	}
 	mapping, err := syscall.Mmap(int(f.Fd()), 0, end, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
-	start := off
+	delta := 0
 	if err != nil {
-		var delta int
 		mapping, delta, err = mmapDevMem(fx.SmemStart, end)
 		if err != nil {
 			f.Close()
 			return nil, err
 		}
-		start += delta
 	}
-	return &FB{f: f, mapping: mapping, mem: mapping[start : start+end-off], fmt: ff}, nil
+	mem, err := screenSlice(mapping, off, end, delta)
+	if err != nil {
+		syscall.Munmap(mapping)
+		f.Close()
+		return nil, err
+	}
+	return &FB{f: f, mapping: mapping, mem: mem, fmt: ff}, nil
 }
 
 // fbLayout checks the screen format and finds the visible screen in
@@ -106,12 +111,24 @@ func fbLayout(v *fbVarScreenInfo, fx *fbFixScreenInfo) (ff fbFormat, off, end in
 	if err := v.checkLayout(); err != nil {
 		return ff, 0, 0, err
 	}
-	off = int(v.Yoffset)*ff.stride + int(v.Xoffset)*ff.bpp/8
-	end = off + ff.stride*ff.height
-	if uint64(end) > uint64(fx.SmemLen) {
-		return ff, 0, 0, fmt.Errorf("gfx: framebuffer memory %d < %d needed", fx.SmemLen, end)
+	// The last line needs only its pixels, not the stride's padding. The sums
+	// are 64-bit: int is 32 bits on the MiSTer's ARM.
+	off64 := int64(v.Yoffset)*int64(ff.stride) + int64(v.Xoffset)*int64(ff.bpp)/8
+	end64 := off64 + int64(ff.height-1)*int64(ff.stride) + int64(ff.width)*int64(ff.bpp)/8
+	if end64 > int64(fx.SmemLen) || end64 > math.MaxInt {
+		return ff, 0, 0, fmt.Errorf("gfx: framebuffer memory %d < %d needed", fx.SmemLen, end64)
 	}
-	return ff, off, end, nil
+	return ff, int(off64), int(end64), nil
+}
+
+// screenSlice is the visible screen inside the mapping: the mapping covers
+// [0, end) of the framebuffer memory (plus delta bytes in front when it came
+// through /dev/mem), the screen is [off, end).
+func screenSlice(mapping []byte, off, end, delta int) ([]byte, error) {
+	if off < 0 || off > end || delta < 0 || end+delta > len(mapping) {
+		return nil, fmt.Errorf("gfx: screen %d..%d (+%d) outside the %d-byte mapping", off, end, delta, len(mapping))
+	}
+	return mapping[off+delta : end+delta], nil
 }
 
 // checkLayout accepts only XRGB8888 (32 bpp) and RGB565 (16 bpp) channel layouts.

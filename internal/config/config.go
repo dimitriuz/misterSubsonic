@@ -185,21 +185,32 @@ func (c *Config) ActiveServer() (*Server, bool) {
 	return nil, false
 }
 
-// Save writes cfg atomically (temp file + rename) after validating it.
+// Save writes cfg atomically (temp file + rename) after validating it. An
+// existing file is edited in place, so the user's comments survive; a missing
+// or unusual one is written afresh.
 func Save(path string, cfg *Config) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("config: refusing to save invalid config: %w", err)
 	}
-	var buf bytes.Buffer
-	buf.WriteString("# MiSTer Subsonic configuration, saved by the app (the setup wizard or Settings).\n# Every option is described in config.example.toml, next to this file.\n")
-	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
-		return fmt.Errorf("config: encode: %w", err)
+	var out []byte
+	if prev, err := os.ReadFile(path); err == nil {
+		if s, ok := editConfig(string(prev), cfg); ok {
+			out = []byte(s) // the user's comments and layout stay
+		}
+	}
+	if out == nil {
+		var buf bytes.Buffer
+		buf.WriteString("# MiSTer Subsonic configuration, saved by the app (the setup wizard or Settings).\n# Every option is described in config.example.toml, next to this file.\n")
+		if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
+			return fmt.Errorf("config: encode: %w", err)
+		}
+		out = buf.Bytes()
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

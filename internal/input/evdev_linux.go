@@ -148,6 +148,7 @@ func (m *Manager) Close() {
 		}
 		f.Close()
 	}
+	clear(m.pads)
 	m.mu.Unlock()
 	m.wg.Wait()
 }
@@ -223,6 +224,7 @@ func padKeys(bits []byte) bool {
 func isGamepad(f *os.File) bool {
 	bits := make([]byte, keyBitsLen)
 	if err := fileIoctlPtr(f, eviocgbit(evKey, keyBitsLen), unsafe.Pointer(&bits[0])); err != nil {
+		log.Printf("input: %s: reading the key bits failed (%v); treating it as a keyboard", f.Name(), err)
 		return false
 	}
 	return padKeys(bits)

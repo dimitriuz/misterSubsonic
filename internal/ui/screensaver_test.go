@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"mistersubsonic/internal/config"
+	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/player"
 )
 
 func saverApp(t *testing.T, p Profile, minutes int) *testApp {
@@ -93,3 +95,126 @@ func TestGoldenScreensaver(t *testing.T) {
 		golden(t, "screensaver-"+p.Name, ta.settle(t))
 	}
 }
+
+func TestToastWakesTheScreensaver(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	if !ta.saver {
+		t.Fatal("screensaver not on")
+	}
+	ta.Toast("Can't play x: offline")
+	if ta.saver {
+		t.Fatal("a toast left the screensaver on: it can't be seen")
+	}
+	ta.onWake()
+	if ta.saver {
+		t.Fatal("the screensaver came straight back over the toast")
+	}
+}
+
+func TestScreensaverNeverStartsOverTheExitPrompt(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.confirm = true
+	ta.now = ta.now.Add(2 * time.Minute)
+	ta.onWake()
+	if ta.saver || !ta.saverDue().IsZero() {
+		t.Fatalf("screensaver over the exit prompt: saver %v, due %v", ta.saver, ta.saverDue())
+	}
+}
+
+func TestScreensaverWakeSwallowsTheReleaseToo(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Press}) // wakes
+	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Release})
+	if len(ta.toasts) != 0 || ta.pl.st.Shuffle || ta.pl.st.Repeat != player.RepeatOff {
+		t.Fatalf("the wake press's release cycled the mode: toasts %v, %+v", ta.toasts, ta.pl.st)
+	}
+	ta.press(input.BtnSelect) // a real tap still cycles
+	if !ta.pl.st.Shuffle {
+		t.Fatal("the next tap didn't cycle the mode")
+	}
+}
+
+func TestScreensaverWakeReleaseReachesNoScreenHook(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	rel := &releaseSpy{}
+	ta.Push(rel)
+	ta.lastInput = ta.now
+	ta.saver = true
+	ta.onInput(input.Event{Button: input.BtnA, Kind: input.Press})
+	ta.onInput(input.Event{Button: input.BtnA, Kind: input.Release})
+	if rel.n != 0 {
+		t.Fatalf("Release hook called %d times for the wake press", rel.n)
+	}
+	ta.press(input.BtnA)
+	if rel.n != 1 {
+		t.Fatalf("Release hook called %d times for a normal press, want 1", rel.n)
+	}
+}
+
+type releaseSpy struct{ n int }
+
+func (s *releaseSpy) Title() string                    { return "spy" }
+func (s *releaseSpy) Enter(*App)                       {}
+func (s *releaseSpy) Handle(*App, input.Event) bool    { return true }
+func (s *releaseSpy) Draw(*App, *gfx.Canvas, gfx.Rect) {}
+func (s *releaseSpy) Release(*App, input.Button)       { s.n++ }
+
+// A wake press whose release never arrives (a pad unplugged, drainInput)
+// must not leave the next press of that button half-handled: its release is
+// delivered and the auto-repeat stops.
+func TestScreensaverStaleWakeKeyDoesNotKeepRepeating(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press}) // wakes; its release is lost
+	if ta.saver {
+		t.Fatal("the press didn't wake the screensaver")
+	}
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Press})
+	ta.onInput(input.Event{Button: input.BtnRight, Kind: input.Release})
+	if d := ta.rep.NextDeadline(); !d.IsZero() {
+		t.Fatal("Right keeps repeating after its release")
+	}
+}
+
+func TestDrainInputForgetsWakeKeys(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.wakeKeys[input.BtnRight] = true
+	ta.drainInput()
+	if len(ta.wakeKeys) != 0 {
+		t.Fatalf("wakeKeys %v survive drainInput", ta.wakeKeys)
+	}
+}
+
+// A typed character wakes the screensaver and does nothing else: the letter
+// isn't typed into the screen, and its release is swallowed too.
+func TestScreensaverWakesOnATypedRune(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	typed := &typingScreen{}
+	ta.Push(typed)
+	ta.saver = true // no frame is drawn here: it stays on until a key wakes it
+	ta.onInput(input.Event{Button: input.BtnNone, Kind: input.Press, Rune: 'x'})
+	if ta.saver {
+		t.Fatal("a typed letter left the screensaver on")
+	}
+	if len(typed.got) != 0 {
+		t.Fatalf("the waking letter was typed: %q", string(typed.got))
+	}
+	ta.onInput(input.Event{Button: input.BtnNone, Kind: input.Press, Rune: 'y'})
+	if string(typed.got) != "y" {
+		t.Fatalf("the next letter wasn't typed: %q", string(typed.got))
+	}
+}
+
+// typingScreen records the characters it is given.
+type typingScreen struct{ got []rune }
+
+func (s *typingScreen) Title() string                    { return "Typing" }
+func (s *typingScreen) Enter(*App)                       {}
+func (s *typingScreen) Handle(*App, input.Event) bool    { return false }
+func (s *typingScreen) Draw(*App, *gfx.Canvas, gfx.Rect) {}
+func (s *typingScreen) Text(a *App, r rune) bool         { s.got = append(s.got, r); return true }

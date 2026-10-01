@@ -55,6 +55,10 @@ func TestQueueMenuRemoveAndClear(t *testing.T) {
 	if _, ok := ta.Top().(*MenuScreen); !ok {
 		t.Fatalf("X opened %T, want the menu", ta.Top())
 	}
+	menu := ta.Top().(*MenuScreen)
+	if menu.title != "Queue" || menu.entries[0].label != "Remove Время Луны" || menu.entries[1].label != "Clear queue" {
+		t.Fatalf("menu %q with entries %q, %q", menu.title, menu.entries[0].label, menu.entries[1].label)
+	}
 	ta.press(input.BtnA) // Remove
 	if !slices.Equal(ta.pl.calls, []string{"remove"}) || ta.toasts[0].text != "Removed Время Луны" {
 		t.Fatalf("calls %v toasts %v", ta.pl.calls, ta.toasts)

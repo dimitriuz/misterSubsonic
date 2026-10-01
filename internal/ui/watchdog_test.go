@@ -25,7 +25,7 @@ func TestWatchdogRepaintsAnOverwrittenScreen(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	d := &checkDisplay{Headless: gfx.NewHeadless(ProfileCRT240.W, ProfileCRT240.H, ""), intact: true}
 	now := time.Unix(1_800_000_000, 0)
-	a, err := New(Options{Display: d, Profile: ProfileCRT240, Library: sampleLibrary(), Player: newFakePlayer(), Art: fakeArt{},
+	a, err := New(Options{Display: d, Profile: ProfileCRT240, Library: sampleLibrary(), Player: newFakePlayer(), Art: newFakeArt(),
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func watchApp(t *testing.T, watch func() (bool, error)) (*App, *time.Time) {
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	now := time.Unix(1_800_000_000, 0)
 	a, err := New(Options{Display: gfx.NewHeadless(ProfileCRT240.W, ProfileCRT240.H, ""), Profile: ProfileCRT240,
-		Library: sampleLibrary(), Player: newFakePlayer(), Art: fakeArt{}, WatchDisplay: watch,
+		Library: sampleLibrary(), Player: newFakePlayer(), Art: newFakeArt(), WatchDisplay: watch,
 		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)

@@ -28,7 +28,12 @@ exit "$APP_EXIT"
 S
 	cat >"$c/bin/socat" <<'S'
 #!/bin/bash
-cmd=$(cat)
+# BGM wants the command without a newline, and the launcher must not hang on
+# a silent socket: log a line that fails the case when either is broken.
+[ "$1 $2" = "-t 2" ] || echo "socat: bad timeout args: $*" >>"$LOG"
+in=$(cat; printf x)
+cmd=${in%x}
+[ "${cmd%$'\n'}" = "$cmd" ] || echo "socat: input ended with a newline" >>"$LOG"
 echo "bgm $cmd" >>"$LOG"
 [ "$cmd" = status ] && printf '%s' "$BGM_STATUS"
 exit 0
@@ -131,32 +136,70 @@ run_case "restores everything after a crash" 2 "bgm status" "bgm stop" "app -vol
 grep -q "log.txt" "$c/out" || { echo "FAIL crash: no pointer to the log"; failures=$((failures + 1)); }
 grep -q "crash.txt" "$c/out" || { echo "FAIL crash: no pointer to crash.txt"; failures=$((failures + 1)); }
 
-sandbox term
+# spawn starts the launcher in the background with INT and TERM at their
+# defaults: a background job of a script inherits INT ignored, which a
+# shell can't trap.
+spawn() {
+	python3 -c 'import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])' "$launcher" -volume -20 >"$c/out" 2>&1 &
+	lpid=$!
+}
+# waitlog PATTERN: until the log has a line matching.
+waitlog() { for _ in $(seq 50); do grep -q "$1" "$LOG" && return 0; sleep 0.1; done; return 1; }
+
+# A signal case: the app runs until it is signalled; SIGNAL goes to the launcher.
+signal_case() {
+	name=$1 sig=$2
+	sandbox "$name"
+	socket
+	BGM_STATUS=$'yes\trandom\tall\tx'
+	echo $$ >"$PIDS.MiSTer_SAM_MCP"
+	cat >"$MSS_DIR/mistersubsonic" <<'S'
+#!/bin/bash
+echo "app $*" >>"$LOG"
+[ "$1" = -restore-console ] && exit 0
+# A clean close on TERM, like the app.
+sleep 30 9>&- &
+trap 'echo "app got TERM" >>"$LOG"; kill $!; exit 0' TERM
+wait
+S
+	spawn
+	waitlog "^app -volume"
+	kill -"$sig" "$lpid"
+	wait "$lpid"
+	code=$?
+	want=$(printf '%s\n' "bgm status" "bgm stop" "sam disable" "app -volume -20" "app got TERM" "app -restore-console" "bgm play" "sam enable")
+	if [ "$code" -ne 0 ] || [ "$(cat "$LOG")" != "$want" ]; then
+		echo "FAIL $name: exit $code"; sed 's/^/    /' "$LOG"
+		failures=$((failures + 1))
+	else
+		echo "ok   $sig goes to the app, then everything is restored"
+	fi
+	flock -n "$MSS_LOCK" true || { echo "FAIL $name: the lock is still held"; failures=$((failures + 1)); }
+}
+signal_case term TERM
+signal_case int INT
+
+sandbox int-restoring
 socket
 BGM_STATUS=$'yes\trandom\tall\tx'
 echo $$ >"$PIDS.MiSTer_SAM_MCP"
 cat >"$MSS_DIR/mistersubsonic" <<'S'
 #!/bin/bash
 echo "app $*" >>"$LOG"
-[ "$1" = -restore-console ] && exit 0
-# Bash runs the launcher's trap once this returns: end on our own soon.
-sleep 2
+[ "$1" = -restore-console ] && sleep 1
 exit 0
 S
-"$launcher" -volume -20 >"$c/out" 2>&1 &
-lpid=$!
-for _ in $(seq 50); do grep -q "^app -volume" "$LOG" && break; sleep 0.1; done
-kill -TERM "$lpid"
+spawn
+waitlog "^app -restore-console"
+kill -INT "$lpid"
 wait "$lpid"
-code=$?
 want=$(printf '%s\n' "bgm status" "bgm stop" "sam disable" "app -volume -20" "app -restore-console" "bgm play" "sam enable")
-if [ "$code" -eq 0 ] || [ "$(cat "$LOG")" != "$want" ]; then
-	echo "FAIL term: exit $code"; sed 's/^/    /' "$LOG"
+if [ "$(cat "$LOG")" != "$want" ]; then
+	echo "FAIL int-restoring: restore was cut short"; sed 's/^/    /' "$LOG"
 	failures=$((failures + 1))
 else
-	echo "ok   restores everything when the launcher is terminated"
+	echo "ok   INT during the restore doesn't skip the rest of it"
 fi
-flock -n "$MSS_LOCK" true || { echo "FAIL term: the lock is still held"; failures=$((failures + 1)); }
 
 sandbox locked
 flock "$MSS_LOCK" sleep 30 &
@@ -166,6 +209,16 @@ run_case "won't start while another launcher holds the lock" 1
 
 # BusyBox's flock has no -w.
 if grep -q 'flock -w' "$launcher"; then echo "FAIL: the launcher uses flock -w"; failures=$((failures + 1)); fi
+
+sandbox sam-missing
+echo $$ >"$PIDS.MiSTer_SAM_MCP"
+rm "$MSS_SAM"
+run_case "runs without SAM's script when SAM is running" 0 "app -volume -20" "app -restore-console"
+
+sandbox lock-unopenable
+MSS_LOCK=$c/no/such/dir/lock
+run_case "stops when it can't open the lock file" 1
+grep -q "lock file" "$c/out" || { echo "FAIL lock-unopenable: no message"; failures=$((failures + 1)); }
 
 sandbox missing
 rm "$MSS_DIR/mistersubsonic"

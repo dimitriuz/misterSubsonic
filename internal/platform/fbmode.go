@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -110,10 +111,10 @@ func DefaultFBControl() FBControl {
 		State: "/tmp/mistersubsonic.fb", Wait: time.Second}
 }
 
-// Switch saves from as the size to restore, then asks for to and waits for
-// the menu to apply it. On failure it asks for from again.
+// Switch saves from (and to) as the size to restore, then asks for to and
+// waits for the menu to apply it. On failure it asks for from again.
 func (c FBControl) Switch(from, to Size) error {
-	if err := os.WriteFile(c.State, []byte(fmt.Sprintf("%d %d\n", from.W, from.H)), 0o644); err != nil {
+	if err := os.WriteFile(c.State, []byte(fmt.Sprintf("%d %d %d %d\n", from.W, from.H, to.W, to.H)), 0o644); err != nil {
 		return fmt.Errorf("platform: save the framebuffer size: %w", err)
 	}
 	if err := c.request(to); err != nil {
@@ -132,9 +133,20 @@ func (c FBControl) Saved() bool {
 	return err == nil
 }
 
-// Restore puts back the size Switch saved, if any, and forgets it. Without
-// a saved size it does nothing.
-func (c FBControl) Restore() error {
+// Restore puts back the size Switch saved, if any. The state is forgotten
+// once it is restored or stale (the framebuffer is not at the size Switch
+// asked for, so this run never switched it); when the request fails it
+// stays, so a later Restore can try again. Without a saved size it does
+// nothing. A state file from the previous build holds only the old size:
+// it is restored without the check.
+func (c FBControl) Restore() error { return c.restore(true) }
+
+// RestoreAlways is Restore without the stale check: it asks for the saved
+// size whatever the framebuffer has now. For a caller that has just switched
+// and knows the menu gave another size than asked for.
+func (c FBControl) RestoreAlways() error { return c.restore(false) }
+
+func (c FBControl) restore(checkStale bool) error {
 	b, err := os.ReadFile(c.State)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -142,23 +154,37 @@ func (c FBControl) Restore() error {
 	if err != nil {
 		return fmt.Errorf("platform: %w", err)
 	}
-	var s Size
-	if _, err := fmt.Sscanf(string(b), "%d %d", &s.W, &s.H); err != nil || s.W <= 0 || s.H <= 0 {
+	var from, to Size
+	n, _ := fmt.Sscanf(string(b), "%d %d %d %d", &from.W, &from.H, &to.W, &to.H)
+	if (n != 2 && n != 4) || from.W <= 0 || from.H <= 0 || (n == 4 && (to.W <= 0 || to.H <= 0)) {
 		os.Remove(c.State)
 		return fmt.Errorf("platform: bad framebuffer state %q", strings.TrimSpace(string(b)))
 	}
-	err = c.request(s)
+	if n == 4 && checkStale {
+		if cur, ok := c.Current(); ok && cur != to {
+			log.Printf("display: saved size is stale (framebuffer is %v, not the switched size %v); not restoring", cur, to)
+			os.Remove(c.State)
+			return nil
+		}
+	}
+	if err := c.request(from); err != nil {
+		return err
+	}
 	os.Remove(c.State)
-	return err
+	return nil
 }
 
-// request sends fb_cmd1 for s (32 bpp) and waits until res_count changes.
+// request sends fb_cmd1 for s (32 bpp) and waits until res_count changes;
+// without a readable res_count it fails before sending anything.
 // If the driver already has size s, it is done.
 func (c FBControl) request(s Size) error {
 	if cur, ok := c.Current(); ok && cur == s {
 		return nil // the menu doesn't count a change to the size it already has
 	}
 	count := c.ResCount()
+	if count == "" {
+		return fmt.Errorf("platform: %s/res_count is unreadable, a switch to %v couldn't be confirmed", c.Sys, s)
+	}
 	f, err := os.OpenFile(c.Cmd, os.O_WRONLY|os.O_APPEND|syscall.O_NONBLOCK, 0) // never block: with no reader a FIFO open fails with ENXIO
 	if err != nil {
 		return fmt.Errorf("platform: %w", err)

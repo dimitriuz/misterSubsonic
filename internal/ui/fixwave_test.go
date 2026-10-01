@@ -375,3 +375,22 @@ func TestFeedDropsResumeOnceSomethingPlays(t *testing.T) {
 		t.Fatalf("A opened %T", ta.Top())
 	}
 }
+
+// The Resume row goes away in the pre-frame Sync, not in Draw.
+func TestCRTHomeDrawDoesNotDropResume(t *testing.T) {
+	ta := newTestApp(t, ProfileCRT240)
+	ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+	s := NewHomeScreen()
+	ta.Push(s)
+	ta.settle(t)
+	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: 0, NextIndex: -1}
+	c := gfx.NewCanvas(ta.P.W, ta.P.H)
+	s.Draw(ta.App, c, gfx.R(0, 0, ta.P.W, ta.P.H))
+	if s.resume == nil {
+		t.Fatal("Draw dropped the Resume row")
+	}
+	ta.settle(t) // a frame syncs first
+	if s.resume != nil {
+		t.Fatal("the frame kept the Resume row")
+	}
+}

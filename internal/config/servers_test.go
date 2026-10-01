@@ -36,6 +36,20 @@ func TestAddServerMakesNamesUniqueAndDefault(t *testing.T) {
 	}
 }
 
+func TestAddServerThirdCollisionCountsOn(t *testing.T) {
+	c := Default()
+	var got []string
+	for i := 0; i < 3; i++ {
+		got = append(got, c.AddServer(Server{Name: "nas", URL: "http://nas", Username: "u", Password: "p"}))
+	}
+	if want := []string{"nas", "nas-2", "nas-3"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("names %v, want %v", got, want)
+	}
+	if c.DefaultServer != "nas-3" || len(c.Servers) != 3 {
+		t.Fatalf("default %q, %d servers", c.DefaultServer, len(c.Servers))
+	}
+}
+
 func TestRemoveServerMovesTheDefault(t *testing.T) {
 	c := Default()
 	c.AddServer(Server{Name: "a", URL: "http://a", Username: "u", Password: "p"})

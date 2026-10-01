@@ -26,6 +26,7 @@ type fakeLibrary struct {
 	plSongs   map[subsonic.ID][]subsonic.Song
 	starred   subsonic.Starred
 	err       error
+	failAlbum map[subsonic.ID]bool // GetAlbum fails for these
 	calls     []subsonic.AlbumListQuery
 	searches  []string
 	stars     []string      // "star al-1", "unstar s2"
@@ -52,6 +53,9 @@ func (l *fakeLibrary) GetAlbum(_ context.Context, id subsonic.ID) (*subsonic.Alb
 	defer l.mu.Unlock()
 	if l.err != nil {
 		return nil, l.err
+	}
+	if l.failAlbum[id] {
+		return nil, errOffline
 	}
 	for _, al := range l.albums {
 		if al.ID == id {
@@ -255,21 +259,24 @@ func (p *fakePlayer) PlayNow(songs []subsonic.Song, start int) {
 }
 
 // fakeArt makes a deterministic two-tone square per cover id.
-type fakeArt struct{}
+type fakeArt struct {
+	// cache keeps each generated cover, as the real art source keeps
+	// decoded covers in memory: a repaint must not pay for making them.
+	// It belongs to one test (see newFakeArt).
+	cache *sync.Map // art.Key -> *gfx.Image
+}
 
-// fakeArtCache keeps each generated cover, as the real art source keeps
-// decoded covers in memory: a repaint must not pay for making them.
-var fakeArtCache sync.Map // art.Key -> *gfx.Image
+func newFakeArt() fakeArt { return fakeArt{cache: new(sync.Map)} }
 
-func (fakeArt) Get(k art.Key) (*gfx.Image, bool) {
+func (f fakeArt) Get(k art.Key) (*gfx.Image, bool) {
 	if k.ID == "" {
 		return nil, false
 	}
-	if img, ok := fakeArtCache.Load(k); ok {
+	if img, ok := f.cache.Load(k); ok {
 		return img.(*gfx.Image), true
 	}
 	img := makeFakeArt(k)
-	fakeArtCache.Store(k, img)
+	f.cache.Store(k, img)
 	return img, true
 }
 
@@ -328,7 +335,7 @@ type testApp struct {
 func newTestApp(t *testing.T, prof Profile) *testApp {
 	t.Helper()
 	ta := &testApp{disp: gfx.NewHeadless(prof.W, prof.H, ""), lib: sampleLibrary(), pl: newFakePlayer(), now: time.Unix(1_800_000_000, 0)}
-	a, err := New(Options{Display: ta.disp, Profile: prof, Library: ta.lib, Player: ta.pl, Art: fakeArt{},
+	a, err := New(Options{Display: ta.disp, Profile: prof, Library: ta.lib, Player: ta.pl, Art: newFakeArt(),
 		Now: func() time.Time { return ta.now }})
 	if err != nil {
 		t.Fatal(err)

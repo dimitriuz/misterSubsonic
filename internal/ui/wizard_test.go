@@ -232,6 +232,31 @@ func TestWizardReplacesAnInvalidConfig(t *testing.T) {
 	}
 }
 
+// Leaving the wizard while the old config is being moved aside would drop
+// the save (its result is discarded with the screen): the old file would be
+// gone and no new one written. Back does nothing until the save is done.
+func TestWizardStaysWhileTheBackupIsMade(t *testing.T) {
+	srv := fakeServer("ok", false)
+	defer srv.Close()
+	ta, rec := sessionApp(t, nil)
+	os.WriteFile(ta.o.ConfigPath, []byte("this is = not toml ["), 0o600)
+	ta.o.ConfigErr = errors.New("config: invalid TOML syntax at line 1")
+	ta.start()
+	ta.press(input.BtnA) // set up again
+	fill(t, ta, srv.URL, "alice", "pw", "")
+	ta.press(input.BtnA) // save
+	for i := 0; i < 8; i++ {
+		ta.press(input.BtnB) // back out before the backup is done
+	}
+	ta.settle(t)
+	if _, _, err := config.Load(ta.o.ConfigPath); err != nil {
+		t.Fatalf("no new config after leaving during the save: %v", err)
+	}
+	if len(rec.got) != 1 {
+		t.Fatalf("connects %d", len(rec.got))
+	}
+}
+
 func TestGoldenWizard(t *testing.T) {
 	for _, p := range profiles {
 		ta := newTestApp(t, p)
@@ -253,13 +278,17 @@ func TestGoldenWizard(t *testing.T) {
 // People type addresses every which way.
 func TestNormalizeURL(t *testing.T) {
 	for in, want := range map[string]string{
-		"192.168.1.10:4533":                   "http://192.168.1.10:4533",
-		"  https://music.example.com/  ":      "https://music.example.com",
-		"https://music.example.com/rest":      "https://music.example.com",
-		"https://example.com/navidrome/rest/": "https://example.com/navidrome",
-		"HTTP://Music.Example.com:4533":       "http://Music.Example.com:4533",
-		"http://[::1]:4533":                   "http://[::1]:4533",
-		"https://alice:pw@music.example.com":  "https://music.example.com",
+		"192.168.1.10:4533":                    "http://192.168.1.10:4533",
+		"  https://music.example.com/  ":       "https://music.example.com",
+		"https://music.example.com/rest":       "https://music.example.com",
+		"https://example.com/navidrome/rest/":  "https://example.com/navidrome",
+		"HTTP://Music.Example.com:4533":        "http://Music.Example.com:4533",
+		"http://[::1]:4533":                    "http://[::1]:4533",
+		"https://alice:pw@music.example.com":   "https://music.example.com",
+		"https://music.example.com/?u=a#top":   "https://music.example.com",
+		"http://h:4533/navidrome?x=1":          "http://h:4533/navidrome",
+		"https://example.com/nav/rest?u=a&p=b": "https://example.com/nav",
+		"h:4533#frag":                          "http://h:4533",
 	} {
 		got, err := normalizeURL(in)
 		if err != nil || got != want {
@@ -372,7 +401,51 @@ func TestWizardPlaintextConsentDoesNotCarryToAnotherHost(t *testing.T) {
 	}
 }
 
-// The keyboard stays inside the title-safe area, with or without a problem line.
+// Consent is kept when the same address is retyped in a form that
+// normalizeURL maps to the same text: another case of the scheme, a trailing
+// slash, a /rest suffix, a query. It does not equate a host in another case or
+// the default port: those ask again (pinned as it is, the safe direction).
+func TestWizardPlaintextConsentSurvivesRetypingTheSameAddress(t *testing.T) {
+	a := fakeServer("token41", false)
+	defer a.Close()
+	ta, _, w := wizardApp(t)
+	fill(t, ta, a.URL, "u", "pw", "")
+	ta.press(input.BtnA) // allow plaintext
+	ta.settle(t)
+	if w.err != nil || !w.server().AllowPlaintextPassword {
+		t.Fatalf("after allowing: %v", w.err)
+	}
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Back
+	for range 4 {
+		ta.press(input.BtnB)
+	}
+	if w.step != stepURL {
+		t.Fatalf("step %d", w.step)
+	}
+	rest := strings.TrimPrefix(a.URL, "http://")
+	for _, form := range []string{"HTTP://" + rest, a.URL + "/", a.URL + "/rest", a.URL + "/?x=1#y", rest} {
+		for range len(w.fields[stepURL]) {
+			typeKeys(ta, "\b")
+		}
+		typeKeys(ta, form+"\n")
+		if w.step != stepUser || string(w.fields[stepURL]) != a.URL || !w.server().AllowPlaintextPassword {
+			t.Fatalf("%q: step %d url %q plaintext %v", form, w.step, w.fields[stepURL], w.server().AllowPlaintextPassword)
+		}
+		ta.press(input.BtnB) // back to the address
+	}
+	for _, c := range [][2]string{{"http://Example.com", "http://example.com"}, {"http://example.com:80", "http://example.com"}} {
+		x, _ := normalizeURL(c[0])
+		y, _ := normalizeURL(c[1])
+		if x == y {
+			t.Errorf("%q now equals %q: update the comment and the README", c[0], c[1])
+		}
+	}
+}
+
+// The keyboard stays inside the screen's body: below the header, above the
+// hint bar and the mini bar, in the title-safe area, on every typing step,
+// with or without a problem line.
 func TestWizardKeyboardFitsTheScreen(t *testing.T) {
 	crt288 := ProfileCRT240
 	crt288.H = 288
@@ -385,19 +458,32 @@ func TestWizardKeyboardFitsTheScreen(t *testing.T) {
 				w.setStep(stepPassword)
 				w.problem = "Enter a password (step 3) or an API key"
 			},
+			"api key": func(w *WizardScreen) { w.setStep(stepAPIKey) },
+			"api key problem": func(w *WizardScreen) {
+				w.setStep(stepAPIKey)
+				w.problem = "Enter a password (step 3) or an API key"
+			},
 		} {
-			ta := newTestApp(t, p)
-			w := NewWizardScreen(true, false)
-			ta.Push(w)
-			setup(w)
-			if strings.Contains(name, "problem") && w.problem == "" {
-				t.Fatalf("%s %d: no problem shown", p.Name, p.H)
-			}
-			ta.settle(t)
-			body := gfx.R(0, p.SafeY, p.W, p.H-2*p.SafeY)
-			kb := w.kbArea
-			if kb.H == 0 || kb.Bottom() > body.Bottom() || kb.Y < body.Y || kb.Right() > body.Right() {
-				t.Errorf("%s %d %s: keyboard %+v outside %+v", p.Name, p.H, name, kb, body)
+			for _, playing := range []bool{false, true} {
+				ta := newTestApp(t, p)
+				if playing {
+					playingState(ta) // the mini bar takes its line
+				}
+				w := NewWizardScreen(true, false)
+				ta.Push(w)
+				setup(w)
+				if strings.Contains(name, "problem") && w.problem == "" {
+					t.Fatalf("%s %d: no problem shown", p.Name, p.H)
+				}
+				ta.settle(t)
+				body := gfx.R(0, p.SafeY+p.HeaderH, p.W, p.H-2*p.SafeY-p.HeaderH-ta.hintH())
+				if playing {
+					body.H -= p.MiniBarH
+				}
+				kb := w.kbArea
+				if kb.H == 0 || kb.Bottom() > body.Bottom() || kb.Y < body.Y || kb.Right() > body.Right() {
+					t.Errorf("%s %d %s (playing %v): keyboard %+v outside %+v", p.Name, p.H, name, playing, kb, body)
+				}
 			}
 		}
 	}

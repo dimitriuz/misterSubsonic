@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -51,7 +52,7 @@ func main() {
 	flag.StringVar(&f.profile, "profile", "", "layout: auto | hdmi | crt (default: config display.profile)")
 	flag.StringVar(&f.fbdev, "fb", "/dev/fb0", "framebuffer device")
 	flag.BoolVar(&f.null, "null", false, "use the null audio device (silent)")
-	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go)`)
+	flag.StringVar(&f.keys, "keys", "", `scripted button presses for testing, e.g. "a:2s,a,a" (see keys.go; items are split at commas and trimmed, so a typed text can't hold either)`)
 	flag.StringVar(&f.log, "log", "auto", "log file: auto (log.txt next to the config on the framebuffer, stderr elsewhere), - (stderr) or a path")
 	flag.StringVar(&f.screenshots, "screenshots", "auto", "screenshot folder: auto (/media/fat/screenshots/MiSTer_Subsonic beside the config on the framebuffer, screenshots/ next to the config elsewhere), a path, or \"\" for none")
 	flag.BoolVar(&f.verifyRedraw, "verify-redraw", false, "check every partial redraw against a full one and log any difference (debugging)")
@@ -134,11 +135,15 @@ func openLog(flagPath, display, dataDir string) func() {
 	log.SetOutput(lf)
 	crash := filepath.Join(filepath.Dir(path), "crash.txt")
 	if st, err := os.Stat(crash); err == nil && st.Size() > logMax {
-		os.Remove(crash)
+		if err := os.Rename(crash, crash+".1"); err != nil { // like log.txt: one older file is kept
+			log.Printf("log: %v", err)
+		}
 	}
 	if cf, err := os.OpenFile(crash, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644); err == nil {
 		debug.SetCrashOutput(cf, debug.CrashOptions{}) // keeps its own copy of the file
 		cf.Close()
+	} else {
+		log.Printf("log: crash file: %v (crashes the app can't catch are not recorded)", err)
 	}
 	return func() {
 		debug.SetCrashOutput(nil, debug.CrashOptions{})
@@ -155,8 +160,96 @@ var shutdownLimit = 10 * time.Second
 // forceExit ends a shutdown that took too long; tests replace it.
 var forceExit = func() {
 	log.Printf("shutdown took longer than %v; exiting", shutdownLimit)
-	platform.RestoreText()
+	restoreOnForcedExit()
 	os.Exit(3)
+}
+
+// exitRestore makes the display restore run once, whichever path gets there
+// first: the deferred exit path (restoreDisplay) or the shutdown deadline
+// (restoreOnForcedExit). done means the size was put back or at least tried,
+// and the console has left graphics mode; after that nothing may send a size
+// command, because in text mode fbcon redraws its text into the new
+// framebuffer and crashes the kernel. A failed Restore keeps its state file,
+// so the state being there does not mean the size may still change.
+//
+// graphics is whether this run put the console in graphics mode. Without it
+// no size command may be sent at all (a leftover state file could name the
+// current size), so a failed graphicsMode skips the size restore.
+var exitRestore struct {
+	mu       sync.Mutex
+	done     bool
+	graphics bool
+}
+
+// restoreSize puts the framebuffer size back, only when this run entered
+// graphics mode (exitRestore.mu held by the caller).
+func restoreSize() {
+	if !exitRestore.graphics {
+		log.Printf("display: size restore skipped, this run never entered graphics mode")
+		return
+	}
+	if err := fbControl().Restore(); err != nil {
+		log.Printf("display: %v", err)
+	}
+}
+
+// restoreDisplay is the exit path: the framebuffer gets its old size back
+// (the console still in graphics mode), then the console returns to text
+// mode. The forced exit waits on the lock while this runs; the wait is
+// bounded, since a size request waits at most FBControl.Wait.
+func restoreDisplay(con *platform.Console) {
+	exitRestore.mu.Lock()
+	defer exitRestore.mu.Unlock()
+	if exitRestore.done {
+		return
+	}
+	restoreSize()
+	if err := con.Restore(); err != nil {
+		log.Printf("console: %v", err)
+	}
+	exitRestore.done = true
+}
+
+// forcedExitWait is how long the forced exit waits for the guard before it
+// gives up on the display and console restore.
+var forcedExitWait = 2 * time.Second
+
+// restoreOnForcedExit is the shutdown deadline's restore: the same steps in
+// the same order as restoreDisplay, unless the exit path already did them
+// (or is doing them: it waits for that). The console is still in graphics
+// mode here when it runs first (run entered it at start, and only the exit
+// path leaves it), as the size change needs.
+func restoreOnForcedExit() {
+	// The 2 s bound helps only with a hang that can be interrupted (a lock
+	// held, a blocked write). A thread stuck uninterruptibly in a KDSETMODE
+	// ioctl stops os.Exit from finishing anyway. Without the guard the
+	// forced exit sends no size command and leaves the console alone (the
+	// launcher's -restore-console runs afterwards, in graphics mode).
+	if !lockWithin(&exitRestore.mu, forcedExitWait) {
+		log.Printf("display: the restore is stuck; exiting without restoring (the launcher restores the console)")
+		return
+	}
+	defer exitRestore.mu.Unlock()
+	if exitRestore.done {
+		return
+	}
+	restoreSize()
+	if err := restoreText(); err != nil {
+		log.Printf("console: %v", err)
+	}
+	exitRestore.done = true
+}
+
+// lockWithin takes mu, polling, and reports false when d passed first.
+func lockWithin(mu *sync.Mutex, d time.Duration) bool {
+	for end := time.Now().Add(d); ; time.Sleep(5 * time.Millisecond) {
+		if mu.TryLock() {
+			return true
+		}
+		if !time.Now().Before(end) {
+			return false
+		}
+	}
 }
 
 // armDeadline starts the shutdown deadline (once).
@@ -206,9 +299,9 @@ func run(f flags) (err error) {
 		if err != nil {
 			log.Printf("error: %v", err) // stderr isn't seen on the MiSTer
 		}
+		log.Printf("MiSTer Subsonic exiting") // last, after the error line
 	}()
 	log.Printf("MiSTer Subsonic %s starting (%s, config %s)", version, f.display, f.config)
-	defer log.Printf("MiSTer Subsonic exiting")
 
 	cfg, warns, cfgErr := config.Load(f.config)
 	if cfg == nil {
@@ -236,19 +329,19 @@ func run(f flags) (err error) {
 		con, err := graphicsMode()
 		if err != nil {
 			log.Printf("console: %v (its text may show over the app)", err)
+		} else {
+			exitRestore.mu.Lock()
+			exitRestore.graphics = true
+			exitRestore.mu.Unlock()
 		}
 		// Exit order (defers run last-in first-out, and -restore-console does
 		// the same): the framebuffer is closed (unmapped), then the input is
 		// released, then the framebuffer gets its old size back (the console
 		// still in graphics mode), and last the console returns to text mode.
-		defer func() {
-			if err := fbControl().Restore(); err != nil {
-				log.Printf("display: %v", err)
-			}
-			if err := con.Restore(); err != nil {
-				log.Printf("console: %v", err)
-			}
-		}()
+		// restoreDisplay shares a guard with the shutdown deadline's restore,
+		// so whichever runs second does nothing (never a size change in text
+		// mode).
+		defer restoreDisplay(con)
 		fb, keep, err := openFB(f.fbdev, profileName, dataDir, allowFullRes(cfg.Display.FullResolution, con))
 		if err != nil {
 			return err

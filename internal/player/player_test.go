@@ -55,6 +55,34 @@ func TestGaplessPrefetchAndHandover(t *testing.T) {
 	h.waitFor("now playing for b", func() bool { return len(h.api.nowPlayings()) == 2 })
 }
 
+// A ReplayGain change while the successor is still opening: the open
+// finishes after it, and the queued track carries the new mode's gain.
+func TestReplayGainChangeWhilePrefetchOpens(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.ReplayGain = "off" })
+	q := songs(2, 100)
+	g := -6.0
+	q[1].ReplayGain = &subsonic.ReplayGain{TrackGain: &g}
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+
+	gate := make(chan struct{})
+	h.opener.mu.Lock()
+	h.opener.gate = gate
+	h.opener.mu.Unlock()
+	h.tickAt(a.ID, 81*time.Second)
+	h.waitFor("prefetch open started", func() bool { return len(h.opener.callList()) == 2 })
+	h.p.SetReplayGain("track") // the successor has no engine track yet
+	close(gate)
+	h.waitFor("QueueNext", func() bool { return h.eng.queueCount() == 1 })
+	b := h.eng.queued[0]
+	if b.Gain < 0.50 || b.Gain > 0.51 {
+		t.Fatalf("queued gain = %v, want the -6 dB of the new mode", b.Gain)
+	}
+	if gain, ok := h.eng.gainOf(b.ID); ok && (gain < 0.50 || gain > 0.51) {
+		t.Fatalf("engine gain for the successor = %v", gain)
+	}
+}
+
 func TestEndOfQueueStops(t *testing.T) {
 	h := newHarness(t, nil)
 	h.p.PlayNow(songs(1, 100), 0)
@@ -749,6 +777,116 @@ func TestSeekingAnMP3ReopensNearTheTarget(t *testing.T) {
 	h.p.Seek(42 * time.Second)
 	if seeks := h.eng.seekList(); len(seeks) != 1 || seeks[0] != (seekCall{b.ID, 42 * time.Second}) {
 		t.Fatalf("an MP3 without a size: seeks = %v, want the engine's", seeks)
+	}
+}
+
+// A seek inside what the stream already holds swaps in a decoder on the same
+// stream and keeps the queued successor; a seek beyond it reopens as before.
+func TestSeekingAnMP3InsideTheStreamWindowKeepsTheNextTrack(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.window = func(at time.Duration) bool { return at < 200*time.Second }
+	q := songs(2, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 285*time.Second)
+	h.waitFor("successor queued", func() bool { return h.eng.queueCount() == 1 })
+	opens := len(h.opener.callList())
+
+	h.p.Seek(100 * time.Second)
+	h.waitFor("replace", func() bool { return len(h.eng.replaceList()) == 1 })
+	tr := h.eng.replaceList()[0]
+	if tr.Offset != 100*time.Second || tr.ID == a.ID || tr.Format != audio.FormatMP3 {
+		t.Fatalf("replacement = %+v, want a new track starting at 100s", tr)
+	}
+	if n, c := h.eng.playCount(), h.eng.clearCount(); n != 1 || c != 0 {
+		t.Fatalf("plays %d, clears %d: the seek must not restart playback or drop the successor", n, c)
+	}
+	if n := len(h.opener.callList()); n != opens || len(h.eng.seekList()) != 0 {
+		t.Fatalf("opens %d -> %d, engine seeks %v: the stream should be reused", opens, n, h.eng.seekList())
+	}
+	if h.p.State().NextIndex != 1 {
+		t.Fatal("the successor is no longer next")
+	}
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: tr.ID}
+	h.waitFor("playing", func() bool { return h.p.State().Status == Playing })
+	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: tr.ID}
+	h.waitFor("handover to the queued successor", func() bool { return h.p.State().Index == 1 })
+	if n := len(h.opener.callList()); n != opens {
+		t.Fatalf("the successor was opened again (%d opens)", n)
+	}
+
+}
+
+// The engine handed over to the successor before the retarget's Replace
+// ran, so it refuses it: the player has moved on to the successor by then
+// and must ignore the stale failure instead of reopening the old song.
+func TestRetargetRefusedAfterHandoverKeepsTheSuccessor(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.window = func(at time.Duration) bool { return at < 200*time.Second }
+	q := songs(2, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 285*time.Second)
+	h.waitFor("successor queued", func() bool { return h.eng.queueCount() == 1 })
+	next := h.eng.queued[0]
+	opens := len(h.opener.callList())
+
+	h.p.Seek(100 * time.Second)
+	h.waitFor("replace", func() bool { return len(h.eng.replaceList()) == 1 })
+	tr := h.eng.replaceList()[0]
+	h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
+	h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: next.ID}
+	h.eng.events <- audio.Event{Kind: audio.EventSeekFailed, TrackID: tr.ID, Err: audio.ErrNotCurrent}
+	h.waitFor("handover", func() bool { return h.p.State().Index == 1 })
+	h.p.do(func() {})
+	h.p.do(func() {})
+	if n, o := h.eng.playCount(), len(h.opener.callList()); n != 1 || o != opens {
+		t.Fatalf("plays %d, opens %d -> %d: the stale failure must not reopen", n, opens, o)
+	}
+	if h.p.State().Index != 1 {
+		t.Fatal("the successor is no longer current")
+	}
+}
+
+// A refused Replace while the retargeted track is still current falls back
+// to reopening at the seek offset.
+func TestRetargetRefusedReopensAtTheSeekOffset(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.window = func(at time.Duration) bool { return at < 200*time.Second }
+	q := songs(1, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 10*time.Second)
+	h.p.Seek(100 * time.Second)
+	h.waitFor("replace", func() bool { return len(h.eng.replaceList()) == 1 })
+	tr := h.eng.replaceList()[0]
+	h.eng.events <- audio.Event{Kind: audio.EventSeekFailed, TrackID: tr.ID, Err: audio.ErrNotCurrent}
+	h.waitFor("reopen", func() bool { return h.eng.playCount() == 2 })
+	calls := h.opener.callList()
+	if last := calls[len(calls)-1]; last.offset != 100*time.Second {
+		t.Fatalf("reopened at %v, want 100s", last.offset)
+	}
+}
+
+func TestSeekingAnMP3BeyondTheStreamWindowReopens(t *testing.T) {
+	h := newHarness(t, nil)
+	h.opener.window = func(at time.Duration) bool { return at < 200*time.Second }
+	q := songs(2, 300)
+	q[0].Suffix, q[0].Size = "mp3", 9_600_000
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 285*time.Second)
+	h.waitFor("successor queued", func() bool { return h.eng.queueCount() == 1 })
+	h.p.Seek(250 * time.Second)
+	h.waitFor("reopen", func() bool { return h.eng.playCount() == 2 })
+	if last := h.opener.callList()[len(h.opener.callList())-1]; last.id != "sa" || last.offset != 250*time.Second {
+		t.Fatalf("reopen call = %+v", last)
+	}
+	if n := len(h.eng.replaceList()); n != 0 || h.eng.clearCount() != 1 {
+		t.Fatalf("replaces %d, clears %d; want a plain reopen that drops the successor", n, h.eng.clearCount())
 	}
 }
 

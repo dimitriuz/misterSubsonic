@@ -112,27 +112,41 @@ type Engine struct {
 	segs    []segment // guarded by mu
 	evq     []Event   // guarded by mu
 	busy    io.Closer // guarded by mu: source of the voice being decoded
+	busyID  uint64    // guarded by mu: id of that voice's track
 	killed  io.Closer // guarded by mu: source closed by interrupt, reason for failed open
 	seekReq *seekReq  // guarded by mu: latest requested seek, not yet run
+	// Replace calls whose command hasn't run yet, guarded by mu.
+	replacing int
+	// Play and Stop calls whose command hasn't run yet, guarded by mu.
+	superseding int
 
 	// Owned by the run goroutine.
-	cur      *voice
-	ended    bool // decoding reached the end of the queue naturally (not Stop)
-	next     *voice
-	opening  *Track
-	openedAt time.Time // when opening was queued
-	gen      int
-	stops    int // incremented at top of doStop to detect Stop during finishCur's wait
-	rs       *Resampler
-	chainOut uint64
-	chainIn  uint64
-	written  uint64
-	pending  []float32 // resampled output not yet taken by the device
-	pendBuf  []float32 // pending's backing array, reused so decoding doesn't allocate
-	scratch  []float32
+	cur        *voice
+	ended      bool // decoding reached the end of the queue naturally (not Stop)
+	next       *voice
+	opening    *Track
+	openedAt   time.Time // when opening was queued
+	gen        int
+	stops      int // incremented at top of doStop to detect Stop during finishCur's wait
+	rs         *Resampler
+	chainOut   uint64
+	chainIn    uint64
+	written    uint64
+	finishedID uint64    // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
+	pending    []float32 // resampled output not yet taken by the device
+	pendBuf    []float32 // pending's backing array, reused so decoding doesn't allocate
+	scratch    []float32
 }
 
 func NewEngine(o EngineOptions) *Engine {
+	e := newEngine(o)
+	go e.run()
+	go e.monitor()
+	return e
+}
+
+// newEngine builds an Engine without starting its goroutines.
+func newEngine(o EngineOptions) *Engine {
 	if o.OpenDecoder == nil {
 		o.OpenDecoder = OpenDecoder
 	}
@@ -159,8 +173,6 @@ func NewEngine(o EngineOptions) *Engine {
 		segs:    []segment{{start: 0, id: 0}},
 		scratch: make([]float32, o.ChunkFrames*2),
 	}
-	go e.run()
-	go e.monitor()
 	return e
 }
 
@@ -169,8 +181,48 @@ func (e *Engine) Events() <-chan Event { return e.events }
 // Play stops whatever is playing and starts t immediately.
 func (e *Engine) Play(t Track) {
 	e.dropSeekReq()
-	e.send(func() { e.doPlay(t) }, t.Source)
+	e.addSuperseding(1)
+	if !e.send(func() { e.addSuperseding(-1); e.doPlay(t) }, t.Source) {
+		e.addSuperseding(-1)
+	}
 	e.interrupt(t.Source)
+}
+
+// Replace swaps track cur, the one playing, for t like Play, but keeps the
+// queued successor: a seek that reopens the current song (an MP3 estimated by
+// byte, say) must not cost the gapless next one. prep, if not nil, runs
+// first and may move a stream the old track is still reading (to wake a
+// stalled read, say); the old track ending meanwhile doesn't start the
+// successor.
+//
+// If cur is no longer the current track (the successor took over, or
+// nothing plays), nothing playing changes: t's source is closed and an
+// EventSeekFailed with ErrNotCurrent for t.ID comes back, so the caller can
+// reopen instead.
+func (e *Engine) Replace(cur uint64, t Track, prep func()) {
+	e.mu.Lock()
+	e.replacing++
+	e.mu.Unlock()
+	if prep != nil {
+		prep()
+	}
+	e.dropSeekReq()
+	if !e.send(func() { e.doReplace(cur, t) }, t.Source) {
+		e.doneReplacing()
+	}
+	e.interruptIf(t.Source, func(id uint64) bool { return id == cur })
+}
+
+func (e *Engine) addSuperseding(d int) {
+	e.mu.Lock()
+	e.superseding += d
+	e.mu.Unlock()
+}
+
+func (e *Engine) doneReplacing() {
+	e.mu.Lock()
+	e.replacing--
+	e.mu.Unlock()
 }
 
 // QueueNext sets the track to continue with, gaplessly, after the current
@@ -186,7 +238,10 @@ func (e *Engine) ClearNext() { e.send(e.cancelNext, nil) }
 // Stop halts playback and discards everything buffered.
 func (e *Engine) Stop() {
 	e.dropSeekReq()
-	e.send(e.doStop, nil)
+	e.addSuperseding(1)
+	if !e.send(func() { e.addSuperseding(-1); e.doStop() }, nil) {
+		e.addSuperseding(-1)
+	}
 	e.interrupt(nil)
 }
 
@@ -276,8 +331,8 @@ func (e *Engine) Position() (id uint64, pos time.Duration, ok bool) {
 
 // Close stops the engine and closes every track source it still holds,
 // including those of commands it never got to and of successors that
-// finished opening too late. Events() is closed afterwards. The Output is
-// not closed.
+// finished opening too late. Events() is closed shortly afterwards, by the
+// monitor goroutine, not before Close returns. The Output is not closed.
 func (e *Engine) Close() {
 	e.closeOnce.Do(func() { close(e.closing) }) // before sendMu: a blocked send holds it
 	e.sendMu.Lock()
@@ -331,10 +386,17 @@ func (e *Engine) send(f func(), src io.ReadSeeker) bool {
 // track's source: if the run loop already picked the command up, busy is
 // that source and must be left alone.
 func (e *Engine) interrupt(keep io.ReadSeeker) {
+	e.interruptIf(keep, func(uint64) bool { return true })
+}
+
+// interruptIf is interrupt, but only if the track being decoded satisfies
+// ok: a Replace that turns out to be stale must not close the source of the
+// track that is playing instead.
+func (e *Engine) interruptIf(keep io.ReadSeeker, ok func(busyID uint64) bool) {
 	kc, _ := keep.(io.Closer)
 	e.mu.Lock()
 	c := e.busy
-	if c == nil || (kc != nil && c == kc) {
+	if c == nil || (kc != nil && c == kc) || !ok(e.busyID) {
 		e.mu.Unlock()
 		return
 	}
@@ -344,10 +406,10 @@ func (e *Engine) interrupt(keep io.ReadSeeker) {
 	c.Close()
 }
 
-func (e *Engine) setBusy(src io.ReadSeeker) {
+func (e *Engine) setBusy(src io.ReadSeeker, id uint64) {
 	c, _ := src.(io.Closer)
 	e.mu.Lock()
-	e.busy = c
+	e.busy, e.busyID = c, id
 	e.mu.Unlock()
 }
 
@@ -584,9 +646,23 @@ func softClip(s float32) float32 {
 }
 
 func (e *Engine) finishCur() {
+	var id uint64
+	if e.cur != nil {
+		id = e.cur.t.ID
+	}
 	closeVoice(e.cur)
 	e.cur = nil
-	e.setBusy(nil)
+	e.setBusy(nil, 0)
+	e.mu.Lock()
+	replacing := e.replacing > 0
+	e.mu.Unlock()
+	if replacing {
+		// A Replace is on its way: the successor stays queued for after it.
+		// No breakChain or ending segment here: doReplace always follows and
+		// stops or restarts the current track itself.
+		e.finishedID = id
+		return
+	}
 	stops := e.stops
 	deadline := time.Now().Add(e.o.openWait)
 	for e.next == nil && e.opening != nil && e.cur == nil {
@@ -607,6 +683,14 @@ func (e *Engine) finishCur() {
 	if e.cur != nil {
 		return // a Play arrived while we waited
 	}
+	e.startSuccessorOrEnd()
+}
+
+// startSuccessorOrEnd runs once the current track is over: the queued
+// successor starts gaplessly, or, with none, the queue ends (a successor
+// still opening starts when it is open).
+func (e *Engine) startSuccessorOrEnd() {
+	e.finishedID = 0
 	if e.next != nil {
 		v := e.next
 		e.next = nil
@@ -622,6 +706,9 @@ func (e *Engine) finishCur() {
 func (e *Engine) breakChain() {
 	if e.rs != nil {
 		e.pending = e.rs.Flush(e.pending)
+		if cap(e.pending) > cap(e.pendBuf) {
+			e.pendBuf = e.pending[:0] // it grew: keep the bigger buffer
+		}
 		e.rs.Close()
 		e.rs = nil
 	}
@@ -647,8 +734,9 @@ func (e *Engine) startVoice(v *voice, gapless bool) {
 		}
 	}
 	e.cur = v
+	e.finishedID = 0
 	e.ended = false
-	e.setBusy(v.t.Source)
+	e.setBusy(v.t.Source, v.t.ID)
 	e.addSegment(segment{start: start, id: v.t.ID, base: v.t.Offset})
 }
 
@@ -667,22 +755,73 @@ func (e *Engine) openVoice(t Track) (*voice, error) {
 
 func (e *Engine) doPlay(t Track) {
 	e.doStop()
-	e.setBusy(t.Source)
+	e.startTrack(t, false)
+}
+
+func (e *Engine) doReplace(cur uint64, t Track) {
+	e.doneReplacing()
+	if !e.isReplaceable(cur) {
+		closeSource(t.Source)
+		e.queueEvent(Event{Kind: EventSeekFailed, TrackID: t.ID, Err: ErrNotCurrent})
+		// finishCur left the successor queued for a Replace that is now
+		// refused: nothing else will start it.
+		// A Play or Stop queued behind the refusal replaces the successor
+		// anyway: starting it for an instant would be wasted.
+		e.mu.Lock()
+		more := e.replacing > 0 || e.superseding > 0
+		e.mu.Unlock()
+		strandedSuccessor := e.cur == nil && e.finishedID != 0 && !more
+		if strandedSuccessor {
+			e.startSuccessorOrEnd()
+		}
+		return
+	}
+	e.stopCurrent()
+	e.startTrack(t, true)
+}
+
+// isReplaceable reports whether cur is the track a Replace may swap: it is
+// being decoded, or it just ended or was interrupted with this Replace
+// pending (the successor was left queued).
+func (e *Engine) isReplaceable(cur uint64) bool {
+	if e.cur != nil {
+		return e.cur.t.ID == cur
+	}
+	return cur != 0 && e.finishedID == cur
+}
+
+// startTrack opens t and makes it the current track. If it can't open and
+// keepNext, the queued successor starts instead.
+func (e *Engine) startTrack(t Track, keepNext bool) {
+	e.setBusy(t.Source, t.ID)
 	if e.quitting() { // Close closes quit before it reads busy: if this misses quit, interrupt sees this source
-		e.setBusy(nil)
+		e.setBusy(nil, 0)
 		closeSource(t.Source)
 		return
 	}
 	v, err := e.openVoice(t)
-	e.setBusy(nil)
+	e.setBusy(nil, 0)
 	if err != nil {
 		// Check if this error is because the source was interrupted.
 		kc, _ := t.Source.(io.Closer)
 		e.mu.Lock()
 		interrupted := kc != nil && e.killed == kc
+		replacing := e.replacing > 0
 		e.mu.Unlock()
+		if interrupted && replacing {
+			// A Replace for t is on its way (a second seek): it is accepted
+			// like one for a track that just ended.
+			e.finishedID = t.ID
+		}
 		if !interrupted {
 			e.queueEvent(Event{Kind: EventError, TrackID: t.ID, Err: err})
+			if keepNext && e.next != nil {
+				v := e.next
+				e.next = nil
+				e.startVoice(v, false)
+			} else if keepNext {
+				e.ended = true // a successor still opening (or queued later) starts when it is open
+			}
 		}
 		return
 	}
@@ -690,12 +829,18 @@ func (e *Engine) doPlay(t Track) {
 }
 
 func (e *Engine) doStop() {
+	e.stopCurrent()
+	e.cancelNext()
+}
+
+// stopCurrent drops the current track and whatever is buffered of it.
+func (e *Engine) stopCurrent() {
 	e.stops++
 	closeVoice(e.cur)
 	e.cur = nil
+	e.finishedID = 0
 	e.ended = false
-	e.setBusy(nil)
-	e.cancelNext()
+	e.setBusy(nil, 0)
 	if e.rs != nil {
 		e.rs.Close()
 		e.rs = nil

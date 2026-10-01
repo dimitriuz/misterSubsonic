@@ -177,3 +177,20 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
 - **Crash restore (item 22):** after `kill -9` of the app at 1920×1200, the launcher said "stopped with an error". Its `-restore-console` put the framebuffer back to 960×600 and removed `/tmp/mistersubsonic.fb`, with no kernel errors.
 - **No stale pixels (item 25):** in a 2½-minute run with `-verify-redraw` at 1920×1200, with music playing, the user browsed grids and lists, opened Now Playing and used the volume keys. `log.txt` has 0 "partial redraw differs" lines.
 - **Caution for tools:** reading `/dev/fb0` with `read()` (`head`, `dd`, `cat`) while the app is at full resolution oopses the kernel (`mmiocpy`), because the driver's read path keeps the old window. Use the app's own screenshot (Print Screen) instead.
+
+## Plan 5 on the MiSTer (2026-09-30)
+
+**Cover decoding** (`gfx.test -test.bench DecodeCover`: a 2000×2000 JPEG scaled to 600×600; test binaries only, nothing on the TV):
+
+| | Decode + scale | Scale only |
+|---|---|---|
+| Before Plan 5 | 1.98 s | 1.16 s |
+| Row loops instead of a per-pixel closure | 1.93 s | — |
+| No per-pixel division | 1.76 s | 0.99 s |
+| Opaque fast path (32-bit sums, no alpha weighting) | **1.38 s** | **0.61 s** |
+
+- The Cortex-A9 has no hardware integer divide, so each per-pixel `/` was a call to the software `runtime.udiv`: 17% of the scaling time in a device profile. The box filter now divides with exact multiply-and-shift reciprocals, and the YCbCr row conversion uses a column table.
+- JPEG covers are always opaque, so their averages use plain 32-bit sums. The output is bit-identical to before, and the tests check that exactly.
+- What remains is Go's standard JPEG decoder, about 0.77 s for this size.
+
+**On the TV:** pending. Run `docs/testing-on-mister.md` items 26–29 and record them here.

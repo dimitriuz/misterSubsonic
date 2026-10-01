@@ -110,7 +110,7 @@ func TestConnectBuildsSessionAndExitsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "servers", "x", "cache", "art")); err != nil {
+	if _, err := os.Stat(filepath.Join((&sessions{dataDir: dir}).serverDir("x"), "cache", "art")); err != nil {
 		t.Fatalf("art cache not created after connect: %v", err)
 	}
 }
@@ -237,5 +237,51 @@ func TestScreenshotDir(t *testing.T) {
 		if got := screenshotDir(c.flag, c.display, c.data); got != c.want {
 			t.Errorf("screenshotDir(%q, %q, %q) = %q, want %q", c.flag, c.display, c.data, got, c.want)
 		}
+	}
+}
+
+// The final error line comes before "exiting", not after it.
+func TestTheErrorLineComesBeforeExiting(t *testing.T) {
+	nullDevice(t)
+	dir, cfg := writeConfig(t, "http://127.0.0.1:1")
+	old := beforeRun
+	beforeRun = func(*ui.App) { panic("boom") }
+	defer func() { beforeRun = old }()
+	logPath := filepath.Join(dir, "app.log")
+	run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: time.Second, log: logPath})
+	b, _ := os.ReadFile(logPath)
+	e, x := strings.Index(string(b), "error: panic: boom"), strings.Index(string(b), "MiSTer Subsonic exiting")
+	if e < 0 || x < 0 || e > x {
+		t.Fatalf("error at %d, exiting at %d:\n%s", e, x, b)
+	}
+}
+
+// An oversized crash.txt is rotated to crash.txt.1, not deleted.
+func TestAnOversizedCrashFileIsRotated(t *testing.T) {
+	dir := t.TempDir()
+	crash := filepath.Join(dir, "crash.txt")
+	if err := os.WriteFile(crash, make([]byte, logMax+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	openLog(filepath.Join(dir, "log.txt"), "fbdev", dir)()
+	if st, err := os.Stat(crash + ".1"); err != nil || st.Size() != logMax+1 {
+		t.Fatalf("crash.txt.1: %v %v", st, err)
+	}
+	if st, err := os.Stat(crash); err != nil || st.Size() != 0 {
+		t.Fatalf("crash.txt: %v %v", st, err)
+	}
+}
+
+// A crash.txt that can't be opened is logged, not silent.
+func TestAnUnopenableCrashFileIsLogged(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "crash.txt"), 0o755); err != nil { // a directory: open for append fails
+		t.Fatal(err)
+	}
+	closeLog := openLog(filepath.Join(dir, "log.txt"), "fbdev", dir)
+	closeLog()
+	b, _ := os.ReadFile(filepath.Join(dir, "log.txt"))
+	if !strings.Contains(string(b), "crash.txt") {
+		t.Fatalf("log:\n%s", b)
 	}
 }

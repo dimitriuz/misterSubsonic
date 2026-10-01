@@ -31,7 +31,15 @@ func TestExampleConfigShowsEveryOption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(b)
+	// A key counts when a whole line is "key = ..." or "# key = ...": a
+	// mention inside another comment or a longer key name doesn't.
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
+		if k, _, ok := strings.Cut(line, " = "); ok {
+			have[k] = true
+		}
+	}
 	for _, typ := range []reflect.Type{reflect.TypeOf(Config{}), reflect.TypeOf(Server{}), reflect.TypeOf(Playback{}),
 		reflect.TypeOf(Display{}), reflect.TypeOf(Cache{})} {
 		for i := range typ.NumField() {
@@ -39,7 +47,7 @@ func TestExampleConfigShowsEveryOption(t *testing.T) {
 			if typ.Field(i).Type.Kind() == reflect.Struct || typ.Field(i).Type.Kind() == reflect.Slice {
 				continue // tables: [playback], [[server]]
 			}
-			if !strings.Contains(text, key+" = ") {
+			if !have[key] {
 				t.Errorf("%s isn't in the example", key)
 			}
 		}

@@ -47,6 +47,26 @@ func TestGridNavigation(t *testing.T) {
 	}
 }
 
+// R on a short last row keeps the column when the last row has it.
+func TestGridPageDownKeepsTheColumn(t *testing.T) {
+	var g Grid
+	c := gfx.NewCanvas(300, 200)
+	g.Draw(c, c.Bounds(), 9, 100, 100, func(int, gfx.Rect, bool) {}) // 3 columns, 2 rows: 9 cells is 3 full rows
+	for _, s := range []struct{ n, from, want int }{
+		{8, 4, 7},   // column 1 exists in the short last row (6, 7)
+		{8, 5, 7},   // column 2 doesn't: its last cell
+		{7, 1, 6},   // the last row is just cell 6
+		{9, 0, 6},   // a whole page down is the last row already
+		{9, 7, 7},   // already there
+		{20, 4, 10}, // a page down within the grid is unchanged
+	} {
+		g.Focus = s.from
+		if !g.Handle(press(input.BtnR), s.n) || g.Focus != s.want {
+			t.Errorf("n=%d, R from %d: focus %d, want %d", s.n, s.from, g.Focus, s.want)
+		}
+	}
+}
+
 func TestListAndTabsLetNeighboursTakeFocus(t *testing.T) {
 	var l List
 	if l.Handle(press(input.BtnUp), 3) {

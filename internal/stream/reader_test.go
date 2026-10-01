@@ -158,6 +158,93 @@ func TestSeekInsideWindowUsesNoNewRequest(t *testing.T) {
 	}
 }
 
+func TestSeekIfBufferedOnlyMovesInsideTheBuffer(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.WindowBytes = 1 << 20
+	r := open(t, s.URL, o)
+	checkBytes(t, readAt(t, r, 0, 100<<10), 0)
+	deadline := time.Now().Add(2 * time.Second)
+	for r.Buffered() < 512<<10 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !r.SeekIfBuffered(400 << 10) {
+		t.Fatal("400 KiB is buffered but the seek said no")
+	}
+	buf := make([]byte, 100)
+	io.ReadFull(r, buf)
+	checkBytes(t, buf, 400<<10)
+	if r.SeekIfBuffered(6 << 20) {
+		t.Fatal("6 MiB is beyond the window but the seek said yes")
+	}
+	if r.SeekIfBuffered(-1) {
+		t.Fatal("a negative offset is not buffered")
+	}
+	io.ReadFull(r, buf) // the refused seek left the position alone
+	checkBytes(t, buf, 400<<10+100)
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("%d requests, want 1", n)
+	}
+	r.Close()
+	if r.SeekIfBuffered(400 << 10) {
+		t.Fatal("a closed reader seeks")
+	}
+}
+
+// A fetch in flight may overwrite what lies more than BehindBytes behind the
+// read position, so those bytes no longer count as held.
+func TestHoldsLeavesOutWhatAFetchInFlightMayOverwrite(t *testing.T) {
+	const size = 64 << 10
+	part := func(from, to int) []byte {
+		b := make([]byte, to-from)
+		for i := range b {
+			b[i] = pattern(int64(from + i))
+		}
+		return b
+	}
+	release := make(chan struct{})
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n != 1 {
+			return false
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(size))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Write(part(0, 8<<10))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+			w.Write(part(8<<10, size))
+		case <-r.Context().Done():
+		}
+		return true
+	})
+	o := testOptions()
+	o.WindowBytes, o.BehindBytes, o.StallTimeout = 8<<10, 2<<10, 5*time.Second
+	r := open(t, s.URL, o)
+	checkBytes(t, readAt(t, r, 0, 4<<10), 0)
+	// The ring is full, so the fetcher now has room for the 2 KiB that lie
+	// more than BehindBytes behind the reader, and waits for the server.
+	deadline := time.Now().Add(2 * time.Second)
+	for r.Holds(1<<10) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if r.Holds(1<<10) || r.SeekIfBuffered(1<<10) {
+		t.Fatal("byte 1024 is about to be overwritten, but the reader still counts it as held")
+	}
+	close(release)
+	if !r.SeekIfBuffered(3 << 10) {
+		t.Fatal("byte 3072 is within BehindBytes and held, but the seek said no")
+	}
+	buf := make([]byte, 8<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, 3<<10)
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("%d requests, want 1", n)
+	}
+}
+
 func TestSeekFarIntoHugeFileUsesRange(t *testing.T) {
 	const size = 3 << 30 // 3 GiB, never materialised
 	s := newServer(t, size, nil)
@@ -759,5 +846,317 @@ func TestOpenRetryAfterBeyondTheDeadlineReportsTheServer(t *testing.T) {
 	}
 	if d := time.Since(start); d > 500*time.Millisecond {
 		t.Fatalf("Open took %v", d)
+	}
+}
+
+// A huge Retry-After is clamped, not overflowed into a negative or tiny wait.
+func TestParseRetryAfterClampsAbsurdValues(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, h := range []string{"99999999999", "9223372036854775807", "99999999999999999999", "Fri, 31 Dec 9999 23:59:59 GMT"} {
+		if got := parseRetryAfter(h, now); got != maxRetryAfter {
+			t.Errorf("parseRetryAfter(%q) = %v, want the clamp %v", h, got, maxRetryAfter)
+		}
+	}
+}
+
+// An absurd Retry-After still gives up at once (it is beyond the budget).
+func TestAbsurdRetryAfterGivesUp(t *testing.T) {
+	const size = 1 << 20
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			dropAfter(w, size, 100<<10)
+		}
+		w.Header().Set("Retry-After", "99999999999")
+		w.WriteHeader(http.StatusTooManyRequests)
+		return true
+	})
+	r := open(t, s.URL, testOptions())
+	start := time.Now()
+	if _, err := io.ReadAll(r); err == nil {
+		t.Fatal("ReadAll succeeded")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("gave up after %v", d)
+	}
+}
+
+// Promote on a closed reader allocates nothing and changes nothing.
+func TestPromoteOnAClosedReaderIsANoOp(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	r.Close()
+	r.alloc = func(int64) []byte { t.Error("Promote allocated on a closed reader"); return nil }
+	r.Promote()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.ring) != 80<<10 || r.prefetch == 0 {
+		t.Fatalf("ring %d, prefetch %d: a closed reader changed", len(r.ring), r.prefetch)
+	}
+}
+
+// The ring is allocated without the lock, so a Read during the allocation
+// isn't stalled by it; a Close that lands meanwhile keeps the old ring.
+func TestPromoteAllocatesOutsideTheLock(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	buf := make([]byte, 10<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	locked := make(chan bool, 1)
+	r.alloc = func(n int64) []byte {
+		if r.mu.TryLock() {
+			r.mu.Unlock()
+			locked <- false
+		} else {
+			locked <- true
+		}
+		// A Read now must go through, not wait for this allocation.
+		done := make(chan struct{})
+		go func() { r.Read(buf); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("Read blocked during the allocation")
+		}
+		return make([]byte, n)
+	}
+	r.Promote()
+	select {
+	case held := <-locked:
+		if held {
+			t.Fatal("the lock was held during the allocation")
+		}
+	default:
+		t.Fatal("Promote never called the allocation hook")
+	}
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes", big)
+	}
+	checkBytes(t, readAt(t, r, 0, 64<<10), 0)
+}
+
+// Two Promote calls at once allocate the window once: the second sees the
+// first at work and only lifts the prefetch limit.
+func TestConcurrentPromoteAllocatesOnce(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	var allocs atomic.Int32
+	inAlloc, release := make(chan struct{}), make(chan struct{})
+	r.alloc = func(n int64) []byte {
+		if allocs.Add(1) == 1 {
+			close(inAlloc)
+			<-release
+		}
+		return make([]byte, n)
+	}
+	first := make(chan struct{})
+	go func() { r.Promote(); close(first) }()
+	<-inAlloc
+	second := make(chan struct{})
+	go func() { r.Promote(); close(second) }()
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second Promote waited for the first")
+	}
+	close(release)
+	<-first
+	if n := allocs.Load(); n != 1 {
+		t.Fatalf("%d allocations, want 1", n)
+	}
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes", big)
+	}
+	// And a later Promote has nothing left to do.
+	r.alloc = func(int64) []byte { t.Error("Promote of a full ring allocated"); return nil }
+	r.Promote()
+}
+
+// A Close that lands while Promote allocates keeps the old ring and
+// doesn't panic.
+func TestCloseDuringPromoteAllocation(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	r.alloc = func(n int64) []byte {
+		r.Close()
+		return make([]byte, n)
+	}
+	r.Promote()
+	r.mu.Lock()
+	ring := len(r.ring)
+	r.mu.Unlock()
+	if ring != 80<<10 {
+		t.Fatalf("ring %d bytes after a Close mid-Promote, want the old 81920", ring)
+	}
+	if _, err := r.Read(make([]byte, 1)); err == nil {
+		t.Fatal("Read on a closed reader succeeded")
+	}
+}
+
+// A Seek out of the window while Promote allocates restarts the fetch; the
+// grown ring then serves the new position, not stale bytes.
+func TestSeekDuringPromoteAllocation(t *testing.T) {
+	s := newServer(t, 8<<20, nil)
+	o := testOptions()
+	o.PrefetchBytes = 64 << 10
+	r := open(t, s.URL, o)
+	if _, err := io.ReadFull(r, make([]byte, 10<<10)); err != nil {
+		t.Fatal(err)
+	}
+	const target = 5<<20 + 123
+	r.alloc = func(n int64) []byte {
+		if _, err := r.Seek(target, io.SeekStart); err != nil {
+			t.Error(err)
+		}
+		return make([]byte, n)
+	}
+	r.Promote()
+	r.mu.Lock()
+	big := len(r.ring)
+	r.mu.Unlock()
+	if big != 1<<20 {
+		t.Fatalf("promoted ring %d bytes", big)
+	}
+	buf := make([]byte, 100<<10)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatal(err)
+	}
+	checkBytes(t, buf, target)
+}
+
+// A file that is shorter on reconnect ends at its new size: the 416-versus-
+// size check goes by the latest response, not the first.
+func TestShrunkFileEndsAtTheNewSize(t *testing.T) {
+	const size, shrunk = 1 << 20, 300 << 10
+	s := newServer(t, size, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			dropAfter(w, size, 100<<10)
+		}
+		http.ServeContent(w, r, "", time.Time{}, &virtualFile{size: shrunk})
+		return true
+	})
+	r := open(t, s.URL, testOptions())
+	got, err := io.ReadAll(r)
+	if err != nil || len(got) != shrunk {
+		t.Fatalf("ReadAll = %d bytes, %v; want %d bytes", len(got), err, shrunk)
+	}
+	checkBytes(t, got, 0)
+}
+
+// Open's whole retry, waits and requests alike, ends with the budget.
+func TestOpenBudgetRunsOut(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return true
+	})
+	o := testOptions()
+	o.RetryBudget = 100 * time.Millisecond
+	start := time.Now()
+	_, err := Open(context.Background(), s.URL, o)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Open error = %v, want the 503", err)
+	}
+	if d := time.Since(start); d > time.Second || s.requests.Load() < 2 {
+		t.Fatalf("Open took %v over %d requests", d, s.requests.Load())
+	}
+}
+
+// A retry request that hangs is cut off by the budget, not the stall timeout.
+func TestOpenBudgetBoundsTheRetryRequest(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		if n == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		<-r.Context().Done() // never answers
+		return true
+	})
+	o := testOptions()
+	o.StallTimeout = 10 * time.Second
+	o.RetryBudget = 300 * time.Millisecond
+	start := time.Now()
+	_, err := Open(context.Background(), s.URL, o)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Open error = %v, want the server's 503", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Open took %v, the budget is 300ms", d)
+	}
+}
+
+// A first request the budget cuts short says so, not a bare "context
+// canceled".
+func TestOpenBudgetCutsTheFirstRequest(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		<-r.Context().Done() // never answers
+		return true
+	})
+	o := testOptions()
+	o.StallTimeout = 10 * time.Second
+	o.RetryBudget = 300 * time.Millisecond
+	start := time.Now()
+	_, err := Open(context.Background(), s.URL, o)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "retry budget spent") {
+		t.Fatalf("Open error = %v, want a spent retry budget (DeadlineExceeded)", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("Open error = %v, reports a cancel nobody asked for", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Open took %v, the budget is 300ms", d)
+	}
+}
+
+// A cancelled context ends Open's wait between retries.
+func TestOpenCancelDuringTheRetryWait(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return true
+	})
+	o := testOptions()
+	o.Backoff = []time.Duration{10 * time.Second}
+	o.RetryBudget = time.Minute
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := Open(ctx, s.URL, o)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Open error = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("Open took %v after the cancel", d)
+	}
+}
+
+// A 500 on the first request is not retried.
+func TestOpenFailsAtOnceOnServerError(t *testing.T) {
+	s := newServer(t, 1<<20, func(n int, w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusInternalServerError)
+		return true
+	})
+	_, err := Open(context.Background(), s.URL, testOptions())
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("Open error = %v, want the 500", err)
+	}
+	if n := s.requests.Load(); n != 1 {
+		t.Fatalf("%d requests, want 1", n)
 	}
 }

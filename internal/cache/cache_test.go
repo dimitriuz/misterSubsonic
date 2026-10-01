@@ -3,6 +3,7 @@ package cache
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -156,5 +157,77 @@ func TestEvictionRecountsAfterOutsideDeletes(t *testing.T) {
 	}
 	if d.Size() != 600 {
 		t.Fatalf("size %d, want 600", d.Size())
+	}
+}
+
+// A rename that fails (say the target can't be replaced) is reported, and
+// leaves no .tmp file and no change in the counted size.
+func TestAFailedRenameLeavesNothingBehind(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := Open(dir, 1000)
+	blocker := d.path("a") // a non-empty folder where the entry should go
+	os.MkdirAll(filepath.Join(blocker, "x"), 0o755)
+	if err := d.Put("a", bytes.Repeat([]byte{1}, 100)); err == nil {
+		t.Fatal("Put hid the rename error")
+	}
+	if _, err := os.Stat(blocker + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("the .tmp is still there: %v", err)
+	}
+	if d.Size() != 0 {
+		t.Fatalf("size %d after a failed rename", d.Size())
+	}
+}
+
+// A walk that fails must not leave the size at 0 (the cache would then
+// think it is empty and grow past its budget): the old count stays.
+func TestFailedEvictionWalkKeepsTheSize(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := Open(dir, 1000)
+	for _, k := range []string{"a", "b", "c", "d", "e", "f"} {
+		d.Put(k, bytes.Repeat([]byte{1}, 150))
+	}
+	old := walkDir
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		return fn(root, nil, errors.New("input/output error"))
+	}
+	defer func() { walkDir = old }()
+	before := d.Size()
+	d.Put("g", bytes.Repeat([]byte{1}, 150))
+	if got := d.Size(); got != before+150 {
+		t.Fatalf("size %d after a failed walk, want %d", got, before+150)
+	}
+	for _, k := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		if _, err := os.Stat(d.path(k)); err != nil {
+			t.Errorf("entry %s lost after a failed walk: %v", k, err)
+		}
+	}
+}
+
+// A walk that keeps failing (a bad card) must not be retried on every Put:
+// each retry reads the whole directory. It is tried again after another
+// tenth of the budget has been written.
+func TestFailedEvictionWalkBacksOff(t *testing.T) {
+	d, _ := Open(t.TempDir(), 1000)
+	for _, k := range []string{"a", "b", "c", "d", "e", "f"} {
+		d.Put(k, bytes.Repeat([]byte{1}, 150))
+	}
+	old := walkDir
+	walks := 0
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		walks++
+		return fn(root, nil, errors.New("input/output error"))
+	}
+	defer func() { walkDir = old }()
+	d.Put("g", bytes.Repeat([]byte{1}, 150)) // over the budget: the walk fails
+	if walks != 1 {
+		t.Fatalf("walks = %d after the first Put, want 1", walks)
+	}
+	d.Put("h", bytes.Repeat([]byte{1}, 50)) // under a tenth more: no walk
+	if walks != 1 {
+		t.Fatalf("walks = %d, a failed walk was retried at once", walks)
+	}
+	d.Put("i", bytes.Repeat([]byte{1}, 100)) // a tenth more: tried again
+	if walks != 2 {
+		t.Fatalf("walks = %d, want a retry after a tenth of the budget", walks)
 	}
 }

@@ -62,6 +62,7 @@ func (a *App) Connect() {
 		return
 	}
 	a.Detach()
+	a.connecting = true
 	a.Replace(NewMessageScreen("Connecting…", "Connecting to "+displayURL(srv.URL)+"…", nil))
 	a.o.Connect(a, a.cfg.Clone())
 }
@@ -70,7 +71,9 @@ func (a *App) Connect() {
 func (a *App) Detach() {
 	a.o.Library, a.o.Player, a.o.Art = nil, nil, nil
 	a.conn = ConnInfo{}
+	a.connecting = false
 	a.insecure = false
+	a.stars, a.starBusy, a.starGen = map[starKey]bool{}, map[starKey]bool{}, 0 // they belong to the old connection
 	a.dirty = true
 }
 
@@ -89,6 +92,7 @@ func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 		pl.SetMuted(true) // a new server's player starts muted too
 	}
 	a.conn = info
+	a.connecting = false
 	a.SetInsecure(info.Server.InsecureSkipVerify)
 	a.artists, a.stars, a.starBusy, a.starGen = nil, map[starKey]bool{}, map[starKey]bool{}, 0
 	a.Replace(NewRootScreen(a.P))
@@ -97,6 +101,7 @@ func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 
 // ConnectFailed shows why the server couldn't be reached and what to do.
 func (a *App) ConnectFailed(srv config.Server, err error) {
+	a.connecting = false
 	a.Replace(NewUnreachableScreen(srv, err))
 }
 
@@ -109,6 +114,7 @@ func (a *App) drainInput() {
 		default:
 			a.rep = input.Repeater{}
 			a.swallowed = map[input.Button]bool{}
+			a.wakeKeys = map[input.Button]bool{}
 			a.bDown = time.Time{}
 			return
 		}

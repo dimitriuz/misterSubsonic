@@ -96,7 +96,7 @@ func TestSwitchAndRestore(t *testing.T) {
 	if err := c.Switch(Size{960, 600}, Size{1920, 1200}); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(c.State); string(b) != "960 600\n" {
+	if b, _ := os.ReadFile(c.State); string(b) != "960 600 1920 1200\n" {
 		t.Fatalf("state %q", b)
 	}
 	if err := c.Restore(); err != nil {
@@ -210,5 +210,107 @@ func TestRequestForTheCurrentSizeIsDone(t *testing.T) {
 	}
 	if _, err := os.Stat(c.State); !os.IsNotExist(err) {
 		t.Fatal("the state file is still there")
+	}
+}
+
+// Without a readable res_count nothing can confirm a switch: fail at once,
+// send nothing.
+func TestRequestWithoutResCountFailsAtOnce(t *testing.T) {
+	c := fakeMenu(t, false)
+	c.Wait = 5 * time.Second
+	os.Remove(filepath.Join(c.Sys, "res_count"))
+	start := time.Now()
+	if err := c.Switch(Size{960, 600}, Size{1920, 1200}); err == nil {
+		t.Fatal("no error")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("took %v", time.Since(start))
+	}
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("commands sent: %q", b)
+	}
+	if c.Saved() {
+		t.Fatal("a failed switch left a state file")
+	}
+}
+
+func setSize(c FBControl, s Size) {
+	os.WriteFile(filepath.Join(c.Sys, "width"), []byte(strconv.Itoa(s.W)+"\n"), 0o644)
+	os.WriteFile(filepath.Join(c.Sys, "height"), []byte(strconv.Itoa(s.H)+"\n"), 0o644)
+}
+
+// A state file left by an earlier run, while the framebuffer is at neither
+// size it names as "to", is forgotten without a command.
+func TestRestoreForgetsStaleState(t *testing.T) {
+	c := fakeMenu(t, false)
+	setSize(c, Size{960, 600})
+	os.WriteFile(c.State, []byte("1280 720 1920 1200\n"), 0o644)
+	if err := c.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(c.Cmd); len(b) != 0 {
+		t.Fatalf("commands sent: %q", b)
+	}
+	if c.Saved() {
+		t.Fatal("stale state kept")
+	}
+}
+
+// The framebuffer is at "to": "from" goes back.
+func TestRestoreWhenAtTheSwitchedSize(t *testing.T) {
+	c := fakeMenu(t, false)
+	setSize(c, Size{1920, 1200})
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	if err := c.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(t, c); len(got) != 1 || got[0] != "fb_cmd1 8888 1 960 600" {
+		t.Fatalf("commands %q", got)
+	}
+	if c.Saved() {
+		t.Fatal("state kept after a restore")
+	}
+}
+
+// A file from the previous build holds one size: restore it as before.
+func TestRestoreReadsTheOldOneSizeState(t *testing.T) {
+	c := fakeMenu(t, false)
+	setSize(c, Size{1920, 1200})
+	os.WriteFile(c.State, []byte("960 600\n"), 0o644)
+	if err := c.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(t, c); len(got) != 1 || got[0] != "fb_cmd1 8888 1 960 600" {
+		t.Fatalf("commands %q", got)
+	}
+}
+
+// A failed request keeps the state, so -restore-console can try again.
+func TestRestoreKeepsTheStateWhenTheRequestFails(t *testing.T) {
+	c := fakeMenu(t, true)
+	setSize(c, Size{1920, 1200})
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	if err := c.Restore(); err == nil {
+		t.Fatal("no error")
+	}
+	if !c.Saved() {
+		t.Fatal("state forgotten after a failed restore")
+	}
+}
+
+// After a switch the menu gave a third size: RestoreAlways still asks for
+// "from", where Restore would take the state for stale.
+func TestRestoreAlwaysIgnoresTheStaleCheck(t *testing.T) {
+	c := fakeMenu(t, false)
+	setSize(c, Size{1280, 720}) // neither from nor to
+	os.WriteFile(c.State, []byte("960 600 1920 1200\n"), 0o644)
+	if err := c.RestoreAlways(); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands(t, c); len(got) != 1 || got[0] != "fb_cmd1 8888 1 960 600" {
+		t.Fatalf("commands %q", got)
+	}
+	if c.Saved() {
+		t.Fatal("state kept")
 	}
 }

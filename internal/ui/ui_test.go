@@ -409,7 +409,7 @@ func TestKeysBeforePlayerAttached(t *testing.T) {
 	if err := a.render(); err != nil {
 		t.Fatal(err)
 	}
-	a.Attach(sampleLibrary(), newFakePlayer(), fakeArt{})
+	a.Attach(sampleLibrary(), newFakePlayer(), newFakeArt())
 	a.Replace(NewHomeScreen())
 	if _, ok := a.Top().(*HomeScreen); !ok {
 		t.Fatalf("top = %T", a.Top())

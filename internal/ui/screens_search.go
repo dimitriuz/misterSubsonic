@@ -341,7 +341,7 @@ func (s *SearchScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	h := p.RowH
 	s.tabs.Draw(a, c, gfx.R(results.X, results.Y, results.W, h), s.inResults && s.onTabs)
 	view := gfx.R(results.X, results.Y+h, results.W, results.H-h)
-	a.drawDimmed(!s.inResults, func() {
+	a.drawDimmed(!s.inResults || s.onTabs, func() { // only the focused list scrolls
 		switch s.tabs.Sel {
 		case resArtists:
 			s.artists.Draw(a, c, view)

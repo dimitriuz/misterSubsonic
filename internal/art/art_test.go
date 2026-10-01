@@ -107,6 +107,60 @@ func TestFailuresAreNotRetriedImmediately(t *testing.T) {
 	}
 }
 
+func TestFailedKeysAreBounded(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var mu sync.Mutex
+	h := newHarness(t, func(Key) ([]byte, error) { return nil, errors.New("404") }, Options{
+		Workers: 1,
+		Now:     func() time.Time { mu.Lock(); defer mu.Unlock(); n := now; now = now.Add(time.Millisecond); return n },
+	})
+	for i := 0; i < maxFailed+100; i++ {
+		h.l.Get(Key{subsonic.ID(fmt.Sprintf("al-%d", i)), 64})
+		h.waitReady(t)
+	}
+	h.l.mu.Lock()
+	n := len(h.l.failed)
+	_, newest := h.l.failed[Key{subsonic.ID(fmt.Sprintf("al-%d", maxFailed+99)), 64}]
+	_, oldest := h.l.failed[Key{"al-0", 64}]
+	h.l.mu.Unlock()
+	if n > maxFailed {
+		t.Fatalf("%d failed keys kept, want at most %d", n, maxFailed)
+	}
+	if !newest || oldest {
+		t.Fatalf("newest kept %v, oldest kept %v; want the newest kept and the oldest forgotten", newest, oldest)
+	}
+}
+
+// Past maxFailed, the keys whose RetryAfter has passed go first, all of
+// them, before any still-blocked key is dropped for being the oldest.
+func TestFailedKeysDropExpiredFirst(t *testing.T) {
+	now := time.Unix(100000, 0)
+	h := newHarness(t, func(Key) ([]byte, error) { return nil, errors.New("404") }, Options{
+		Workers:    1,
+		RetryAfter: time.Minute,
+		Now:        func() time.Time { return now },
+	})
+	l := h.l
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := 0; i < maxFailed/2; i++ { // expired: with one RetryAfter, the expired keys are always the oldest
+		l.failed[Key{subsonic.ID(fmt.Sprintf("old-%d", i)), 64}] = now.Add(-time.Hour)
+	}
+	for i := 0; i < maxFailed/2; i++ { // still blocked
+		l.failed[Key{subsonic.ID(fmt.Sprintf("new-%d", i)), 64}] = now.Add(-time.Second)
+	}
+	l.noteFailedLocked(Key{"fresh", 64})
+	if len(l.failed) != maxFailed/2+1 {
+		t.Fatalf("%d failed keys kept, want %d (every expired one gone, every blocked one kept)", len(l.failed), maxFailed/2+1)
+	}
+	if _, ok := l.failed[Key{"new-0", 64}]; !ok {
+		t.Fatal("a still-blocked key was dropped")
+	}
+	if _, ok := l.failed[Key{"old-0", 64}]; ok {
+		t.Fatal("an expired key was kept")
+	}
+}
+
 func TestMemoryBudgetEvictsLRU(t *testing.T) {
 	h := newHarness(t, func(Key) ([]byte, error) { return pngBytes(10, 10), nil }, Options{MemBytes: 900, Workers: 1})
 	for _, id := range []subsonic.ID{"a", "b", "c"} { // 400 bytes each decoded

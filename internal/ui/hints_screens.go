@@ -71,12 +71,13 @@ func (s *ArtistsScreen) Hints(*App) []Hint {
 }
 
 func (s *NowPlayingScreen) Hints(a *App) []Hint {
+	st := a.state() // empty with no player
 	play := "Play"
-	if pl := a.Player(); pl != nil && a.state().Status == player.Playing {
+	if st.Status == player.Playing {
 		play = "Pause"
 	}
 	star := "Star"
-	if song, ok := a.state().Current(); ok && a.isStarred(songStar(song)) {
+	if song, ok := st.Current(); ok && a.isStarred(songStar(song)) {
 		star = "Unstar"
 	}
 	return []Hint{hk(input.BtnA, play), hkPair(input.BtnLeft, input.BtnRight, "Seek"),
@@ -115,26 +116,45 @@ func (s *ServersScreen) Hints(a *App) []Hint {
 
 func (s *UnreachableScreen) Hints(*App) []Hint { return []Hint{hk(input.BtnA, "Choose")} }
 
-func (s *SearchScreen) Hints(*App) []Hint {
+func (s *SearchScreen) Hints(a *App) []Hint {
 	if s.inResults {
 		return []Hint{openHint, menuHint, hk(input.BtnB, "Keyboard")}
 	}
-	return typing(len(s.query) > 0)
+	return typing(a, "", len(s.query) > 0)
 }
 
-// typing is an on-screen keyboard's hints: Delete only when there is text.
-func typing(text bool) []Hint {
-	if !text {
-		return []Hint{hk(input.BtnA, "Type")}
+// typing is a text field's hints. A gamepad types with A on the on-screen
+// keyboard and deletes with X, only when there is text. On a keyboard the
+// letters type directly and Backspace deletes; Enter is hinted (as submit,
+// next) only on a screen where it does that.
+func typing(a *App, enter string, text bool) []Hint {
+	if a.pad {
+		if !text {
+			return []Hint{hk(input.BtnA, "Type")}
+		}
+		return []Hint{hk(input.BtnA, "Type"), hk(input.BtnX, "Delete")}
 	}
-	return []Hint{hk(input.BtnA, "Type"), hk(input.BtnX, "Delete")}
+	var hs []Hint
+	if enter != "" {
+		hs = append(hs, Hint{Button: input.BtnA, Key: "Enter", Rune: '\n', Label: enter})
+	}
+	if text {
+		hs = append(hs, Hint{Button: input.BtnX, Key: "Backspace", Rune: '\b', Label: "Delete"})
+	}
+	return hs
 }
 
-func (s *WizardScreen) Hints(*App) []Hint {
+func (s *WizardScreen) Hints(a *App) []Hint {
+	var hs []Hint
 	if s.step == stepTest {
-		return []Hint{hk(input.BtnA, "Choose")}
+		hs = []Hint{hk(input.BtnA, "Choose")}
+	} else {
+		hs = typing(a, "Next", len(s.fields[s.step]) > 0)
 	}
-	return typing(len(s.fields[s.step]) > 0)
+	if s.step > stepURL { // B goes back a step (on the first one the app adds Back, if it can)
+		hs = withBack(hs)
+	}
+	return hs
 }
 
 func (s *FeedScreen) Hints(*App) []Hint {
@@ -165,7 +185,14 @@ func (s *SidebarRoot) Hints(a *App) []Hint {
 		}
 		return []Hint{openHint}
 	}
-	return hintsOf(a, s.current())
+	// B in a section goes back to the sidebar, unless the section uses it.
+	hs := hintsOf(a, s.current())
+	for _, h := range hs {
+		if h.Button == input.BtnB || h.Pair == input.BtnB {
+			return hs
+		}
+	}
+	return withBack(hs)
 }
 
 func (s *TabbedScreen) Hints(a *App) []Hint {

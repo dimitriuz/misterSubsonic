@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fails when the app links a module whose licence notice isn't shipped:
 # every non-main module must map to a file in third_party/licenses/.
-set -u
+set -u -o pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 1
 
@@ -14,7 +14,13 @@ notice_for() {
 	esac
 }
 
-mods=$(go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./cmd/mistersubsonic | sort -u) || exit 1
+# The host's build and the MiSTer's (ARM) build can link different modules.
+# (The "VAR=x deps" form below sets the variables for that call only; deps is a
+# function, which bash allows, and it does not leak them into later calls.)
+deps() { go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./cmd/mistersubsonic; }
+host=$(deps) || exit 1
+arm=$(GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 deps) || exit 1
+mods=$(printf '%s\n%s\n' "$host" "$arm" | sort -u) || exit 1
 bad=0
 for m in $mods; do
 	f=$(notice_for "$m")

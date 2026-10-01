@@ -105,7 +105,7 @@ func TestConnectedResetsCachesAndShowsTheLibrary(t *testing.T) {
 	ta.in <- input.Event{Button: input.BtnA, Kind: input.Press} // queued before the connection
 	srv := ta.cfg.Servers[1]
 	srv.InsecureSkipVerify = true
-	ta.Connected(ConnInfo{Server: srv, Auth: subsonic.AuthToken}, ta.lib, ta.pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: srv, Auth: subsonic.AuthToken}, ta.lib, ta.pl, newFakeArt())
 	if _, ok := ta.Top().(*SidebarRoot); !ok {
 		t.Fatalf("top %T, want the root", ta.Top())
 	}
@@ -240,5 +240,43 @@ func TestFlushWaitsForASaveInFlight(t *testing.T) {
 		if !strings.Contains(string(b), "volume_db = -9.0") {
 			t.Fatalf("round %d: an older save overtook the flush: %s", i, b)
 		}
+	}
+}
+
+func TestDetachDropsStarState(t *testing.T) {
+	ta, _ := sessionApp(t, twoServers())
+	k := albumStar(ta.lib.albums[0]).key()
+	ta.stars[k], ta.starBusy[k] = true, true
+	ta.Detach()
+	if len(ta.stars) != 0 || len(ta.starBusy) != 0 || ta.stars == nil || ta.starBusy == nil {
+		t.Fatalf("after Detach: stars %v, busy %v", ta.stars, ta.starBusy)
+	}
+}
+
+func TestConnectedClearsStarBusy(t *testing.T) {
+	ta, _ := sessionApp(t, twoServers())
+	k := albumStar(ta.lib.albums[0]).key()
+	ta.starBusy[k] = true // a request of the old connection never answered
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[1]}, ta.lib, ta.pl, newFakeArt())
+	if len(ta.starBusy) != 0 {
+		t.Fatalf("starBusy kept: %v", ta.starBusy)
+	}
+}
+
+func TestSwitchingToTheServerBeingConnectedDoesNotRedial(t *testing.T) {
+	ta, rec := sessionApp(t, twoServers()) // default "home"
+	ta.Connect()                           // in flight
+	ta.switchServer("home")
+	if len(rec.got) != 1 {
+		t.Fatalf("connects %d, want 1", len(rec.got))
+	}
+	ta.ConnectFailed(ta.cfg.Servers[0], errors.New("refused"))
+	ta.switchServer("home") // after a failure it's a retry
+	if len(rec.got) != 2 {
+		t.Fatalf("retry after failure: connects %d, want 2", len(rec.got))
+	}
+	ta.switchServer("cloud")
+	if len(rec.got) != 3 || rec.got[2].DefaultServer != "cloud" {
+		t.Fatalf("other server: connects %d", len(rec.got))
 	}
 }

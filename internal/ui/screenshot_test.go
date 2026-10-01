@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 )
 
@@ -79,7 +80,9 @@ func TestScreenshotSavesTheFrameOnScreen(t *testing.T) {
 func TestScreenshotFailureAndOff(t *testing.T) {
 	ta := newTestApp(t, ProfileHDMI)
 	file := filepath.Join(t.TempDir(), "file")
-	os.WriteFile(file, nil, 0o644)
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ta.o.ScreenshotDir = filepath.Join(file, "shots")
 	ta.Push(NewHomeScreen())
 	ta.settle(t)
@@ -110,5 +113,68 @@ func TestScreenshotDoesNotWakeTheScreensaver(t *testing.T) {
 	shoot(t, ta)
 	if !ta.saver || ta.lastInput != idle {
 		t.Fatalf("saver %v, last input moved %v", ta.saver, ta.lastInput.Sub(idle))
+	}
+}
+
+// A press while a save is still running is refused with a toast, not lost
+// silently.
+func TestScreenshotWhileSavingSaysSo(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.o.ScreenshotDir = t.TempDir()
+	ta.Push(NewHomeScreen())
+	ta.settle(t)
+	ta.press(input.BtnScreenshot)
+	ta.press(input.BtnScreenshot) // the first save hasn't reported back yet
+	if got := lastToast(ta); got != "Still saving the last screenshot" {
+		t.Fatalf("toast %q", got)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	if entries, _ := os.ReadDir(ta.o.ScreenshotDir); len(entries) != 1 {
+		t.Fatalf("%d files, want the one screenshot", len(entries))
+	}
+}
+
+// Over the screensaver the toasts are silent too: a toast would wake it.
+func TestScreenshotToastsStaySilentOverTheScreensaver(t *testing.T) {
+	ta := saverApp(t, ProfileHDMI, 1)
+	ta.o.ScreenshotDir = t.TempDir()
+	ta.now = ta.now.Add(time.Minute)
+	ta.onWake()
+	if !ta.saver {
+		t.Fatal("the screensaver didn't start")
+	}
+	ta.settle(t)
+	ta.press(input.BtnScreenshot)
+	ta.press(input.BtnScreenshot) // still saving
+	if !ta.saver || len(ta.toasts) != 0 {
+		t.Fatalf("saver %v, toasts %v after Still saving", ta.saver, ta.toasts)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	if !ta.saver || len(ta.toasts) != 0 {
+		t.Fatalf("saver %v, toasts %v after Screenshot saved", ta.saver, ta.toasts)
+	}
+}
+
+// A name another process is writing (its .tmp exists) is left alone: the
+// save takes the next free name.
+func TestSaveScreenshotSkipsANameBeingWritten(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "shot.png.tmp")
+	if err := os.WriteFile(other, []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, err := saveScreenshot(dir, "shot", gfx.NewCanvas(8, 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(path) != "shot-2.png" {
+		t.Fatalf("saved as %s, want shot-2.png", filepath.Base(path))
+	}
+	if b, _ := os.ReadFile(other); string(b) != "partial" {
+		t.Fatalf("the other save's file was overwritten: %q", b)
 	}
 }

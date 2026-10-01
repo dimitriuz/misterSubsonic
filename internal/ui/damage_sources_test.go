@@ -115,18 +115,21 @@ func TestMarqueeRedrawsItsLine(t *testing.T) {
 }
 
 // slowArt has a cover only once it is marked ready.
-type slowArt struct{ ready map[subsonic.ID]bool }
+type slowArt struct {
+	ready map[subsonic.ID]bool
+	art   fakeArt
+}
 
 func (s slowArt) Get(k art.Key) (*gfx.Image, bool) {
 	if !s.ready[k.ID] {
 		return nil, false
 	}
-	return fakeArt{}.Get(k)
+	return s.art.Get(k)
 }
 
 // A cover that arrives redraws the cells that show it.
 func TestArrivingCoverRedrawsItsCells(t *testing.T) {
-	sa := slowArt{ready: map[subsonic.ID]bool{}}
+	sa := slowArt{ready: map[subsonic.ID]bool{}, art: newFakeArt()}
 	ta := newTestApp(t, ProfileHDMI)
 	ta.o.Art = sa
 	d := &rectDisplay{Headless: ta.disp}

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/rand/v2"
 
 	"mistersubsonic/internal/subsonic"
@@ -33,6 +35,14 @@ func (a *App) playSongs(songs []subsonic.Song, start int, shuffle bool) {
 // songLoader fetches the songs behind an item (an album, a playlist...).
 type songLoader func(ctx context.Context, lib Library) ([]subsonic.Song, error)
 
+// partialLoad is the error of a load that got some of its songs: how many
+// of its albums failed. withSongs plays what loaded and says so.
+type partialLoad struct{ failed, total int }
+
+func (e *partialLoad) Error() string {
+	return fmt.Sprintf("%d of %d albums failed", e.failed, e.total)
+}
+
 // withSongs loads songs off the UI goroutine, then calls f with them; an
 // error or an empty result is a toast instead.
 func (a *App) withSongs(load songLoader, f func([]subsonic.Song)) {
@@ -42,6 +52,11 @@ func (a *App) withSongs(load songLoader, f func([]subsonic.Song)) {
 	}
 	a.Load(a.Top(), func(ctx context.Context) (any, error) { return load(ctx, lib) }, func(v any, err error) {
 		songs, _ := v.([]subsonic.Song)
+		var part *partialLoad
+		if errors.As(err, &part) {
+			a.Toast("Couldn't load %d of %d albums", part.failed, part.total)
+			err = nil
+		}
 		switch {
 		case err != nil:
 			a.Toast("Couldn't load: %s", subsonic.Classify(err))
@@ -78,11 +93,13 @@ func playlistSongs(id subsonic.ID) songLoader {
 const maxShuffleAlbums = 10
 
 // albumsSongs loads the songs of albums, one request each. Albums that fail
-// are skipped unless all do.
+// are skipped unless all do; when some do, the error is a *partialLoad
+// beside the songs.
 func albumsSongs(albums []subsonic.Album) songLoader {
 	return func(ctx context.Context, lib Library) ([]subsonic.Song, error) {
 		var songs []subsonic.Song
 		var firstErr error
+		failed := 0
 		for _, al := range albums {
 			got, err := albumSongs(al.ID)(ctx, lib)
 			if err != nil {
@@ -90,12 +107,16 @@ func albumsSongs(albums []subsonic.Album) songLoader {
 					return nil, ctx.Err()
 				}
 				firstErr = cmpErr(firstErr, err)
+				failed++
 				continue
 			}
 			songs = append(songs, got...)
 		}
 		if len(songs) == 0 {
 			return nil, firstErr
+		}
+		if failed > 0 {
+			return songs, &partialLoad{failed, len(albums)}
 		}
 		return songs, nil
 	}

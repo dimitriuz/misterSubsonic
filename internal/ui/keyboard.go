@@ -53,13 +53,13 @@ var (
 
 // The layouts are built once (rows is called several times per frame).
 var searchLayouts = [][][]kbKey{
-	buildKeys(latinRows, []kbKey{space(4), del(2), layoutKey("АБВ", 1), clear(2)}),
-	buildKeys(cyrillicRows, []kbKey{space(4), del(2), layoutKey("ABC", 0), clear(2)}),
+	buildKeys(latinRows, []kbKey{space(4), del(2), layoutKey("АБВ", 1), clearKey(2)}),
+	buildKeys(cyrillicRows, []kbKey{space(4), del(2), layoutKey("ABC", 0), clearKey(2)}),
 }
 
 func space(u int) kbKey                { return kbKey{label: "Space", action: keySpace, units: u} }
 func del(u int) kbKey                  { return kbKey{label: "Del", action: keyDel, units: u} }
-func clear(u int) kbKey                { return kbKey{label: "Clear", action: keyClear, units: u} }
+func clearKey(u int) kbKey             { return kbKey{label: "Clear", action: keyClear, units: u} }
 func layoutKey(l string, to int) kbKey { return kbKey{label: l, action: keyLayout, units: 2, to: to} }
 
 // buildKeys makes a layout: one row of keys per string, then the bottom row.
