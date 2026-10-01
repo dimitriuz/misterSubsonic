@@ -30,6 +30,9 @@ type Disk struct {
 
 	mu   sync.Mutex
 	size int64 // bytes on disk, maintained incrementally
+	// retryAt: after a failed eviction walk, no new walk until size reaches
+	// it (another tenth of the budget written), not on every Put.
+	retryAt int64
 }
 
 // Open uses dir (created if needed) with a byte budget. maxBytes <= 0 disables caching.
@@ -39,10 +42,19 @@ func Open(dir string, maxBytes int64) (*Disk, error) {
 		return nil, err
 	}
 	d := &Disk{dir: dir, max: maxBytes, now: time.Now}
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.Printf("art cache: listing %s: %v", dir, err) // the size then starts at 0 until a walk recounts it
+	}
 	for _, e := range entries {
 		info, err := e.Info()
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				log.Printf("art cache: %s: %v", e.Name(), err)
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
 			continue
 		}
 		if strings.HasSuffix(e.Name(), ".tmp") {
@@ -101,7 +113,7 @@ func (d *Disk) Put(key string, data []byte) error {
 	t := d.now()
 	os.Chtimes(p, t, t)
 	d.size += int64(len(data)) - old
-	if d.size > d.max {
+	if d.size > d.max && d.size >= d.retryAt {
 		d.evictLocked(p)
 	}
 	return nil
@@ -132,7 +144,8 @@ var evictions int
 // the budget, so the directory walk happens once per ~10% of new data. The
 // walk also recounts the size, which drifts if files are deleted behind the
 // cache's back. A walk that fails leaves the size and the files alone: a
-// partial count would let the cache outgrow its budget.
+// partial count would let the cache outgrow its budget. It is not retried
+// until another tenth of the budget has been written.
 func (d *Disk) evictLocked(keep string) {
 	evictions++
 	target := d.max * 9 / 10
@@ -165,8 +178,10 @@ func (d *Disk) evictLocked(keep string) {
 	})
 	if walkErr != nil {
 		log.Printf("art cache: eviction walk: %v", walkErr)
+		d.retryAt = d.size + d.max/10
 		return
 	}
+	d.retryAt = 0
 	d.size = total
 	sort.Slice(all, func(i, j int) bool { return all[i].mod.Before(all[j].mod) })
 	for _, e := range all {
