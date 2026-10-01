@@ -11,11 +11,11 @@ Suggested order:
 
 ## A. Small follow-ups
 
-Plan 5 did most of this list; see "Resolved by Plan 5" in `docs/superpowers/plan-2a-followups.md`. Still open:
+Plans 5 and 5b did most of this list; see "Resolved by Plan 5" and "Resolved by Plan 5b" in `docs/superpowers/plan-2a-followups.md`. What remains is in "Plan 5b leftovers" there. Still open here:
 
 - **Faster list scrolling at full resolution.** Plan 4b made focus moves, the tick and the marquee partial (≤ 12 ms at 1920×1200). A scroll step still redraws the list area, which takes about 40 ms. The A9 is memory-bound: shifting the pixels measured slower than redrawing them. The next step is fewer bytes per frame, not a smarter redraw, and it needs measuring on the device.
-- **Faster JPEG decoding.** Go's standard decoder takes about 0.77 s for a 2000×2000 cover on the A9. Asking the server for smaller covers (it resizes them with `size=`) or a faster decoder would help.
-- **The minors still listed** under "Plan 2c minors" to "Plan 4b minors" in `docs/superpowers/plan-2a-followups.md` that Plan 5 left (cosmetic ones and test gaps).
+
+(Faster JPEG decoding is no longer open: covers are already requested at display size, `getCoverArt` with `size=` in `internal/art/art.go`, so the 0.77 s decode of a 2000×2000 cover applies only to servers that ignore `size=`.)
 
 ---
 

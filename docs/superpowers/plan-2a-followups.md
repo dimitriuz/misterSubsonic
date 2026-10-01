@@ -347,7 +347,8 @@ Still open:
   - The README's screenshot text and the example config's first-run text are fixed.
   - The tab-row marquee is fixed.
   - The CRT playlist rows are fixed.
-- **MP3:** seeks inside the buffered window reuse the stream and keep the queued track, and VBR seeks use the Xing/Info TOC.
+- **MP3:**
+  - Seeks inside the buffered window reuse the stream and keep the queued track, and VBR seeks use the Xing/Info TOC.
   - A seek that lands during a gapless handover is refused by the engine (`Replace` checks the track it replaces), and the player reopens instead.
   - `stream.Reader` no longer counts on bytes a fetch in flight may overwrite.
 - **Stream and player:**
@@ -389,3 +390,60 @@ Still open:
   - An edit that trips over the file falls back to a full rewrite, and a BOM before the first key is kept.
   - Decode plus scale of a cover is 30% faster on the A9 (1.98 s to 1.38 s), and the scaling alone about 47% (1.16 s to 0.61 s); see `docs/spikes.md`.
   - `drawField` trimming by rune: obsolete (`drawTextField` trims by measured width).
+
+## Resolved by Plan 5b
+
+- **UI:**
+  - `Detach` drops the star state, and a server that is still connecting is not dialled again.
+  - `HomeScreen.Draw` is pure; the Resume row syncs elsewhere.
+  - Screenshot names are created atomically.
+  - The position tick no longer redraws a screen that has nothing on it following the clock.
+  - New tests: Enter in Search results, a typed rune waking the screensaver, wizard keyboard fit, `SidebarRoot.Typing` and more screens in the hint fixtures, the damage cases, and the Resume fixture (set on the feed screen, no race).
+  - The plain-password consent survives the same address retyped as `HTTP://`, with a trailing slash, with `/rest` or with a query. A host in another case or with the default port counts as another address and asks again (pinned by a test).
+- **Main and display:**
+  - `crash.txt` is rotated and its open error logged.
+  - `exiting` is the last line logged, and the forced exit is bounded when the restore hangs.
+  - `openFB` takes an injectable opener, and its three fallbacks are tested.
+  - `fbLayout` ends at the last byte used, with 64-bit maths; `screenSlice` is bounds-checked.
+  - The JPEG estimate falls back to 4 B/px and counts Adobe RGB; `boxFilter` takes its row buffer; cover conversions are tested.
+  - A rotation that keeps failing truncates `log.txt` after three tries.
+  - The `-keys` help says what an item can't contain.
+- **Cache, art, stream and player:**
+  - A failed eviction walk backs off by a tenth of the budget, and `Open` logs ReadDir and Info errors.
+  - The expired-first purge of the art failure map is tested.
+  - A first request cut by the budget reports "retry budget spent".
+  - A second concurrent `Promote` doesn't allocate again, and Close and Seek during `Promote`'s allocation are tested.
+  - The MP3 first-frame probe is skipped when the frame lies beyond the stream's ring (`stream.Reader.Capacity`).
+  - A ReplayGain change while the prefetch is still opening is tested.
+- **Audio:**
+  - A refused `Replace` leaves the successor alone when a Play or Stop is queued behind it.
+  - `breakChain` updates `pendBuf` after its Flush, `g_open` is atomic, and the `Close` comment is right.
+  - The media-key constants follow the arrow keys.
+- **Config:**
+  - The editor keeps `[server.*]` subtables with their server and edits quoted keys in place.
+  - `AddServer`'s third name collision is tested.
+  - The example config's `allow_plaintext_password` comment says it matters only for `http://`, and its test matches whole `key =` lines.
+- **Scripts, docs and tools:**
+  - The launcher test's `socat` stand-in checks the missing trailing newline and `-t 2`.
+  - `mkdb` rejects a bare `?` or `#` in `-base-url`.
+  - `VERSION` is `0.0.0-<hash>` when there are no tags.
+  - `mister-test` loops over one `TESTS` list.
+  - The README lists what the zip holds, and its keyboard paragraph is rewrapped; the viewer's help line names the media keys.
+- **Skipped as already fixed:** the `-verify-redraw` one-pixel progress difference (O43; a per-frame snapshot, commit 8379160).
+
+## Plan 5b leftovers
+
+- **On the device** (checks in `docs/testing-on-mister.md`):
+  - Repeated `wait` in the launcher was verified on bash 5.3 only; item 29 runs it on the MiSTer's bash 5.0.18.
+  - On CRT (320x240) the volume panel partly covers the value of Settings > Playback > Volume (item 30).
+  - Launcher on the device: `flock --help`, `bash --version`, `pidof` and `ps` with SAM running, what Main_MiSTer sends a script it cancels, RestoreText on `/dev/tty0` if Main_MiSTer switched terminals, and Downloader accepting `"v": 1` with the `mistersubsonic/` folder. Not a numbered check: it needs ssh and a Downloader run (flock, bash and pidof are noted in `docs/spikes.md`).
+- **Faster list scrolling at full resolution:** needs measuring on the device (see `docs/superpowers/plans/backlog.md`, section A).
+- **Left by a group:**
+  - Screenshot loop: a non-ErrNotExist Lstat error shows as "too many screenshots", and a stale `.tmp` from a crash blocks its name.
+  - `Sync` runs only on `Top()`: a Home under an overlay draws a stale Resume row (cosmetic).
+  - Hint tests: the pixel-change check can't judge whether a label is right (needs a per-hint expectation table).
+  - Connecting: re-selecting the same server is swallowed while it connects.
+  - Log truncation after failed rotations leaves no marker line; no test for the guard released mid-wait in the forced exit; `int()` of Xres/LineLength before the 64-bit maths (theoretical).
+  - The MP3 probe skip can't fire with the shipped defaults (5 MiB ring, `maxProbedTag` guard first): harmless, wants a comment; the comment at `art_test.go:41` is wrong; cache `retryAt` with `max < 10`; `promoting` stays true if the allocation panicked (theoretical).
+  - A reorder with `[server.*]` subtables falls back to a full rewrite that drops the subtable keys (unknown keys, as for any unknown table; older than Plan 5b).
+  - The O30 unit test doesn't drain the queued command or check `superseding == 0`; comment placement at `engine.go:767`; `g_ring` and `g_device` use after a concurrent close relies on the same-goroutine contract.
