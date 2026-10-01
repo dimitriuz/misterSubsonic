@@ -230,3 +230,101 @@ func TestJPEGDecodeBytesTruncated(t *testing.T) {
 		}
 	}
 }
+
+// withSegment inserts a marker segment right after SOI.
+func withSegment(data []byte, marker byte, payload []byte) []byte {
+	seg := append([]byte{0xFF, marker, byte((len(payload) + 2) >> 8), byte(len(payload) + 2)}, payload...)
+	return append(append(append([]byte(nil), data[:2]...), seg...), data[2:]...)
+}
+
+// An Adobe APP14 segment with transform 0 makes the decoder treat the three
+// components as RGB, which costs an RGBA copy; transform 1 (YCbCr) doesn't.
+func TestJPEGDecodeBytesCountsAdobeRGB(t *testing.T) {
+	const w, h = 64, 48
+	base := jpegBytes(t, w, h)
+	plain, _ := jpegDecodeBytes(base)
+	adobe := func(transform byte) []byte {
+		return withSegment(base, 0xEE, append([]byte("Adobe"), 0, 100, 0, 0, 0, 0, transform))
+	}
+	if got, ok := jpegDecodeBytes(adobe(0)); !ok || got != plain+4*w*h {
+		t.Fatalf("transform 0: %d %v, want %d", got, ok, plain+4*w*h)
+	}
+	if got, ok := jpegDecodeBytes(adobe(1)); !ok || got != plain {
+		t.Fatalf("transform 1: %d %v, want %d", got, ok, plain)
+	}
+}
+
+// When the markers can't be walked the estimate is the worst case, 4 B/px,
+// not YCbCr's 3: a 3800² picture is refused (it fits at 3 B/px).
+func TestDecodeImageAssumes4BytesPerPixelWhenTheMarkersFail(t *testing.T) {
+	base := patchSOF(t, jpegBytes(t, 64, 48), 0xC0, 3800, 3800)
+	// Stray bytes before the frame header: Go's decoder skips them, the walk gives up.
+	j := bytes.Index(base, []byte{0xFF, 0xC0})
+	cut := append(append(append([]byte(nil), base[:j]...), 0, 0), base[j:]...)
+	if _, ok := jpegDecodeBytes(cut); ok {
+		t.Fatal("the walk was expected to fail")
+	}
+	if _, err := DecodeImage(cut, 100, 100); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// The RGBA fast path's three alpha branches (transparent, opaque, partial
+// with the colour clamped when it exceeds alpha), and the types that go
+// through At: CMYK, Gray16, NRGBA64, RGBA64. Straight through FromImage and,
+// for the PNG-capable ones, through DecodeImage.
+func TestFromImageAlphaBranchesAndFallbackTypes(t *testing.T) {
+	rgba := image.NewRGBA(image.Rect(0, 0, 4, 1))
+	copy(rgba.Pix, []byte{
+		10, 20, 30, 0, // transparent: any colour reads as 0
+		10, 20, 30, 255, // opaque
+		50, 25, 5, 100, // partial, premultiplied
+		200, 10, 10, 100, // colour above alpha (not premultiplied): clamps to 255
+	})
+	got := FromImage(rgba)
+	if got.Pix[0] != 0 || got.Pix[1] != 0xFF0A141E {
+		t.Errorf("transparent %08x, opaque %08x", got.Pix[0], got.Pix[1])
+	}
+	if p := got.Pix[2]; p>>24 != 100 || p>>16&0xFF != 128 || p>>8&0xFF != 64 || p&0xFF != 13 { // c*255/100, rounded
+		t.Errorf("partial = %08x", p)
+	}
+	if p := got.Pix[3]; p>>24 != 100 || p>>16&0xFF != 0xFF {
+		t.Errorf("clamped = %08x", p)
+	}
+
+	rect := image.Rect(2, 1, 7, 5) // a non-zero origin
+	cmyk, g16, n64, r64 := image.NewCMYK(rect), image.NewGray16(rect), image.NewNRGBA64(rect), image.NewRGBA64(rect)
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
+			cmyk.SetCMYK(x, y, color.CMYK{uint8(x * 40), uint8(y * 50), uint8(x * y * 9), uint8(x + y)})
+			g16.SetGray16(x, y, color.Gray16{uint16(x*9000 + y*500)})
+			n64.SetNRGBA64(x, y, color.NRGBA64{uint16(x * 9000), uint16(y * 11000), uint16(x*y*1000 + 7), uint16(20000 + x*7000)})
+			a := uint16(30000 + x*5000)
+			r64.SetRGBA64(x, y, color.RGBA64{a / 3, a / 2, a / 5, a})
+		}
+	}
+	for name, m := range map[string]image.Image{"cmyk": cmyk, "gray16": g16, "nrgba64": n64, "rgba64": r64} {
+		samePixels(t, name, FromImage(m), slowFromImage(m))
+	}
+	for name, m := range map[string]image.Image{"gray16": g16, "nrgba64": n64, "rgba64": r64} {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, m); err != nil {
+			t.Fatal(name, err)
+		}
+		dec, err := DecodeImage(buf.Bytes(), 100, 100)
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		pm, _ := png.Decode(bytes.NewReader(buf.Bytes()))
+		samePixels(t, name+" png", dec, slowFromImage(pm))
+	}
+}
+
+// Resize reads its rows in place and needs no row buffer: it allocates the
+// result (2), the column bounds (2) and the sums (1), not a row more.
+func TestResizeAllocatesNoRowBuffer(t *testing.T) {
+	src := NewImage(512, 512)
+	if n := testing.AllocsPerRun(5, func() { Resize(src, 64, 64) }); n > 5 {
+		t.Fatalf("%v allocations", n)
+	}
+}

@@ -37,15 +37,19 @@ func decodedBytes(cfg image.Config) int64 {
 	return 4 * px // RGBA, NRGBA, CMYK
 }
 
-// jpegDecodeBytes estimates Go's JPEG decoder memory from the frame header
-// alone: the sample planes, four more bytes per sample for a progressive
-// frame's DCT coefficients, and an RGBA copy when the decoder converts to one
-// (CMYK, or RGB-labelled components). It reports false if no frame header is
-// found before the scan data.
+// jpegDecodeBytes estimates Go's JPEG decoder memory from the headers alone:
+// the sample planes, four more bytes per sample for a progressive frame's DCT
+// coefficients, and an RGBA copy when the decoder converts to one (CMYK, or
+// RGB components: labelled R, G, B, or an Adobe APP14 segment with transform
+// 0). It reports false if the markers don't lead cleanly from the frame
+// header to the scan data.
 func jpegDecodeBytes(data []byte) (int64, bool) {
 	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
 		return 0, false
 	}
+	var total, px int64
+	var nc int
+	var rgbIDs, found, adobeRGB bool
 	i := 2
 	for i+1 < len(data) {
 		if data[i] != 0xFF {
@@ -60,22 +64,35 @@ func jpegDecodeBytes(data []byte) (int64, bool) {
 			i += 2
 			continue
 		}
-		if m == 0xD9 || m == 0xDA {
-			return 0, false
+		if m == 0xD9 || m == 0xDA { // end of the headers
+			if !found {
+				return 0, false
+			}
+			if nc == 4 || nc == 3 && (rgbIDs || adobeRGB) {
+				total += 4 * px
+			}
+			return total, true
 		}
 		if i+4 > len(data) {
 			return 0, false
 		}
 		n := int(data[i+2])<<8 | int(data[i+3])
+		seg := data[i+4:]
+		if m == 0xEE && n >= 14 && len(seg) >= 12 && string(seg[:5]) == "Adobe" {
+			adobeRGB = seg[11] == 0 // transform 0: the components are RGB
+		}
 		if m < 0xC0 || m > 0xCF || m == 0xC4 || m == 0xC8 || m == 0xCC {
 			i += 2 + n
 			continue
 		}
-		seg := data[i+4:]
+		if found { // a second frame header: not a JPEG Go decodes
+			return 0, false
+		}
 		if n < 8 || len(seg) < n-2 || len(seg) < 6 {
 			return 0, false
 		}
-		h, w, nc := int64(seg[1])<<8|int64(seg[2]), int64(seg[3])<<8|int64(seg[4]), int(seg[5])
+		h, w := int64(seg[1])<<8|int64(seg[2]), int64(seg[3])<<8|int64(seg[4])
+		nc = int(seg[5])
 		if nc == 0 || n < 8+3*nc || len(seg) < 6+3*nc {
 			return 0, false
 		}
@@ -89,16 +106,15 @@ func jpegDecodeBytes(data []byte) (int64, bool) {
 			sum += ch * cv
 			hmax, vmax = max(hmax, ch), max(vmax, cv)
 		}
-		px := w * h
+		px = w * h
 		samples := px * sum / (hmax * vmax)
-		total := samples
+		total = samples
 		if m == 0xC2 || m == 0xC6 || m == 0xCA || m == 0xCE {
 			total += 4 * samples
 		}
-		if nc == 4 || nc == 3 && seg[6] == 'R' && seg[9] == 'G' && seg[12] == 'B' {
-			total += 4 * px
-		}
-		return total, true
+		rgbIDs = nc == 3 && seg[6] == 'R' && seg[9] == 'G' && seg[12] == 'B'
+		found = true
+		i += 2 + n
 	}
 	return 0, false
 }
@@ -116,6 +132,8 @@ func DecodeImage(data []byte, maxW, maxH int) (*Image, error) {
 	if format == "jpeg" {
 		if n, ok := jpegDecodeBytes(data); ok {
 			need = n
+		} else { // unreadable markers: assume the decoder's RGBA copy (4 B/px)
+			need = max(need, 4*int64(cfg.Width)*int64(cfg.Height))
 		}
 	}
 	if cfg.Width <= 0 || cfg.Height <= 0 || need > MaxDecodeBytes {
@@ -127,13 +145,13 @@ func DecodeImage(data []byte, maxW, maxH int) (*Image, error) {
 	}
 	b := m.Bounds()
 	w, h := fitSize(b.Dx(), b.Dy(), maxW, maxH)
-	return boxFilter(b.Dx(), b.Dy(), rowsOf(m), isOpaque(m), w, h), nil
+	return boxFilter(b.Dx(), b.Dy(), rowsOf(m), make([]uint32, b.Dx()), isOpaque(m), w, h), nil
 }
 
 // FromImage converts any image.Image to an Image.
 func FromImage(m image.Image) *Image {
 	b := m.Bounds()
-	return boxFilter(b.Dx(), b.Dy(), rowsOf(m), isOpaque(m), b.Dx(), b.Dy())
+	return boxFilter(b.Dx(), b.Dy(), rowsOf(m), make([]uint32, b.Dx()), isOpaque(m), b.Dx(), b.Dy())
 }
 
 // rowReader returns source row y as non-premultiplied ARGB. It may fill buf
@@ -257,9 +275,10 @@ func Fit(src *Image, maxW, maxH int) *Image {
 	return Resize(src, w, h)
 }
 
-// Resize box-filters src down to w×h (use Canvas.Blit for upscaling).
+// Resize box-filters src down to w×h (use Canvas.Blit for upscaling). Its
+// rows are read in place, so no row buffer is needed.
 func Resize(src *Image, w, h int) *Image {
-	return boxFilter(src.W, src.H, func(y int, _ []uint32) []uint32 { return src.Pix[y*src.W : (y+1)*src.W] }, false, w, h)
+	return boxFilter(src.W, src.H, func(y int, _ []uint32) []uint32 { return src.Pix[y*src.W : (y+1)*src.W] }, nil, false, w, h)
 }
 
 // isOpaque reports whether every pixel of m has alpha 0xFF (then rowsOf
@@ -271,10 +290,10 @@ func isOpaque(m image.Image) bool {
 
 // boxFilter averages the sw×sh source read by rows down to w×h, weighting
 // colour by alpha; opaque says every source pixel has alpha 0xFF, which
-// allows a cheaper loop. Sums are 64-bit: a box can hold any number of pixels.
-func boxFilter(sw, sh int, rows rowReader, opaque bool, w, h int) *Image {
+// allows a cheaper loop. buf (sw long) is the scratch row handed to rows; nil
+// when rows needs none. Sums are 64-bit: a box can hold any number of pixels.
+func boxFilter(sw, sh int, rows rowReader, buf []uint32, opaque bool, w, h int) *Image {
 	out := NewImage(w, h)
-	buf := make([]uint32, sw)
 	if w == sw && h == sh {
 		for y := 0; y < h; y++ {
 			copy(out.Pix[y*w:(y+1)*w], rows(y, buf))
@@ -286,7 +305,7 @@ func boxFilter(sw, sh int, rows rowReader, opaque bool, w, h int) *Image {
 		sx0[x], sx1[x] = x*sw/w, max((x+1)*sw/w, x*sw/w+1)
 	}
 	if opaque && opaqueSumsFit(sw, sh, w, h, sx0, sx1) {
-		boxFilterOpaque(sw, sh, rows, w, h, sx0, sx1, out)
+		boxFilterOpaque(sh, rows, buf, w, h, sx0, sx1, out)
 		return out
 	}
 	// per output column: alpha sum and alpha-weighted colour sums
@@ -368,8 +387,7 @@ func opaqueSumsFit(sw, sh, w, h int, sx0, sx1 []int) bool {
 // 255 everywhere the alpha-weighted average is the plain one (r*255/(n*255) is
 // the floor of the plain sum over n) and the result's alpha is 255, so the
 // output is the same, with 32-bit sums and no multiply per pixel.
-func boxFilterOpaque(sw, sh int, rows rowReader, w, h int, sx0, sx1 []int, out *Image) {
-	buf := make([]uint32, sw)
+func boxFilterOpaque(sh int, rows rowReader, buf []uint32, w, h int, sx0, sx1 []int, out *Image) {
 	acc := make([][3]uint32, w)
 	var rc recips
 	for y := 0; y < h; y++ {

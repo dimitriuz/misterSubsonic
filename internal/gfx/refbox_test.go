@@ -145,7 +145,7 @@ func TestBoxFilterMatchesTheClosureVersion(t *testing.T) {
 			b := m.Bounds()
 			sw, sh := b.Dx(), b.Dy()
 			for _, to := range [][2]int{{sw, sh}, {1, 1}, {7, 5}, {sw/2 + 1, sh/3 + 1}, {sw, 1}, {1, sh}, {sw + 9, sh + 4}} {
-				got := boxFilter(sw, sh, rowsOf(m), isOpaque(m), to[0], to[1])
+				got := boxFilter(sw, sh, rowsOf(m), make([]uint32, sw), isOpaque(m), to[0], to[1])
 				want := refBoxFilter(sw, sh, refPixels(m), to[0], to[1])
 				for i := range want.Pix {
 					if got.Pix[i] != want.Pix[i] {
@@ -200,7 +200,7 @@ func TestBoxFilterBigBoxesMatchTheClosureVersion(t *testing.T) {
 	r := rand.New(rand.NewSource(10))
 	for name, m := range randomImages(r, 150, 130) {
 		for _, to := range [][2]int{{1, 1}, {2, 3}, {5, 4}} { // boxes of hundreds to thousands of pixels
-			got := boxFilter(150, 130, rowsOf(m), isOpaque(m), to[0], to[1])
+			got := boxFilter(150, 130, rowsOf(m), make([]uint32, 150), isOpaque(m), to[0], to[1])
 			want := refBoxFilter(150, 130, refPixels(m), to[0], to[1])
 			for i := range want.Pix {
 				if got.Pix[i] != want.Pix[i] {
@@ -228,7 +228,7 @@ func TestOpaqueFastPathIsUsedAndExact(t *testing.T) {
 			for _, to := range [][2]int{{1, 1}, {7, 5}, {sw/2 + 1, sh/3 + 1}, {sw + 5, sh + 3}, {sw, sh}} {
 				want := refBoxFilter(sw, sh, refPixels(m), to[0], to[1])
 				for _, fast := range []bool{false, isOpaque(m)} {
-					got := boxFilter(sw, sh, rowsOf(m), fast, to[0], to[1])
+					got := boxFilter(sw, sh, rowsOf(m), make([]uint32, sw), fast, to[0], to[1])
 					for i := range want.Pix {
 						if got.Pix[i] != want.Pix[i] {
 							t.Fatalf("%s opaque=%v %dx%d -> %dx%d: pixel %d = %08x, want %08x", name, fast, sw, sh, to[0], to[1], i, got.Pix[i], want.Pix[i])

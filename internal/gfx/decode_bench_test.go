@@ -45,7 +45,7 @@ func BenchmarkDecodeCover(b *testing.B) {
 	bnd := m.Bounds()
 	b.Run("scale", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			boxFilter(bnd.Dx(), bnd.Dy(), rowsOf(m), isOpaque(m), 600, 600)
+			boxFilter(bnd.Dx(), bnd.Dy(), rowsOf(m), make([]uint32, bnd.Dx()), isOpaque(m), 600, 600)
 		}
 	})
 }
