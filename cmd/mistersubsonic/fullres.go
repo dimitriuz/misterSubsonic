@@ -10,6 +10,15 @@ import (
 	"mistersubsonic/internal/ui"
 )
 
+// openFBDev opens the framebuffer device; tests replace it.
+var openFBDev = func(path string) (gfx.Display, error) {
+	fb, err := gfx.OpenFB(path)
+	if err != nil {
+		return nil, err // not a typed nil in the interface
+	}
+	return fb, nil
+}
+
 // fbControl is replaceable so tests never touch the real menu.
 var fbControl = platform.DefaultFBControl
 
@@ -68,8 +77,8 @@ func (k *keeper) check() (repaint bool, err error) {
 // openFB opens the framebuffer, switched to the full output resolution when
 // fullSize says so (then the keeper watches it; nil otherwise). Any failure
 // falls back to the framebuffer as it was.
-func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, *keeper, error) {
-	fb, err := gfx.OpenFB(path)
+func openFB(path, profileName, dataDir string, enabled bool) (gfx.Display, *keeper, error) {
+	fb, err := openFBDev(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -83,10 +92,10 @@ func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, *keeper, 
 	ctl := fbControl()
 	if err := ctl.Switch(from, to); err != nil {
 		log.Printf("display: full resolution: %v", err)
-		fb, err := gfx.OpenFB(path)
+		fb, err := openFBDev(path)
 		return fb, nil, err
 	}
-	if fb, err = gfx.OpenFB(path); err == nil {
+	if fb, err = openFBDev(path); err == nil {
 		if w, h := fb.Size(); w == to.W && h == to.H {
 			log.Printf("display: framebuffer %v, full resolution (was %v)", to, from)
 			return fb, newKeeper(ctl, to), nil
@@ -98,7 +107,7 @@ func openFB(path, profileName, dataDir string, enabled bool) (*gfx.FB, *keeper, 
 	if err := ctl.RestoreAlways(); err != nil {
 		log.Printf("display: %v", err)
 	}
-	fb, err = gfx.OpenFB(path)
+	fb, err = openFBDev(path)
 	return fb, nil, err
 }
 

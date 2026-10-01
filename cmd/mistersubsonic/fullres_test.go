@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/platform"
 )
 
@@ -456,3 +457,138 @@ func TestForceExitGivesUpOnAHungRestore(t *testing.T) {
 		t.Fatalf("restoreText ran %d times", texts)
 	}
 }
+
+// fakeScreen is a framebuffer of the given size.
+type fakeScreen struct {
+	gfx.Display
+	w, h   int
+	closed bool
+}
+
+func (f *fakeScreen) Size() (int, int) { return f.w, f.h }
+func (f *fakeScreen) Close() error     { f.closed = true; return nil }
+
+// scriptedFB makes openFBDev hand out the steps in order: a size, or an
+// error (w == 0).
+type fbStep struct {
+	w, h int
+	err  error
+}
+
+func scriptedFB(t *testing.T, steps ...fbStep) (opened *[]*fakeScreen) {
+	t.Helper()
+	old := openFBDev
+	t.Cleanup(func() { openFBDev = old })
+	opened = new([]*fakeScreen)
+	openFBDev = func(string) (gfx.Display, error) {
+		if len(*opened) >= len(steps) {
+			t.Fatal("the framebuffer was opened more often than scripted")
+		}
+		st := steps[len(*opened)]
+		if st.err != nil {
+			*opened = append(*opened, nil)
+			return nil, st.err
+		}
+		fs := &fakeScreen{w: st.w, h: st.h}
+		*opened = append(*opened, fs)
+		return fs, nil
+	}
+	return opened
+}
+
+// openFBFixture: a halved 960x600 HDMI framebuffer, MiSTer.ini asking for
+// 1920x1200, and a menu that answers.
+func openFBFixture(t *testing.T) (dataDir string, c platform.FBControl) {
+	t.Helper()
+	root := t.TempDir()
+	dataDir = filepath.Join(root, "mistersubsonic")
+	os.WriteFile(filepath.Join(root, "MiSTer.ini"), []byte("[MiSTer]\nvideo_mode=1920,1200,60\n"), 0o644)
+	c = platform.FBControl{Cmd: filepath.Join(root, "cmd"), Sys: root, State: filepath.Join(root, "state"), Wait: 500 * time.Millisecond}
+	os.WriteFile(c.Cmd, nil, 0o644)
+	os.WriteFile(filepath.Join(root, "width"), []byte("960\n"), 0o644)
+	os.WriteFile(filepath.Join(root, "height"), []byte("600\n"), 0o644)
+	answeringMenu(t, c)
+	old := fbControl
+	fbControl = func() platform.FBControl { return c }
+	t.Cleanup(func() { fbControl = old })
+	return dataDir, c
+}
+
+func TestOpenFBSwitchesToFullResolution(t *testing.T) {
+	dir, c := openFBFixture(t)
+	opened := scriptedFB(t, fbStep{w: 960, h: 600}, fbStep{w: 1920, h: 1200})
+	fb, keep, err := openFB("/dev/fb0", "auto", dir, true)
+	if err != nil || keep == nil {
+		t.Fatalf("%v %v", keep, err)
+	}
+	if w, h := fb.Size(); w != 1920 || h != 1200 {
+		t.Fatalf("size %dx%d", w, h)
+	}
+	if !(*opened)[0].closed || (*opened)[1].closed {
+		t.Fatal("the halved framebuffer must be closed, the new one kept")
+	}
+	if got := strings.TrimSpace(readFile(c.Cmd)); got != "fb_cmd1 8888 1 1920 1200" {
+		t.Fatalf("commands %q", got)
+	}
+}
+
+func TestOpenFBWithoutFullResolutionKeepsTheFramebuffer(t *testing.T) {
+	dir, c := openFBFixture(t)
+	scriptedFB(t, fbStep{w: 960, h: 600})
+	fb, keep, err := openFB("/dev/fb0", "auto", dir, false)
+	if err != nil || keep != nil || fb == nil {
+		t.Fatalf("%v %v %v", fb, keep, err)
+	}
+	if readFile(c.Cmd) != "" {
+		t.Fatal("sent a command")
+	}
+}
+
+// Fallback 1: the size request fails; the old framebuffer is opened again.
+func TestOpenFBFallsBackWhenTheSwitchFails(t *testing.T) {
+	dir, c := openFBFixture(t)
+	c.Cmd = filepath.Join(c.Sys, "missing", "cmd") // the request can't be sent
+	fbControl = func() platform.FBControl { return c }
+	opened := scriptedFB(t, fbStep{w: 960, h: 600}, fbStep{w: 960, h: 600})
+	fb, keep, err := openFB("/dev/fb0", "auto", dir, true)
+	if err != nil || keep != nil {
+		t.Fatalf("%v %v", keep, err)
+	}
+	if w, h := fb.Size(); w != 960 || h != 600 || len(*opened) != 2 {
+		t.Fatalf("size %dx%d after %d opens", w, h, len(*opened))
+	}
+}
+
+// Fallback 2: the new framebuffer has another size than asked for; the old
+// size is requested again and the framebuffer reopened.
+func TestOpenFBFallsBackWhenTheSizeIsNotTaken(t *testing.T) {
+	dir, _ := openFBFixture(t)
+	opened := scriptedFB(t, fbStep{w: 960, h: 600}, fbStep{w: 1280, h: 720}, fbStep{w: 960, h: 600})
+	fb, keep, err := openFB("/dev/fb0", "auto", dir, true)
+	if err != nil || keep != nil {
+		t.Fatalf("%v %v", keep, err)
+	}
+	if w, h := fb.Size(); w != 960 || h != 600 || len(*opened) != 3 {
+		t.Fatalf("size %dx%d after %d opens", w, h, len(*opened))
+	}
+	if !(*opened)[1].closed {
+		t.Fatal("the wrong-sized framebuffer was left open")
+	}
+}
+
+// Fallback 3: reopening after the switch fails; the old size is requested
+// again and the framebuffer reopened (its error is the result's).
+func TestOpenFBFallsBackWhenTheReopenFails(t *testing.T) {
+	dir, _ := openFBFixture(t)
+	boom := errors.New("boom")
+	opened := scriptedFB(t, fbStep{w: 960, h: 600}, fbStep{err: boom}, fbStep{err: boom})
+	fb, keep, err := openFB("/dev/fb0", "auto", dir, true)
+	if !errors.Is(err, boom) || keep != nil || fb != nil {
+		t.Fatalf("%v %v %v", fb, keep, err)
+	}
+	if len(*opened) != 3 {
+		t.Fatalf("%d opens", len(*opened))
+	}
+}
+
+func readFile(p string) string { b, _ := os.ReadFile(p); return string(b) }
