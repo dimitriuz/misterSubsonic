@@ -32,10 +32,17 @@ func (a *App) saverDue() time.Time {
 	if !saverScreen(a.Top()) || m <= 0 || a.saver || a.confirm {
 		return time.Time{}
 	}
-	if _, full := a.Top().(*VizScreen); full && a.state().Status == player.Playing {
+	if _, full := a.Top().(*VizScreen); full && a.watching() {
 		return time.Time{} // the full screen is for watching the music
 	}
 	return a.lastInput.Add(time.Duration(m) * time.Minute)
+}
+
+// watching reports whether the player is going (Playing, or Loading and
+// Buffering between tracks and on a stall): neither Paused nor Stopped.
+func (a *App) watching() bool {
+	st := a.state().Status
+	return st != player.Paused && st != player.Stopped
 }
 
 // saverScreen is a screen the screensaver can cover: Now Playing and its

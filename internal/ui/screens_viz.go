@@ -92,14 +92,15 @@ func (a *App) vizCornerDue() time.Time {
 	if v == nil {
 		return time.Time{}
 	}
-	n := a.o.Now().Sub(v.since)/vizCornerEvery + 1
+	n := a.clock().Sub(v.since)/vizCornerEvery + 1
 	return v.since.Add(n * vizCornerEvery)
 }
 
 // reveal brings the hint bar up for vizHintShow from now.
 func (s *VizScreen) reveal(a *App) {
 	if !a.hintsUp() {
-		a.Damage(a.hintRect())
+		r := a.hintRect()
+		a.Damage(gfx.R(r.X, r.Y, r.W, a.P.H-r.Y)) // drawHints paints down to the bottom edge
 	}
 	s.hintUntil = a.o.Now().Add(vizHintShow)
 	s.arm(a)

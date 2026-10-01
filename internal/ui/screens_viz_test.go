@@ -437,3 +437,46 @@ func TestSelectInFullScreenSkipsOff(t *testing.T) {
 		t.Errorf("Now Playing: Select from waterfall gave %v, want off", np.VizStyle())
 	}
 }
+
+func TestScreensaverStaysAwayInFullScreenWhileLoadingOrBuffering(t *testing.T) {
+	for _, mid := range []player.Status{player.Loading, player.Buffering} {
+		ta := fullApp(t, ProfileHDMI, VizBars)
+		ta.cfg.Display.ScreensaverMinutes = 1
+		ta.now = ta.now.Add(10 * time.Minute) // long unattended
+		for _, st := range []player.Status{mid, player.Playing, mid} {
+			ta.pl.st.Status = st
+			ta.onPlayer(player.Event{})
+			if !ta.saverDue().IsZero() {
+				t.Fatalf("%v: a screensaver due at %v", st, ta.saverDue())
+			}
+			ta.onWake()
+			if ta.saver {
+				t.Fatalf("the screensaver started while %v in full screen", st)
+			}
+		}
+	}
+	ta := fullApp(t, ProfileHDMI, VizBars)
+	ta.cfg.Display.ScreensaverMinutes = 1
+	ta.pl.st.Status = player.Paused
+	ta.onPlayer(player.Event{})
+	if ta.saverDue().IsZero() {
+		t.Error("paused in full screen: no screensaver due")
+	}
+}
+
+func TestRevealRepaintsTheWholeBarInVerifyMode(t *testing.T) {
+	for _, prof := range []Profile{ProfileCRT240, ProfileHDMI} {
+		ta := fullApp(t, prof, VizBars)
+		ta.now = ta.now.Add(5 * time.Second)
+		ta.onWake()
+		ta.settle(t)
+		if ta.hintsUp() {
+			t.Fatal("the bar is still up")
+		}
+		ta.press(input.BtnUp) // verify mode fails the test if the partial frame differs
+		ta.settle(t)
+		if !ta.hintsUp() {
+			t.Fatal("no bar after a press")
+		}
+	}
+}
