@@ -173,6 +173,9 @@ func (r *Reader) Buffered() int64 {
 	return r.hi - r.pos
 }
 
+// Capacity is the bytes the ring holds now: the prefetch ring until Promote.
+func (r *Reader) Capacity() int64 { r.mu.Lock(); defer r.mu.Unlock(); return int64(len(r.ring)) }
+
 // Holds reports whether byte off is in memory, so that seeking there starts
 // no request (unless the window moves on first).
 func (r *Reader) Holds(off int64) bool {

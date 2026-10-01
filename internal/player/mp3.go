@@ -20,9 +20,15 @@ type mp3Layout struct {
 const maxFrameProbe = 4096
 const maxProbedTag = 256 << 10
 
+// holder is a reader that says how many bytes it keeps in memory (a
+// stream.Reader's ring).
+type holder interface{ Capacity() int64 }
+
 // probeMP3 reads the ID3v2 tag size and, after it, the first MPEG frame's
 // Xing/Info header. It moves r; the caller seeks it afterwards. Whatever it
 // can't find stays zero: without a tag start is 0, without a table toc is nil.
+// A first frame that r couldn't hold from the start is not looked for: that
+// is another range request, for the sake of a table.
 func probeMP3(r io.ReadSeeker) mp3Layout {
 	var l mp3Layout
 	var h [10]byte
@@ -34,6 +40,9 @@ func probeMP3(r io.ReadSeeker) mp3Layout {
 		}
 	}
 	if l.start > maxProbedTag {
+		return l
+	}
+	if h, ok := r.(holder); ok && l.start+maxFrameProbe > h.Capacity() {
 		return l
 	}
 	if _, err := r.Seek(l.start, io.SeekStart); err != nil {

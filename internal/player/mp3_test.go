@@ -137,3 +137,38 @@ func TestMP3LayoutOffsetFollowsTheTable(t *testing.T) {
 		t.Errorf("no table: %d, want the proportional %d", got, 100+12800)
 	}
 }
+
+// capReader is a ReadSeeker that says how much its stream holds, and counts
+// the seeks that move it.
+type capReader struct {
+	*bytes.Reader
+	capacity int64
+	seeks    int
+}
+
+func (c *capReader) Capacity() int64 { return c.capacity }
+func (c *capReader) Seek(off int64, whence int) (int64, error) {
+	c.seeks++
+	return c.Reader.Seek(off, whence)
+}
+
+// A tag that puts the first frame beyond what the stream holds would cost a
+// new range request to look at it: the probe leaves the table and takes the
+// tag's end as the start.
+func TestProbeMP3SkipsAFrameBeyondTheRing(t *testing.T) {
+	data := append(tagged(12000), xingFrame(false, false, false, 7, 3000, 25600, quadToc())...)
+	data = append(data, make([]byte, 1000)...)
+	c := &capReader{Reader: bytes.NewReader(data), capacity: 8 << 10}
+	l := probeMP3(c)
+	if l.start != 12010 || l.toc != nil {
+		t.Fatalf("start %d, toc %v: want the tag's end and no table", l.start, l.toc)
+	}
+	if c.seeks != 0 {
+		t.Fatalf("%d seeks, the probe went looking beyond the ring", c.seeks)
+	}
+	// With room for it, the same file is probed.
+	c = &capReader{Reader: bytes.NewReader(data), capacity: 1 << 20}
+	if l := probeMP3(c); l.toc == nil {
+		t.Fatal("no table found with the first frame inside the ring")
+	}
+}
