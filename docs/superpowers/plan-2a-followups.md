@@ -426,7 +426,7 @@ Still open:
 - **Scripts, docs and tools:**
   - The launcher test's `socat` stand-in checks the missing trailing newline and `-t 2`.
   - `mkdb` rejects a bare `?` or `#` in `-base-url`.
-  - `VERSION` is `0.0.0-<hash>` when there are no tags.
+  - `VERSION` is `0.0.0-<hash>` when there are no tags (`dev` outside git; the source link uses the exact tag or commit).
   - `mister-test` loops over one `TESTS` list.
   - The README lists what the zip holds, and its keyboard paragraph is rewrapped; the viewer's help line names the media keys.
 - **Skipped as already fixed:** the `-verify-redraw` one-pixel progress difference (O43; a per-frame snapshot, commit 8379160).
@@ -443,7 +443,7 @@ Still open:
   - `Sync` runs only on `Top()`: a Home under an overlay draws a stale Resume row (cosmetic).
   - Hint tests: the pixel-change check can't judge whether a label is right (needs a per-hint expectation table).
   - Connecting: re-selecting the same server is swallowed while it connects.
-  - Log truncation after failed rotations leaves no marker line; `int()` of Xres/LineLength before the 64-bit maths (theoretical).
+  - `int()` of Xres/LineLength before the 64-bit maths (theoretical).
   - The MP3 probe skip can't fire with the shipped defaults (5 MiB ring, `maxProbedTag` guard first): harmless, wants a comment; cache `retryAt` with `max < 10`; `promoting` stays true if the allocation panicked (theoretical).
   - A reorder with `[server.*]` subtables falls back to a full rewrite that drops the subtable keys (unknown keys, as for any unknown table; older than Plan 5b).
   - Comment placement at `engine.go:767`; `g_ring` and `g_device` use after a concurrent close relies on the same-goroutine contract.
