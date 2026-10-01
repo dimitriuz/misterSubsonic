@@ -55,6 +55,34 @@ func TestGaplessPrefetchAndHandover(t *testing.T) {
 	h.waitFor("now playing for b", func() bool { return len(h.api.nowPlayings()) == 2 })
 }
 
+// A ReplayGain change while the successor is still opening: the open
+// finishes after it, and the queued track carries the new mode's gain.
+func TestReplayGainChangeWhilePrefetchOpens(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.ReplayGain = "off" })
+	q := songs(2, 100)
+	g := -6.0
+	q[1].ReplayGain = &subsonic.ReplayGain{TrackGain: &g}
+	h.p.PlayNow(q, 0)
+	a := h.playAndStart(1)
+
+	gate := make(chan struct{})
+	h.opener.mu.Lock()
+	h.opener.gate = gate
+	h.opener.mu.Unlock()
+	h.tickAt(a.ID, 81*time.Second)
+	h.waitFor("prefetch open started", func() bool { return len(h.opener.callList()) == 2 })
+	h.p.SetReplayGain("track") // the successor has no engine track yet
+	close(gate)
+	h.waitFor("QueueNext", func() bool { return h.eng.queueCount() == 1 })
+	b := h.eng.queued[0]
+	if b.Gain < 0.50 || b.Gain > 0.51 {
+		t.Fatalf("queued gain = %v, want the -6 dB of the new mode", b.Gain)
+	}
+	if gain, ok := h.eng.gainOf(b.ID); ok && (gain < 0.50 || gain > 0.51) {
+		t.Fatalf("engine gain for the successor = %v", gain)
+	}
+}
+
 func TestEndOfQueueStops(t *testing.T) {
 	h := newHarness(t, nil)
 	h.p.PlayNow(songs(1, 100), 0)
