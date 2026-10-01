@@ -107,11 +107,12 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | Start | play/pause | play/pause |
 | Select | shuffle-play the list | press: shuffle / repeat modes; hold 1 s: mute |
 
-Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute,
-PgUp/PgDn = L/R, Space = Start. In Search and the setup wizard, letters type and Backspace
-deletes. With a controller, hold Select on Now Playing to mute; changing the volume turns the sound back on. A multimedia keyboard's media
-keys work on every screen: volume up/down (held to repeat), mute, play/pause, next, previous, and
-fast-forward/rewind to seek. A volume panel shows the level for a moment whenever it changes.
+Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute, PgUp/PgDn =
+L/R, Space = Start. In Search and the setup wizard, letters type and Backspace deletes. With a
+controller, hold Select on Now Playing to mute; changing the volume turns the sound back on. A
+multimedia keyboard's media keys work on every screen: volume up/down (held to repeat), mute,
+play/pause, next, previous, and fast-forward/rewind to seek. A volume panel shows the level for a
+moment whenever it changes.
 
 **Hints:** the bar along the bottom of every screen shows what the buttons do there: as gamepad
 buttons after a gamepad press, as keys after a key press. Settings → Display → Hints turns it off.

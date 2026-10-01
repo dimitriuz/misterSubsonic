@@ -220,10 +220,11 @@ var forcedExitWait = 2 * time.Second
 // mode here when it runs first (run entered it at start, and only the exit
 // path leaves it), as the size change needs.
 func restoreOnForcedExit() {
-	// A restore stuck in an ioctl holds the guard for good; the forced exit
-	// must still end. Without the guard it sends no size command and leaves
-	// the console alone (the launcher's -restore-console runs afterwards, in
-	// graphics mode).
+	// The 2 s bound helps only with a hang that can be interrupted (a lock
+	// held, a blocked write). A thread stuck uninterruptibly in a KDSETMODE
+	// ioctl stops os.Exit from finishing anyway. Without the guard the
+	// forced exit sends no size command and leaves the console alone (the
+	// launcher's -restore-console runs afterwards, in graphics mode).
 	if !lockWithin(&exitRestore.mu, forcedExitWait) {
 		log.Printf("display: the restore is stuck; exiting without restoring (the launcher restores the console)")
 		return
