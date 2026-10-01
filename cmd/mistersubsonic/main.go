@@ -395,10 +395,13 @@ func run(f flags) (err error) {
 		dev = ""
 	}
 	var eng *audio.Engine
+	var visual ui.Visual // the tap on what is playing (nil without a device)
 	out, audioErr := openDevice(audio.DeviceOptions{Name: dev, Null: f.null})
 	if audioErr == nil {
 		defer out.Close()
-		eng = audio.NewEngine(audio.EngineOptions{Output: out})
+		tap := audio.NewTap(out, audio.TapFrames)
+		visual = tap
+		eng = audio.NewEngine(audio.EngineOptions{Output: tap})
 		defer eng.Close()
 	}
 
@@ -421,6 +424,7 @@ func run(f flags) (err error) {
 		VerifyRedraw:  f.verifyRedraw,
 		WatchDisplay:  watchDisplay,
 		PadAtStart:    padAtStart,
+		Visual:        visual,
 		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
 	})
 	if err != nil {

@@ -123,7 +123,20 @@ type Options struct {
 	// goroutine, replacing any previous one; it answers with
 	// a.Connected or a.ConnectFailed (through a.Post).
 	Connect func(a *App, cfg *config.Config)
+	// Visual is what the visualizer reads: the frames being heard right now
+	// (nil: no sound device, so nothing to show).
+	Visual Visual
 }
+
+// Visual gives the visualizer the audio that is playing: Window fills dst
+// (interleaved stereo float32) with the latest frames ending at the playback
+// position and returns how many frames it filled. *audio.Tap implements it.
+type Visual interface {
+	Window(dst []float32) int
+}
+
+// Visual returns Options.Visual.
+func (a *App) Visual() Visual { return a.o.Visual }
 
 // Fonts used by the screens.
 type Fonts struct {

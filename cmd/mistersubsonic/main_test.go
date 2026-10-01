@@ -285,3 +285,20 @@ func TestAnUnopenableCrashFileIsLogged(t *testing.T) {
 		t.Fatalf("log:\n%s", b)
 	}
 }
+
+// The UI gets the audio tap, so the visualizer can see what is playing.
+func TestUIOptionsGetTheAudioTap(t *testing.T) {
+	nullDevice(t)
+	_, cfg := writeConfig(t, "http://127.0.0.1:1")
+	var got ui.Visual
+	old := beforeRun
+	beforeRun = func(a *ui.App) { got = a.Visual() }
+	defer func() { beforeRun = old }()
+	err := run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := got.(*audio.Tap); !ok {
+		t.Fatalf("Options.Visual = %T, want *audio.Tap", got)
+	}
+}
