@@ -408,25 +408,28 @@ func TestMergeIntoReusesItsBuffer(t *testing.T) {
 }
 
 func TestVizWaterfallStartsCleanWhenChosenAgain(t *testing.T) {
-	ta := vizApp(t, ProfileHDMI, VizWaterfall)
-	runFrames(t, ta, 60)
-	if ta.viz.cursor == 0 {
-		t.Fatal("the sweep never moved")
-	}
-	ta.cfg.Display.Visualizer = VizBars.String()
-	ta.dirty = true
-	runFrames(t, ta, 3)
-	ta.cfg.Display.Visualizer = VizWaterfall.String()
-	ta.dirty = true
-	ta.render()
-	ta.vizTick(ta.now)
-	cw := max(int(math.Round(float64(ta.viz.rect.W)/float64(vizSweep*ta.vizFPS()))), 1)
-	if ta.viz.cursor != cw {
-		t.Errorf("cursor at %d after the first frame, want %d", ta.viz.cursor, cw)
-	}
-	for i, px := range ta.viz.img.Pix {
-		if x := i % ta.viz.img.W; x >= cw && px != 0 {
-			t.Fatalf("stale picture at column %d", x)
+	for _, away := range []VizStyle{VizBars, VizOff} {
+		ta := vizApp(t, ProfileHDMI, VizWaterfall)
+		runFrames(t, ta, 60)
+		if ta.viz.cursor == 0 {
+			t.Fatal("the sweep never moved")
+		}
+		ta.cfg.Display.Visualizer = away.String()
+		ta.dirty = true
+		ta.render() // a frame in the other style
+		runFrames(t, ta, 3)
+		ta.cfg.Display.Visualizer = VizWaterfall.String()
+		ta.dirty = true
+		ta.render()
+		ta.vizTick(ta.now)
+		cw := max(int(math.Round(float64(ta.viz.rect.W)/float64(vizSweep*ta.vizFPS()))), 1)
+		if ta.viz.cursor != cw {
+			t.Errorf("via %v: cursor at %d after the first frame, want %d", away, ta.viz.cursor, cw)
+		}
+		for i, px := range ta.viz.img.Pix {
+			if x := i % ta.viz.img.W; x >= cw && px != 0 {
+				t.Fatalf("via %v: stale picture at column %d", away, x)
+			}
 		}
 	}
 }

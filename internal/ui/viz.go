@@ -252,11 +252,11 @@ func (a *App) vizCost(cost time.Duration) {
 // it for the frame clock. Nothing is drawn, or woken, with the style Off or
 // no sound source.
 func (a *App) drawVizPanel(c *gfx.Canvas, r gfx.Rect) {
+	a.vizStyleSync() // also while Off: the next waterfall starts clean
 	if !a.vizShown() || r.W < 8 || r.H < 8 {
 		return
 	}
 	a.markViz(r)
-	a.vizStyleSync()
 	a.drawViz(c, r, a.VizStyle())
 }
 
