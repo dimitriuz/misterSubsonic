@@ -70,6 +70,12 @@ type Screen interface {
 	Draw(a *App, c *gfx.Canvas, area gfx.Rect)
 }
 
+// Syncer is a screen that adjusts itself to the app's state (the Resume row
+// goes once something plays) before each frame, so Draw doesn't change it.
+type Syncer interface {
+	Sync(a *App)
+}
+
 // TextInput is a screen that takes typed characters (physical keyboards).
 // Text returns false to let the key act as its button instead (Backspace
 // in an empty field goes back).
@@ -187,6 +193,7 @@ type App struct {
 	insecure   bool
 	stars      map[starKey]bool       // star changes made in this session
 	starBusy   map[starKey]bool       // star requests in flight
+	connecting bool                   // a connect has been started and hasn't answered
 	starGen    int                    // bumped by every successful star change
 	artists    []subsonic.ArtistIndex // getArtists, fetched once per connection
 	cfg        *config.Config
@@ -745,6 +752,9 @@ func (a *App) render() error {
 		a.frameState = &st
 	}
 	defer func() { a.frameNow, a.frameState = time.Time{}, nil }()
+	if sy, ok := a.Top().(Syncer); ok {
+		sy.Sync(a)
+	}
 	full := a.dirty
 	a.dirty = false
 	if _, np := a.Top().(*NowPlayingScreen); !np {

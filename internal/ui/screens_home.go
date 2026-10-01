@@ -77,6 +77,9 @@ func (s *HomeScreen) Enter(a *App) {
 	})
 }
 
+// Sync runs before each frame (Draw leaves the screen as it is).
+func (s *HomeScreen) Sync(a *App) { s.sync(a) }
+
 // sync drops the Resume row once something is playing: resuming then
 // would replace the live queue.
 func (s *HomeScreen) sync(a *App) {
@@ -124,7 +127,6 @@ func (s *HomeScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *HomeScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
-	s.sync(a)
 	items := s.items()
 	s.list.Draw(c, area, len(items), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
 		col := colText

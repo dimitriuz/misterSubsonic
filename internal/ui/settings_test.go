@@ -16,7 +16,7 @@ func connectedApp(t *testing.T) (*testApp, *connectRecorder) {
 	t.Helper()
 	ta, rec := sessionApp(t, twoServers())
 	srv := ta.cfg.Servers[0]
-	ta.Connected(ConnInfo{Server: srv, Info: &subsonic.ServerInfo{Type: "navidrome", ServerVersion: "0.59.0"}, Auth: subsonic.AuthToken}, ta.lib, ta.pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: srv, Info: &subsonic.ServerInfo{Type: "navidrome", ServerVersion: "0.59.0"}, Auth: subsonic.AuthToken}, ta.lib, ta.pl, newFakeArt())
 	return ta, rec
 }
 
@@ -83,7 +83,7 @@ func TestServersSwitchAndRemove(t *testing.T) {
 		t.Fatalf("switch connects %v", rec.got)
 	}
 	// Remove the connected server: the next default connects.
-	ta.Connected(ConnInfo{Server: ta.cfg.Servers[1]}, ta.lib, ta.pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[1]}, ta.lib, ta.pl, newFakeArt())
 	ta.Push(NewServersScreen())
 	ta.press(input.BtnDown)
 	ta.press(input.BtnX)
@@ -94,7 +94,7 @@ func TestServersSwitchAndRemove(t *testing.T) {
 		t.Fatalf("servers %v, connects %d", names, len(rec.got))
 	}
 	// Remove the last: disconnect and set up again.
-	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, ta.pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, ta.pl, newFakeArt())
 	ta.Push(NewServersScreen())
 	ta.press(input.BtnX)
 	ta.press(input.BtnDown)
@@ -165,7 +165,7 @@ func TestGoldenSettings(t *testing.T) {
 	for _, p := range profiles {
 		ta := newTestApp(t, p)
 		ta.cfg, ta.o.ConfigPath = twoServers(), filepath.Join(t.TempDir(), "config.toml")
-		ta.Connected(ConnInfo{Server: ta.cfg.Servers[0], Info: &subsonic.ServerInfo{Type: "navidrome", ServerVersion: "0.59.0"}, Auth: subsonic.AuthToken}, ta.lib, ta.pl, fakeArt{})
+		ta.Connected(ConnInfo{Server: ta.cfg.Servers[0], Info: &subsonic.ServerInfo{Type: "navidrome", ServerVersion: "0.59.0"}, Auth: subsonic.AuthToken}, ta.lib, ta.pl, newFakeArt())
 		ta.Push(newSettingsList("Playback", playbackSettings))
 		golden(t, "settings-playback-"+p.Name, ta.settle(t))
 		ta.Replace(NewServersScreen())
@@ -218,14 +218,14 @@ func TestVolumeChangedWhileDisconnectedReachesTheNextPlayer(t *testing.T) {
 	ta.setVolume(-20)
 	pl := newFakePlayer()
 	pl.st.VolumeDB = -5
-	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl, newFakeArt())
 	if pl.st.VolumeDB != -20 {
 		t.Fatalf("new player at %v dB, want -20", pl.st.VolumeDB)
 	}
 	// The flag is spent: a later volume path that skips the config is kept.
 	pl2 := newFakePlayer()
 	pl2.st.VolumeDB = -7
-	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl2, fakeArt{})
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0]}, ta.lib, pl2, newFakeArt())
 	if pl2.st.VolumeDB != -7 {
 		t.Fatalf("player without a detached change moved to %v dB", pl2.st.VolumeDB)
 	}

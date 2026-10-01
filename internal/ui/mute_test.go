@@ -30,7 +30,7 @@ func TestMuteCarriesToTheNextServersPlayer(t *testing.T) {
 	ta, _ := connectedApp(t)
 	ta.press(input.BtnMute)
 	pl := newFakePlayer()
-	ta.Connected(ConnInfo{Server: ta.cfg.Servers[1]}, ta.lib, pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[1]}, ta.lib, pl, newFakeArt())
 	if !pl.st.Muted {
 		t.Fatal("the new server's player plays while the app shows Muted")
 	}

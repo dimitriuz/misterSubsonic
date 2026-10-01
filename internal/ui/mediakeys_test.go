@@ -177,7 +177,7 @@ func TestVolumeWithoutAConfigIsKeptForThePlayer(t *testing.T) {
 		t.Fatalf("volume %v, cfg %v", ta.volumeDB(), ta.cfg)
 	}
 	ta.cfg = twoServers()
-	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0], Info: &subsonic.ServerInfo{}}, ta.lib, ta.pl, fakeArt{})
+	ta.Connected(ConnInfo{Server: ta.cfg.Servers[0], Info: &subsonic.ServerInfo{}}, ta.lib, ta.pl, newFakeArt())
 	if ta.pl.st.VolumeDB != -2 {
 		t.Fatalf("player volume %v, want -2", ta.pl.st.VolumeDB)
 	}
