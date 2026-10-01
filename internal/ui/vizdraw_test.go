@@ -344,3 +344,89 @@ func BenchmarkVizFrame(b *testing.B) {
 		}
 	}
 }
+
+// wholeFrameAllocs is the allocations of one wake, partial render and
+// present of Now Playing in style, verify off. extra is damaged on every
+// frame as well (the baseline gets the panel's rect this way).
+func wholeFrameAllocs(t *testing.T, prof Profile, style VizStyle, extra gfx.Rect) float64 {
+	ta := vizApp(t, prof, style)
+	ta.verify = false
+	runFrames(t, ta, 5) // setup
+	var err error
+	n := testing.AllocsPerRun(20, func() {
+		ta.now = ta.now.Add(33 * time.Millisecond)
+		ta.onWake()
+		ta.Damage(extra)
+		err = ta.render()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestVizWholeFrameAllocatesNothing measures the real path: the wake, the
+// merge of the damage, the partial render, the present and the valve's
+// books. The Now Playing screen itself still allocates per frame (hint
+// labels, the time and "Next:" strings: about 15 per clipped pass of the
+// whole screen), whatever the style, so the visualizer is measured as the
+// excess over the same screen with it off and the panel's rectangle
+// damaged all the same.
+func TestVizWholeFrameAllocatesNothing(t *testing.T) {
+	for _, l := range vizLayouts {
+		panel := vizApp(t, l.prof, VizBars).viz.rect
+		base := wholeFrameAllocs(t, l.prof, VizOff, panel)
+		for style := VizBars; style <= VizWaterfall; style++ {
+			if n := wholeFrameAllocs(t, l.prof, style, gfx.Rect{}); n > base {
+				t.Errorf("%s %v: %v allocations per whole frame, %v without the visualizer", l.name, style, n, base)
+			}
+		}
+	}
+}
+
+// The baseline above pays for the merge too, so the merge is checked on its
+// own: renderDamage must keep merging into the same storage.
+func TestRenderDamageReusesTheMergeBuffer(t *testing.T) {
+	ta := vizApp(t, ProfileHDMI, VizBars)
+	runFrames(t, ta, 3)
+	if len(ta.mergeBuf) == 0 {
+		t.Fatal("no merged rectangles")
+	}
+	first := &ta.mergeBuf[0]
+	runFrames(t, ta, 5)
+	if &ta.mergeBuf[0] != first {
+		t.Error("renderDamage merged into new storage")
+	}
+}
+
+func TestMergeIntoReusesItsBuffer(t *testing.T) {
+	rs := []gfx.Rect{gfx.R(0, 0, 10, 10), gfx.R(10, 0, 10, 10), gfx.R(50, 50, 5, 5), gfx.R(90, 90, 5, 5), gfx.R(70, 0, 1, 1)}
+	buf := mergeInto(nil, rs, 2)
+	if n := testing.AllocsPerRun(20, func() { buf = mergeInto(buf, rs, 2) }); n != 0 {
+		t.Errorf("%v allocations", n)
+	}
+}
+
+func TestVizWaterfallStartsCleanWhenChosenAgain(t *testing.T) {
+	ta := vizApp(t, ProfileHDMI, VizWaterfall)
+	runFrames(t, ta, 60)
+	if ta.viz.cursor == 0 {
+		t.Fatal("the sweep never moved")
+	}
+	ta.cfg.Display.Visualizer = VizBars.String()
+	ta.dirty = true
+	runFrames(t, ta, 3)
+	ta.cfg.Display.Visualizer = VizWaterfall.String()
+	ta.dirty = true
+	ta.render()
+	ta.vizTick(ta.now)
+	cw := max(int(math.Round(float64(ta.viz.rect.W)/float64(vizSweep*ta.vizFPS()))), 1)
+	if ta.viz.cursor != cw {
+		t.Errorf("cursor at %d after the first frame, want %d", ta.viz.cursor, cw)
+	}
+	for i, px := range ta.viz.img.Pix {
+		if x := i % ta.viz.img.W; x >= cw && px != 0 {
+			t.Fatalf("stale picture at column %d", x)
+		}
+	}
+}

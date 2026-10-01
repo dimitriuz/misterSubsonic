@@ -153,6 +153,7 @@ func (a *App) vizTick(now time.Time) {
 	if v.an == nil {
 		a.vizInit()
 	}
+	a.vizStyleSync()
 	dt := a.vizInterval()
 	if d := now.Sub(v.last); !v.last.IsZero() && d < vizGap {
 		dt = d
@@ -178,6 +179,19 @@ func (a *App) vizTick(now time.Time) {
 	v.work, v.pending = a.o.Now().Sub(start), true
 }
 
+// vizStyleSync notes the style in use; choosing the waterfall again starts
+// its picture clean, with the cursor at the left.
+func (a *App) vizStyleSync() {
+	v := &a.viz
+	if style := a.VizStyle(); style != v.style {
+		v.style = style
+		if style == VizWaterfall && v.img != nil {
+			clear(v.img.Pix)
+		}
+		v.cursor = 0
+	}
+}
+
 // sweepWaterfall paints this frame's spectrum column at the cursor and moves
 // the cursor on; the picture is never scrolled.
 func (a *App) sweepWaterfall() {
@@ -185,11 +199,7 @@ func (a *App) sweepWaterfall() {
 	r := v.rect
 	if v.img == nil || v.img.W != r.W || v.img.H != r.H {
 		v.img, v.cursor = gfx.NewImage(r.W, r.H), 0
-	} else if v.style != VizWaterfall {
-		clear(v.img.Pix)
-		v.cursor = 0
 	}
-	v.style = VizWaterfall
 	col := v.an.Column()
 	cw := max(int(math.Round(float64(r.W)/float64(vizSweep*a.vizFPS()))), 1)
 	for dx := 0; dx < cw; dx++ {
@@ -246,6 +256,7 @@ func (a *App) drawVizPanel(c *gfx.Canvas, r gfx.Rect) {
 		return
 	}
 	a.markViz(r)
+	a.vizStyleSync()
 	a.drawViz(c, r, a.VizStyle())
 }
 

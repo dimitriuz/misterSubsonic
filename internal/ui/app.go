@@ -245,6 +245,7 @@ type App struct {
 	checkAt      time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten  bool      // the last check found the screen drawn over
 	viz          vizState
+	mergeBuf     []gfx.Rect // renderDamage's merged rectangles, reused
 }
 
 func New(o Options) (*App, error) {

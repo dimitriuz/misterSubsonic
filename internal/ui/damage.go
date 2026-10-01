@@ -54,7 +54,13 @@ func (a *App) Damage(r gfx.Rect) {
 // mergeRects joins overlapping or touching rectangles, and folds the lot
 // into its bounding box when more than max are left.
 func mergeRects(rs []gfx.Rect, max int) []gfx.Rect {
-	out := append([]gfx.Rect(nil), rs...)
+	return mergeInto(nil, rs, max)
+}
+
+// mergeInto is mergeRects working in buf's storage, so a frame that merges
+// a few rectangles every time allocates nothing once buf has grown.
+func mergeInto(buf, rs []gfx.Rect, max int) []gfx.Rect {
+	out := append(buf[:0], rs...)
 	for merged := true; merged; {
 		merged = false
 		for i := 0; i < len(out) && !merged; i++ {
@@ -73,7 +79,7 @@ func mergeRects(rs []gfx.Rect, max int) []gfx.Rect {
 		for _, r := range out[1:] {
 			box = union(box, r)
 		}
-		out = []gfx.Rect{box}
+		out = append(out[:0], box)
 	}
 	return out
 }
@@ -102,7 +108,8 @@ func (a *App) renderDamage() (bool, error) {
 	if a.animate && !a.mqRect.Empty() {
 		a.damage = append(a.damage, a.mqRect)
 	}
-	rs := mergeRects(a.damage, maxDamageRects)
+	a.mergeBuf = mergeInto(a.mergeBuf, a.damage, maxDamageRects)
+	rs := a.mergeBuf
 	a.damage = a.damage[:0]
 	c := a.canvas
 	for _, r := range rs {
