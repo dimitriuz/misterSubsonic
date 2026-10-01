@@ -401,6 +401,48 @@ func TestWizardPlaintextConsentDoesNotCarryToAnotherHost(t *testing.T) {
 	}
 }
 
+// Consent is kept when the same address is retyped in a form that
+// normalizeURL maps to the same text: another case of the scheme, a trailing
+// slash, a /rest suffix, a query. It does not equate a host in another case or
+// the default port: those ask again (pinned as it is, the safe direction).
+func TestWizardPlaintextConsentSurvivesRetypingTheSameAddress(t *testing.T) {
+	a := fakeServer("token41", false)
+	defer a.Close()
+	ta, _, w := wizardApp(t)
+	fill(t, ta, a.URL, "u", "pw", "")
+	ta.press(input.BtnA) // allow plaintext
+	ta.settle(t)
+	if w.err != nil || !w.server().AllowPlaintextPassword {
+		t.Fatalf("after allowing: %v", w.err)
+	}
+	ta.press(input.BtnDown)
+	ta.press(input.BtnA) // Back
+	for range 4 {
+		ta.press(input.BtnB)
+	}
+	if w.step != stepURL {
+		t.Fatalf("step %d", w.step)
+	}
+	rest := strings.TrimPrefix(a.URL, "http://")
+	for _, form := range []string{"HTTP://" + rest, a.URL + "/", a.URL + "/rest", a.URL + "/?x=1#y", rest} {
+		for range len(w.fields[stepURL]) {
+			typeKeys(ta, "\b")
+		}
+		typeKeys(ta, form+"\n")
+		if w.step != stepUser || string(w.fields[stepURL]) != a.URL || !w.server().AllowPlaintextPassword {
+			t.Fatalf("%q: step %d url %q plaintext %v", form, w.step, w.fields[stepURL], w.server().AllowPlaintextPassword)
+		}
+		ta.press(input.BtnB) // back to the address
+	}
+	for _, c := range [][2]string{{"http://Example.com", "http://example.com"}, {"http://example.com:80", "http://example.com"}} {
+		x, _ := normalizeURL(c[0])
+		y, _ := normalizeURL(c[1])
+		if x == y {
+			t.Errorf("%q now equals %q: update the comment and the README", c[0], c[1])
+		}
+	}
+}
+
 // The keyboard stays inside the screen's body: below the header, above the
 // hint bar and the mini bar, in the title-safe area, on every typing step,
 // with or without a problem line.
