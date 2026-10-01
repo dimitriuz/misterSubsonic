@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/player"
 )
@@ -60,5 +61,37 @@ func TestStarSurvivesLeavingTheScreen(t *testing.T) {
 	ta.settle(t)
 	if !ta.isStarred(it) || !slices.Equal(ta.lib.stars, []string{"star al-1"}) {
 		t.Fatalf("starred %v, server calls %v", ta.isStarred(it), ta.lib.stars)
+	}
+}
+
+// When Sync drops the Resume row and moves the focus, the whole frame is
+// redrawn: a partial frame with some other damage must not leave the old
+// list on the screen (the verify mode compares it with a full one).
+func TestHomeSyncDroppingResumeRedrawsTheFrame(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	ta.pl.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+	s := NewHomeScreen()
+	ta.Push(s)
+	ta.press(input.BtnDown)
+	ta.press(input.BtnDown)
+	ta.settle(t)
+	if s.resume == nil || s.list.Focus == 0 {
+		t.Fatalf("setup: resume %v, focus %d", s.resume, s.list.Focus)
+	}
+	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: 0, NextIndex: -1}
+	ta.clean()
+	ta.Damage(gfx.R(0, 0, 4, 4)) // a partial frame, nothing else dirty
+	ta.settle(t)                 // verify mode: partial must equal full
+	if s.resume != nil {
+		t.Fatal("the frame kept the Resume row")
+	}
+	ta.pl.st = player.State{}
+	s.resume = &player.Resume{Songs: ta.lib.tracks["al-1"], Index: 1}
+	s.list.Focus = 2
+	ta.pl.st = player.State{Queue: ta.lib.tracks["al-1"], Index: 0, NextIndex: -1}
+	ta.clean()
+	s.Sync(ta.App)
+	if !ta.dirty {
+		t.Fatal("Sync moved the focus without marking the frame dirty")
 	}
 }

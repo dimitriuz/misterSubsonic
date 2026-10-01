@@ -88,6 +88,7 @@ func (s *HomeScreen) sync(a *App) {
 		if s.list.Focus > 0 {
 			s.list.Focus-- // keep the focus on the same item
 		}
+		a.dirty = true // the rows moved: a partial frame would leave the old list
 	}
 }
 
