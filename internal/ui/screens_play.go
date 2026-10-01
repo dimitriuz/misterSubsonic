@@ -240,6 +240,12 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	barH := max(p.Margin/6, 3)
 	// Height of the text block, used to centre everything vertically.
 	textH := ft.Height() + 2*fb.Height() + fs.Height() + p.Margin + barH + p.Margin/4 + fs.Height() + p.Margin/2 + fb.Height() + 2*fs.Height()
+	// With the visualizer on, the panel is part of the block when the cover
+	// is too short to hold it beside the text (a CRT).
+	vizGapY := p.Margin / 4
+	if a.vizShown() {
+		textH += vizGapY + max(p.Margin*5/4, 20)
+	}
 	// Art left, text right, centred as a block. The gap is narrower on a
 	// CRT, where the text needs the width.
 	gap := 2 * p.Margin
@@ -307,6 +313,9 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	if a.insecure {
 		line(fs, "insecure: certificate not checked", colError)
 	}
+	// The visualizer takes the rest of the column, down to the cover's bottom
+	// edge (or the text block's, when that is lower).
+	a.drawVizPanel(c, gfx.R(text.X, y+vizGapY, text.W, text.Bottom()-y-vizGapY))
 }
 
 // QueueScreen lists the play queue.

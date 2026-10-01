@@ -177,7 +177,7 @@ func (a *App) markArt(id subsonic.ID, r gfx.Rect) {
 }
 
 func (a *App) resetMarks() {
-	a.ticks, a.mqRect = a.ticks[:0], gfx.Rect{}
+	a.ticks, a.mqRect, a.viz.rect = a.ticks[:0], gfx.Rect{}, gfx.Rect{}
 	for id := range a.arts {
 		delete(a.arts, id)
 	}

@@ -244,6 +244,7 @@ type App struct {
 	verifyCanvas *gfx.Canvas
 	checkAt      time.Time // the next watchdog check (zero: the display can't check itself)
 	overwritten  bool      // the last check found the screen drawn over
+	viz          vizState
 }
 
 func New(o Options) (*App, error) {
@@ -519,6 +520,7 @@ func (a *App) untilWake() time.Duration {
 	if !a.volumeUntil.IsZero() {
 		consider(a.volumeUntil)
 	}
+	consider(a.vizDue())
 	consider(a.saverDue())
 	if a.saver {
 		consider(now.Add(saverStep)) // the drift; nothing else moves
@@ -578,6 +580,9 @@ func (a *App) onWake() {
 		a.saveConfig()
 	}
 	a.checkScreen(now)
+	if a.vizActive() && !now.Before(a.viz.next) {
+		a.vizTick(now)
+	}
 	if !a.volumeUntil.IsZero() && !now.Before(a.volumeUntil) {
 		a.Damage(a.volumePanelRect()) // the panel goes
 		a.volumeUntil = time.Time{}
@@ -762,6 +767,10 @@ func (a *App) present(c *gfx.Canvas) error {
 // changed, otherwise the whole frame.
 func (a *App) render() error {
 	a.frameNow = a.o.Now()
+	if a.viz.pending { // the frame's cost: its analysis, and this draw and present
+		start := a.frameNow
+		defer func() { a.vizCost(a.viz.work + a.o.Now().Sub(start)) }()
+	}
 	if a.o.Player != nil {
 		st := a.o.Player.State()
 		a.frameState = &st
