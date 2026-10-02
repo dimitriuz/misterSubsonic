@@ -410,6 +410,8 @@ func run(f flags) (err error) {
 	// engine and device close (defers run last-in first-out).
 	sess := newSessions(ctx, eng, dataDir, vol)
 	defer sess.close()
+	host := &remoteHost{port: cfg.Remote.Port}
+	defer host.Close()                          // before the player stops, after the UI has quit
 	defer armDeadline(&deadline, shutdownLimit) // runs first: bounds the clean-ups above
 
 	var loaded *config.Config
@@ -426,9 +428,14 @@ func run(f flags) (err error) {
 		PadAtStart:    padAtStart,
 		Visual:        visual,
 		Connect:       func(a *ui.App, c *config.Config) { sess.connect(a, c) },
+		Remote:        host, RemoteSwitch: host,
 	})
 	if err != nil {
 		return err
+	}
+	host.ctl = app.RemoteController()
+	if cfg.Remote.Enabled {
+		startRemote(host, app)
 	}
 	beforeRun(app)
 	err = app.Run(ctx)

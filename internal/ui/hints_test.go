@@ -46,8 +46,12 @@ var hintFixtures = map[string]func(ta *testApp) Screen{
 	"settings": func(ta *testApp) Screen { return NewSettingsScreen() },
 	"playback": func(ta *testApp) Screen { return newSettingsList("Playback", playbackSettings) },
 	"display":  func(ta *testApp) Screen { return newSettingsList("Display", displaySettings) },
-	"servers":  func(ta *testApp) Screen { return NewServersScreen() },
-	"wizard":   func(ta *testApp) Screen { return NewWizardScreen(false, false) },
+	"remote": func(ta *testApp) Screen {
+		ta.o.RemoteSwitch = &fakeSwitch{urls: []string{"http://192.168.1.50:8080/"}}
+		return newSettingsList("Remote", remoteSettings)
+	},
+	"servers": func(ta *testApp) Screen { return NewServersScreen() },
+	"wizard":  func(ta *testApp) Screen { return NewWizardScreen(false, false) },
 	"wizard with text": func(ta *testApp) Screen {
 		w := NewWizardScreen(false, false)
 		w.fields[stepURL] = []rune("http://h:4533")

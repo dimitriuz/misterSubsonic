@@ -273,6 +273,12 @@ func (s *Server) writeCtlError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrBusy):
 		writeError(w, http.StatusServiceUnavailable, ErrBusy.Error())
 	default:
+		// A library error out of Play: told by its kind, never by its text,
+		// which can hold the server URL and credentials (as in browse.go).
+		if k := subsonic.Classify(err); k != subsonic.KindOther {
+			writeLibError(w, err)
+			return
+		}
 		if s.opts.Log != nil {
 			s.opts.Log("remote: internal error: %v", err)
 		}

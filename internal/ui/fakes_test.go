@@ -32,6 +32,25 @@ type fakeLibrary struct {
 	stars     []string      // "star al-1", "unstar s2"
 	block     chan struct{} // if set, Search3 waits for it (or ctx)
 	starCalls int           // GetStarred2 calls
+	songCalls []subsonic.ID // GetSong calls
+}
+
+// GetSong finds a song of any album (the server knows them all).
+func (l *fakeLibrary) GetSong(_ context.Context, id subsonic.ID) (*subsonic.Song, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.songCalls = append(l.songCalls, id)
+	if l.err != nil {
+		return nil, l.err
+	}
+	for _, songs := range l.tracks {
+		for _, so := range songs {
+			if so.ID == id {
+				return &so, nil
+			}
+		}
+	}
+	return nil, &subsonic.APIError{Code: subsonic.CodeNotFound, Message: "song not found"}
 }
 
 func (l *fakeLibrary) GetAlbumList2(_ context.Context, q subsonic.AlbumListQuery) ([]subsonic.Album, error) {
@@ -206,6 +225,8 @@ type fakePlayer struct {
 	played  []subsonic.Song
 	start   int
 	seekPos time.Duration
+	moves   [][2]int // Move(from, to) calls
+	removed []int    // Remove(i) calls
 }
 
 func newFakePlayer() *fakePlayer {
@@ -220,8 +241,8 @@ func (p *fakePlayer) Next()                       { p.call("next") }
 func (p *fakePlayer) Prev()                       { p.call("prev") }
 func (p *fakePlayer) Seek(d time.Duration)        { p.call("seek"); p.seekPos, p.st.Position = d, d }
 func (p *fakePlayer) Jump(i int)                  { p.call("jump"); p.st.Index = i }
-func (p *fakePlayer) Remove(i int)                { p.call("remove") }
-func (p *fakePlayer) Move(from, to int)           { p.call("move") }
+func (p *fakePlayer) Remove(i int)                { p.call("remove"); p.removed = append(p.removed, i) }
+func (p *fakePlayer) Move(from, to int)           { p.call("move"); p.moves = append(p.moves, [2]int{from, to}) }
 func (p *fakePlayer) SetShuffle(on bool)          { p.st.Shuffle = on }
 func (p *fakePlayer) SetRepeat(r player.Repeat)   { p.st.Repeat = r }
 func (p *fakePlayer) ResumeFrom(r *player.Resume) {

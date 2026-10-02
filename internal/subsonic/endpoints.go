@@ -38,6 +38,17 @@ func (c *Client) GetAlbum(ctx context.Context, id ID) (*AlbumWithSongs, error) {
 	return r.Album, nil
 }
 
+func (c *Client) GetSong(ctx context.Context, id ID) (*Song, error) {
+	r, err := c.call(ctx, "getSong", url.Values{"id": {string(id)}})
+	if err != nil {
+		return nil, err
+	}
+	if r.Song == nil {
+		return nil, &APIError{Code: CodeNotFound, Message: "song not found"}
+	}
+	return r.Song, nil
+}
+
 // Album list types for GetAlbumList2.
 const (
 	ListNewest       = "newest"

@@ -158,6 +158,29 @@ func (l *Loader) Get(k Key) (*gfx.Image, bool) {
 	return nil, false
 }
 
+// Bytes returns the encoded cover as the disk cache has it, else as the
+// server sends it (and caches that), for callers that pass the image on
+// undecoded. It runs on the caller's goroutine and doesn't touch the memory
+// LRU.
+func (l *Loader) Bytes(ctx context.Context, k Key) ([]byte, error) {
+	if k.ID == "" || k.Size <= 0 {
+		return nil, fmt.Errorf("art: no cover %s", k)
+	}
+	if l.o.Disk != nil {
+		if data, ok := l.o.Disk.Get(k.String()); ok {
+			return data, nil
+		}
+	}
+	data, err := l.o.Fetch(ctx, k)
+	if err != nil {
+		return nil, err
+	}
+	if l.o.Disk != nil {
+		l.o.Disk.Put(k.String(), data)
+	}
+	return data, nil
+}
+
 // Close stops the workers.
 func (l *Loader) Close() {
 	l.mu.Lock()

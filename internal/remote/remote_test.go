@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"mistersubsonic/internal/subsonic"
 )
 
 type fakeCtl struct {
@@ -222,6 +224,28 @@ func TestCmdMissingFields(t *testing.T) {
 	f := newFake()
 	if w := do(New(f, Options{}).Handler(), "POST", "/api/cmd", `{"do":"mute","on":false}`, nil); w.Code != 200 {
 		t.Errorf("explicit false: %d", w.Code)
+	}
+}
+
+// A library error out of Play or Do is told by its kind, as in the browse
+// routes: not found is 404, an unreachable server 503, and the error text
+// (it can hold the server's URL) never reaches the page.
+func TestPlayLibraryErrorMapping(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code int
+		body string
+	}{
+		{&subsonic.APIError{Code: subsonic.CodeNotFound, Message: "song not found"}, 404, `{"error":"not found"}`},
+		{fmt.Errorf("get http://u:secret@host/rest: %w", &net.OpError{Op: "dial", Err: errors.New("refused")}), 503, `{"error":"server unreachable"}`},
+		{context.DeadlineExceeded, 503, `{"error":"timed out"}`},
+	} {
+		f := newFake()
+		f.doErr = tc.err
+		w := do(New(f, Options{}).Handler(), "POST", "/api/play", `{"what":"songs","ids":["x"]}`, nil)
+		if w.Code != tc.code || strings.TrimSpace(w.Body.String()) != tc.body {
+			t.Errorf("%v: %d %s", tc.err, w.Code, w.Body)
+		}
 	}
 }
 
