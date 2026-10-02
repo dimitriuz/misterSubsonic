@@ -33,7 +33,7 @@ func HostAllowed(hostport string, extra ...string) bool {
 		host = h
 	}
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	if host == "localhost" || net.ParseIP(host) != nil {
+	if strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil {
 		return true
 	}
 	for _, e := range extra {
@@ -63,7 +63,7 @@ func SameOrigin(r *http.Request) bool {
 	}
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
-		if err != nil || u.Host != r.Host {
+		if err != nil || u.Host == "" || u.Host != r.Host {
 			return false
 		}
 	}

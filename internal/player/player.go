@@ -436,12 +436,14 @@ func (p *Player) Move(from, to int) {
 				p.order[i] = i
 			}
 		}
-		newNext := -1
+		newNext, newC := -1, -1
 		if c := p.followingCursor(true); c >= 0 {
-			newNext = p.order[c]
+			newNext, newC = p.order[c], c
 		}
 		if newNext != oldNext {
 			p.invalidateNext()
+		} else if p.nextID != 0 && newC >= 0 {
+			p.nextCursor = newC // same song, new place in the order: handover() uses this
 		}
 		p.emit(Event{Kind: QueueChanged})
 	})

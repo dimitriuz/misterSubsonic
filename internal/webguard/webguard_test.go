@@ -10,7 +10,7 @@ import (
 
 func TestHostAllowedIPLiteralsAndLocalhost(t *testing.T) {
 	for host, want := range map[string]bool{
-		"192.168.1.5:8090": true, "[fe80::1]:8090": true, "10.0.0.2": true, "localhost:8090": true, "[::1]:80": true, "::1": true,
+		"192.168.1.5:8090": true, "[fe80::1]:8090": true, "10.0.0.2": true, "localhost:8090": true, "LocalHost:8090": true, "[::1]:80": true, "::1": true,
 		"evil.example:8090": false, "localhost.": false, "127.0.0.1.nip.io:8090": false, "": false,
 	} {
 		if got := HostAllowed(host); got != want {
@@ -83,6 +83,7 @@ func TestSameOrigin(t *testing.T) {
 		"same-site fetch":      {map[string]string{"Sec-Fetch-Site": "same-site"}, false},
 		"garbage origin":       {map[string]string{"Origin": "http://%zz"}, false},
 		"null origin":          {map[string]string{"Origin": "null"}, false},
+		"empty host origin":    {map[string]string{"Origin": "http://"}, false},
 	} {
 		req := httptest.NewRequest("POST", "http://192.168.1.5:8080/x", strings.NewReader(""))
 		for k, v := range tc.hdr {

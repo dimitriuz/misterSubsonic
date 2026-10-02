@@ -293,3 +293,55 @@ func TestMoveThenNextPlaysTheNewNeighbour(t *testing.T) {
 		t.Fatalf("Next played %v, want sd", cur.ID)
 	}
 }
+
+// A Move that leaves the next song the same must still point the gapless
+// handover at that song's new place in the order, whether the successor is
+// ready (queued in the engine) or still opening.
+func TestMoveKeepsHandoverOnTheSameNextSong(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		from, to int
+		wantQ    []subsonic.ID
+		wantIdx  int
+	}{
+		{"entry before current moves behind next", 0, 4, []subsonic.ID{"sb", "sc", "sd", "se", "sa"}, 1},
+		{"entry behind next moves before current", 4, 0, []subsonic.ID{"se", "sa", "sb", "sc", "sd"}, 3},
+	} {
+		for _, opening := range []bool{false, true} {
+			name := tc.name + "/prefetched"
+			if opening {
+				name = tc.name + "/still opening"
+			}
+			t.Run(name, func(t *testing.T) {
+				h := newHarness(t, nil)
+				h.p.PlayNow(songs(5, 100), 1) // sa [sb] sc sd se, sc is next
+				a := h.playAndStart(1)
+				h.tickAt(a.ID, 85*time.Second)
+				h.waitFor("queued", func() bool { return h.eng.queueCount() == 1 })
+				if opening {
+					// the engine has the successor, the player has not seen it ready yet
+					h.p.do(func() { h.p.nextSrc = Opened{} })
+				}
+				clears := h.eng.clearCount()
+				h.p.Move(tc.from, tc.to)
+				if got := queueIDs(h.p); !slices.Equal(got, tc.wantQ) {
+					t.Fatalf("queue = %v, want %v", got, tc.wantQ)
+				}
+				if h.eng.clearCount() != clears {
+					t.Fatal("the next song did not change but the prefetch was dropped")
+				}
+				if !opening {
+					b := h.eng.queued[0]
+					h.eng.events <- audio.Event{Kind: audio.EventEnded, TrackID: a.ID}
+					h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: b.ID}
+				} else {
+					h.eng.events <- audio.Event{Kind: audio.EventStarted, TrackID: h.eng.queued[0].ID}
+				}
+				h.waitFor("handover", func() bool { return h.p.State().Index == tc.wantIdx })
+				if cur, _ := h.p.State().Current(); cur.ID != "sc" {
+					t.Fatalf("current after handover = %v, want sc", cur.ID)
+				}
+			})
+		}
+	}
+}
