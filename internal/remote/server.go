@@ -110,6 +110,9 @@ func New(ctl Controller, opts Options) *Server {
 	s.mux.HandleFunc("GET /api/genre/{name}", s.handleGenre)
 	s.mux.HandleFunc("GET /api/search", s.handleSearch)
 	s.mux.HandleFunc("GET /api/cover/{id}", s.handleCover)
+	s.mux.HandleFunc("GET /{$}", static("index.html", "text/html; charset=utf-8"))
+	s.mux.HandleFunc("GET /app.js", static("app.js", "text/javascript; charset=utf-8"))
+	s.mux.HandleFunc("GET /app.css", static("app.css", "text/css; charset=utf-8"))
 	return s
 }
 

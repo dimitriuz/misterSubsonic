@@ -112,6 +112,10 @@ rbefore=$(wc -l < "$tmp/mock.log")
 "$tmp/mistersubsonic" -config "$tmp/remote/config.toml" -display headless -null -exit-after 20s > "$tmp/remote.log" 2>&1 &
 app=$!
 rwait /api/state '"status":"stopped"' || remote_fail "/api/state never answered"
+# The page and its script and style are served.
+rget / | grep -q '<title>MiSTer Subsonic</title>' || remote_fail "the page was not served"
+rget /app.js | grep -q 'use strict' || remote_fail "app.js was not served"
+rget /app.css | grep -q -- '--accent' || remote_fail "app.css was not served"
 # Without a JSON content type, or from another site, or for another host name: refused.
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -d '{"do":"toggle"}' "$base/api/cmd")" = 403 ] || remote_fail "a POST without a JSON content type was not refused"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Content-Type: application/json' -H 'Origin: http://evil.example' -d '{"do":"toggle"}' "$base/api/cmd")" = 403 ] || remote_fail "a foreign Origin was not refused"

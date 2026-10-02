@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101418">
+<title>MiSTer Subsonic</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body data-tab="now">
+<div id="banner" hidden>Reconnecting…</div>
+
+<section id="now" class="view" aria-label="Now Playing">
+  <div id="idle" class="idle" hidden>
+    <div class="idle-art" data-icon="note"></div>
+    <p>Nothing playing</p>
+    <a class="btn primary" href="#browse">Browse</a>
+  </div>
+  <div id="player" hidden>
+    <div class="cover"><img id="coverimg" alt="" hidden><div class="ph" data-icon="note"></div></div>
+    <div class="meta">
+      <h1 id="title"></h1>
+      <p id="artist"></p>
+      <p id="album" class="dim"></p>
+    </div>
+    <div class="seek">
+      <span id="pos">0:00</span>
+      <div id="bar" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div class="track"><div id="fill"></div></div><div id="knob"></div>
+      </div>
+      <span id="dur">0:00</span>
+    </div>
+    <div class="transport">
+      <button id="b-prev" class="ic" data-icon="prev" aria-label="Previous"></button>
+      <button id="b-toggle" class="ic big" data-icon="play" aria-label="Play or pause"></button>
+      <button id="b-next" class="ic" data-icon="next" aria-label="Next"></button>
+    </div>
+    <div class="extras">
+      <button id="b-star" class="ic" data-icon="star" aria-label="Star"></button>
+      <button id="b-shuffle" class="ic" data-icon="shuffle" aria-label="Shuffle"></button>
+      <button id="b-repeat" class="ic" data-icon="repeat" aria-label="Repeat"><b id="rep1" hidden>1</b></button>
+    </div>
+    <div class="vol">
+      <button id="b-mute" class="ic" data-icon="volume" aria-label="Mute"></button>
+      <input id="volume" type="range" min="-60" max="0" step="1" value="-20" aria-label="Volume">
+      <span id="voltxt" class="dim">-20 dB</span>
+    </div>
+  </div>
+</section>
+
+<section id="queue" class="view" aria-label="Queue"></section>
+<section id="browse" class="view" aria-label="Browse"></section>
+<section id="search" class="view" aria-label="Search">
+  <input id="q" type="search" placeholder="Search artists, albums, songs" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search">
+  <div id="results"></div>
+</section>
+
+<nav id="tabs">
+  <a href="#now" data-tab="now"><i data-icon="note"></i>Now Playing</a>
+  <a href="#queue" data-tab="queue"><i data-icon="queue"></i>Queue</a>
+  <a href="#browse" data-tab="browse"><i data-icon="browse"></i>Browse</a>
+  <a href="#search" data-tab="search"><i data-icon="search"></i>Search</a>
+</nav>
+<div id="toasts" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -324,9 +324,9 @@ func TestBrowseGuarded(t *testing.T) {
 	if fw.Code != 403 {
 		t.Fatalf("foreign host on a browse route: %d", fw.Code)
 	}
-	r = do(s.Handler(), "GET", "/", "", nil)
+	r = do(s.Handler(), "GET", "/nothing-here", "", nil)
 	if r.Code != 404 {
-		t.Fatalf("page route: %d", r.Code)
+		t.Fatalf("unknown route: %d", r.Code)
 	}
 }
 
