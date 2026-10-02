@@ -11,14 +11,13 @@ import (
 	"image/png"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/webguard"
 )
 
 //go:embed page.html
@@ -129,7 +128,7 @@ func (v *Viewer) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /frame", v.serveFrame)
 	mux.HandleFunc("POST /key", func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r) {
+		if !webguard.SameOrigin(r) {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}
@@ -168,46 +167,7 @@ func (v *Viewer) Handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	return v.checkHost(mux)
-}
-
-// checkHost refuses requests whose Host header is a name other than
-// localhost. A DNS-rebinding page is same-origin with its own hostname, so
-// without this it could press keys and read frames; it can't make the
-// browser send an IP address as Host, so IP literals (the LAN address of a
-// wildcard bind, say) are fine.
-func (v *Viewer) checkHost(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !v.hostAllowed(r.Host) {
-			http.Error(w, "unexpected Host header", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (v *Viewer) hostAllowed(hostport string) bool {
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	return host == "localhost" || net.ParseIP(host) != nil
-}
-
-// sameOrigin refuses requests from other web pages, which could otherwise
-// press buttons (and start playback) through the user's browser.
-func sameOrigin(r *http.Request) bool {
-	if s := r.Header.Get("Sec-Fetch-Site"); s != "" && s != "same-origin" && s != "none" {
-		return false
-	}
-	if o := r.Header.Get("Origin"); o != "" {
-		u, err := url.Parse(o)
-		if err != nil || u.Host != r.Host {
-			return false
-		}
-	}
-	return true
+	return webguard.CheckHost(mux)
 }
 
 var errGone = errors.New("viewer closed")

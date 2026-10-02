@@ -167,3 +167,30 @@ func TestMissingEntityIsNotFound(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestGetSong(t *testing.T) {
+	s, c := connected(t)
+	so, err := c.GetSong(ctx, "so-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.query("getSong").Get("id") != "so-1" {
+		t.Fatal("song id not sent")
+	}
+	if so.ID != "so-1" || so.Title != "Капитан Африка" || so.AlbumID != "al-10" || so.Suffix != "flac" || so.Duration != 240 {
+		t.Fatalf("song = %+v", so)
+	}
+}
+
+func TestGetSongMissingIsNotFound(t *testing.T) {
+	s, c := connected(t)
+	s.override["getSong"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}`
+	if _, err := c.GetSong(ctx, "nope"); Classify(err) != KindNotFound {
+		t.Fatalf("err = %v", err)
+	}
+	// An ok reply without a song is not found too.
+	s.override["getSong"] = `{"subsonic-response":{"status":"ok","version":"1.16.1"}}`
+	if _, err := c.GetSong(ctx, "nope"); Classify(err) != KindNotFound {
+		t.Fatalf("empty reply: err = %v", err)
+	}
+}

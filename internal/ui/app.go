@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mistersubsonic/internal/art"
@@ -12,6 +13,7 @@ import (
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/player"
+	"mistersubsonic/internal/remote"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -25,6 +27,7 @@ type Library interface {
 	GetPlaylists(ctx context.Context) ([]subsonic.Playlist, error)
 	GetPlaylist(ctx context.Context, id subsonic.ID) (*subsonic.PlaylistWithSongs, error)
 	GetStarred2(ctx context.Context) (*subsonic.Starred, error)
+	GetSong(ctx context.Context, id subsonic.ID) (*subsonic.Song, error)
 	Search3(ctx context.Context, query string, q subsonic.SearchQuery) (*subsonic.SearchResult, error)
 	Star(ctx context.Context, t subsonic.StarTarget) error
 	Unstar(ctx context.Context, t subsonic.StarTarget) error
@@ -48,6 +51,7 @@ type Player interface {
 	Seek(pos time.Duration)
 	Jump(i int)
 	Remove(i int)
+	Move(from, to int)
 	SetShuffle(on bool)
 	SetRepeat(r player.Repeat)
 	Resumable(ctx context.Context) (*player.Resume, error)
@@ -126,6 +130,11 @@ type Options struct {
 	// Visual is what the visualizer reads: the frames being heard right now
 	// (nil: no sound device, so nothing to show).
 	Visual Visual
+	// Remote hears about player and queue changes for the web remote;
+	// RemoteSwitch starts and stops its server (Settings → Remote). Both
+	// are nil without the remote code (tests).
+	Remote       RemoteNotifier
+	RemoteSwitch RemoteSwitch
 }
 
 // Visual gives the visualizer the audio that is playing: Window fills dst
@@ -246,6 +255,13 @@ type App struct {
 	overwritten  bool      // the last check found the screen drawn over
 	viz          vizState
 	mergeBuf     []gfx.Rect // renderDamage's merged rectangles, reused
+
+	// For the web remote, which reads from other goroutines: the live
+	// connection, this session's song stars, and the songs it has browsed.
+	live       atomic.Pointer[liveRefs]
+	songStars  atomic.Pointer[map[subsonic.ID]bool]
+	seen       *songMemory
+	remoteURLs []string // the server's addresses, read when Settings → Remote opens
 }
 
 func New(o Options) (*App, error) {
@@ -253,7 +269,9 @@ func New(o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	a := &App{o: o, P: o.Profile, in: make(chan input.Event, 64), post: make(chan func(), 256), dirty: true,
-		swallowed: map[input.Button]bool{}, wakeKeys: map[input.Button]bool{}, stars: map[starKey]bool{}, starBusy: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now()}
+		swallowed: map[input.Button]bool{}, wakeKeys: map[input.Button]bool{}, stars: map[starKey]bool{}, starBusy: map[starKey]bool{}, cfg: o.Config, lastInput: o.Now(), seen: &songMemory{}}
+	a.publishLive()
+	a.publishStars()
 	regular, err := gfx.LoadTypeface(false, o.FallbackFonts)
 	if err != nil {
 		return nil, err
@@ -295,6 +313,7 @@ func New(o Options) (*App, error) {
 // Call on the UI goroutine.
 func (a *App) Attach(lib Library, pl Player, art ArtSource) {
 	a.o.Library, a.o.Player, a.o.Art = lib, pl, art
+	a.publishLive()
 	a.dirty = true
 }
 
@@ -613,6 +632,10 @@ func (a *App) onWake() {
 
 func (a *App) onPlayer(ev player.Event) {
 	a.dirty = true
+	if ev.Kind == player.QueueChanged {
+		a.notifyRemote(remote.QueueChanged)
+	}
+	a.notifyRemote(remote.StateChanged) // the queue's index and the status change with it
 	if ev.Kind == player.Error {
 		title := ev.Song.Title
 		if title == "" {

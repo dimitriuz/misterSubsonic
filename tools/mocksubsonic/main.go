@@ -94,6 +94,13 @@ func main() {
 				a[k] = v
 			}
 			reply(w, map[string]any{"album": a})
+		case "getSong":
+			i, err := strconv.Atoi(strings.TrimPrefix(q.Get("id"), "so-"))
+			if err != nil || !strings.HasPrefix(q.Get("id"), "so-") || i < 0 || i >= len(songs) {
+				reply(w, map[string]any{"status": "failed", "error": map[string]any{"code": 70, "message": "song not found"}})
+				return
+			}
+			reply(w, map[string]any{"song": songs[i]})
 		case "getAlbumList2":
 			reply(w, map[string]any{"albumList2": map[string]any{"album": []any{album}}})
 		case "getArtists":

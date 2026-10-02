@@ -481,3 +481,31 @@ Still open:
 - **Tests:**
   - `defer log.SetOutput(log.Writer())` in vizdraw_test.go restores nothing. Use `t.Cleanup(func() { log.SetOutput(os.Stderr) })`.
   - README.md:128 and the visualizer spec (lines 34 and 57) don't say that the Star entry and the hold-X hint go away with no song.
+
+## Plan 7 minors (deferred)
+
+- **Cross-site requests:**
+  - Browsers without `Sec-Fetch-Site` (Safari before 16.4) still allow cross-site no-cors GETs, such as `<img>` loads of `/api/cover/*`, or a no-cors `fetch` of `/api/events` holding slots.
+  - The responses are opaque. Covers are limited to 5 size variants per id.
+  - Closing this fully needs a per-page token on `/api/*`.
+- **Play caps:** album and playlist plays aren't capped at 1000 songs. Only song-id lists and artist plays are.
+- **The POST read deadline:** it cancels `r.Context()` 10 s after the body is read. `Play` doesn't use the request context today. Keep it that way, or give `Play` its own context.
+- **The artist list:** an in-app server switch keeps the page's `artistsCache` until a reconnect or reload.
+- **The page:**
+  - a frozen tab that wakes may reconnect once when the stream was fine;
+  - the reconnect back-off resets on open, so a fast-drop loop retries at 1 s;
+  - `role=button` rows ignore Space;
+  - the self-contained regex misses `//host`.
+- **`-remote-bind 127.0.0.1`** (testing only): `URLs()` still lists the LAN addresses.
+- **Errors:**
+  - "other" library errors are not logged;
+  - `context.Canceled` on library calls maps to 500 (the client has gone);
+  - trailing JSON and unknown fields are accepted;
+  - the indices have no upper bounds (`remoteDo` checks them);
+  - an empty `song_id` skips the stale check (the page always sends it).
+- **Covers:** `Loader.Bytes` caches undecoded bytes. `load` self-heals when they don't decode, and the remote sniffs and caps them.
+- **`webguard.Hostnames()`:** an FQDN gives `fqdn.local`.
+- **Small cases:**
+  - a play that spans a same-server reconnect gets 503, and the user retries;
+  - a late `seen.add` after Detach can re-add old songs;
+  - the `URLs` list includes link-local addresses and skips IPv6.

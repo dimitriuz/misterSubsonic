@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 
+	"mistersubsonic/internal/remote"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -88,6 +89,8 @@ func (a *App) toggleStar(it starItem) {
 		}
 		a.stars[it.key()] = on
 		a.starGen++
+		a.publishStars()
+		a.notifyRemote(remote.StateChanged)
 		if on {
 			a.Toast("Starred %s", it.name)
 		} else {

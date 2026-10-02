@@ -37,7 +37,7 @@
 - EQ, lyrics, internet radio, local or SMB files, CD playback. (The visualizer was a non-goal for v1; Plan 6 added it, see `2026-10-01-mister-subsonic-visualizer-design.md`.)
 - Chapter navigation inside single-file album FLACs using the embedded CUESHEET. The file plays as one track with full seek; chapters are the first item for v2.
 - Playing music in the background while another MiSTer core runs. Exiting the app stops playback.
-- A web remote or phone control.
+- A web remote or phone control. (Plan 7 added one; see `2026-10-02-mister-subsonic-web-remote-design.md`.)
 - An in-app self-updater. Updates come through MiSTer Downloader or update_all instead (§9).
 - Playlist editing beyond starring (no create, rename or reorder).
 - Video of any kind.
@@ -261,7 +261,7 @@ Home ─┬─ Home feed: [Resume] · Recently Added · Recently Played · Most 
       ├─ Playlists → Playlist → Tracks
       ├─ Starred (Albums / Artists / Tracks tabs)
       ├─ Search (on-screen keyboard + live results: Artists / Albums / Tracks)
-      └─ Settings (Servers · Playback · Display · About)
+      └─ Settings (Servers · Playback · Display · Remote · About)
 Now Playing ⇄ Queue        (reachable from anywhere)
 Wizard: Server URL → Username → Password → (API key, optional) → Test → Home
 ```
@@ -313,6 +313,8 @@ Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pau
 **Media keys** (volume up and down, mute, play/pause, next, previous, fast-forward and rewind) work on every screen. The top screen gets each key first, so a text field or a screen with its own meaning for it keeps it; the X menu, the exit prompt and the screensaver let them through (a media key wakes the screensaver and acts on the first press). Next and previous need a queue. Seeking needs a current track, moves ±10 s (held: ±30 s, at most four seeks a second) and stops a second before the end.
 
 **Screenshot key:** Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity.
+
+**Remote (Settings → Remote, Plan 7):** two rows. "Remote" turns the web remote On or Off (`remote.enabled`, saved at once; a failed start, such as a port in use, leaves it off and shows a toast). "Address" is an info row showing the URL to open ("no network" when on without an address, "Off" when off). The port is `remote.port` and needs a restart. The help text says anyone on the network can control playback, over plain http. Details: `2026-10-02-mister-subsonic-web-remote-design.md`.
 
 **Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select has no key, so a keyboard shows no Select hint; the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
 
@@ -448,6 +450,6 @@ If a spike fails, the design section it tests gets revised before implementation
 - Internet radio stations from Navidrome's `getInternetRadioStations`.
 - EQ. (The visualizer is done, Plan 6.)
 - Lyrics (`getLyricsBySongId`).
-- A phone web remote.
+- (Done, Plan 7) A phone web remote.
 - An in-app updater.
 - Playlist editing.

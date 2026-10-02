@@ -53,7 +53,9 @@ Plans 5 and 5b did most of this list; see "Resolved by Plan 5" and "Resolved by 
 
 ---
 
-## C. Web remote (desktop and mobile browsers)
+## C. Web remote (done in Plan 7, except the device check)
+
+**Status:** built in Plan 7 (spec `docs/superpowers/specs/2026-10-02-mister-subsonic-web-remote-design.md`), without pairing: the remote is open to the home network while it is on, and the README says so. The phone checks, the queue editing and the CPU number wait for the MiSTer; see "Plan 7 on the MiSTer" in `docs/spikes.md`. The text below is the original sketch.
 
 **What:** control the MiSTer from a phone or a computer on the same network. You see what's playing with its cover, and can play, pause, skip, seek, set the volume and mute, look at and edit the queue, and browse, search and play. It is a control page, not a copy of the TV screen (the dev viewer already does that). Spec §2 left a web or phone remote out of v1, and §13 lists it.
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 
+	"mistersubsonic/internal/remote"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -25,6 +26,7 @@ func (a *App) playSongs(songs []subsonic.Song, start int, shuffle bool) {
 		return
 	}
 	a.Player().SetShuffle(shuffle)
+	a.notifyRemote(remote.StateChanged)
 	if shuffle {
 		start = shuffleStart(len(songs))
 	}

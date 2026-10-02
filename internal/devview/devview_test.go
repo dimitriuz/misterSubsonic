@@ -211,20 +211,6 @@ func TestRejectsForeignHost(t *testing.T) {
 	}
 }
 
-// A wildcard bind (for a phone or another PC) is reached by IP address;
-// only hostnames other than localhost are refused.
-func TestHostCheckAllowsIPLiterals(t *testing.T) {
-	v := New(1, 1)
-	for host, want := range map[string]bool{
-		"192.168.1.5:8090": true, "[fe80::1]:8090": true, "10.0.0.2": true, "localhost:8090": true,
-		"evil.example:8090": false, "localhost.": false, "127.0.0.1.nip.io:8090": false, "": false,
-	} {
-		if got := v.hostAllowed(host); got != want {
-			t.Errorf("hostAllowed(%q) = %v, want %v", host, got, want)
-		}
-	}
-}
-
 func TestURLForWildcardBindIsLoopback(t *testing.T) {
 	if got := pageURL(&net.TCPAddr{IP: net.IPv6unspecified, Port: 8090}); got != "http://127.0.0.1:8090/" {
 		t.Fatalf("wildcard URL = %q", got)

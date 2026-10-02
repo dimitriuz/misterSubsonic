@@ -303,3 +303,42 @@ func TestHTTPFetcherErrorsDoNotLeakCredentials(t *testing.T) {
 		}
 	}
 }
+
+// Bytes hands out the encoded cover from the disk cache, else the server
+// (and caches it), without decoding.
+func TestBytesFromDiskThenServer(t *testing.T) {
+	disk, _ := cache.Open(t.TempDir(), 1<<20)
+	raw := []byte("not decodable, and not decoded")
+	k := Key{"al-1", 300}
+	disk.Put(k.String(), raw)
+	h := newHarness(t, func(Key) ([]byte, error) { return nil, errors.New("offline") }, Options{Disk: disk})
+	got, err := h.l.Bytes(context.Background(), k)
+	if err != nil || !bytes.Equal(got, raw) || h.calls.Load() != 0 {
+		t.Fatalf("disk hit: %q %v, fetched %d", got, err, h.calls.Load())
+	}
+	// A miss fetches once and fills the cache.
+	k2 := Key{"al-2", 64}
+	png := pngBytes(8, 8)
+	h2 := newHarness(t, func(Key) ([]byte, error) { return png, nil }, Options{Disk: disk})
+	for range 2 {
+		got, err = h2.l.Bytes(context.Background(), k2)
+		if err != nil || !bytes.Equal(got, png) {
+			t.Fatalf("miss: %v", err)
+		}
+	}
+	if h2.calls.Load() != 1 {
+		t.Fatalf("fetched %d times", h2.calls.Load())
+	}
+	// Errors pass; an empty id or size never fetches.
+	h3 := newHarness(t, func(Key) ([]byte, error) { return nil, errors.New("offline") }, Options{})
+	if _, err := h3.l.Bytes(context.Background(), Key{"x", 100}); err == nil {
+		t.Fatal("a failed fetch is no error")
+	}
+	n := h3.calls.Load()
+	if _, err := h3.l.Bytes(context.Background(), Key{"", 100}); err == nil || h3.calls.Load() != n {
+		t.Fatalf("empty id: %v", err)
+	}
+	if _, err := h3.l.Bytes(context.Background(), Key{"x", 0}); err == nil || h3.calls.Load() != n {
+		t.Fatalf("zero size: %v", err)
+	}
+}

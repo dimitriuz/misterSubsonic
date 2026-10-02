@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/remote"
 )
 
 // isMediaButton reports whether b is one mediaKey handles.
@@ -66,6 +67,7 @@ func (a *App) mediaKey(e input.Event) bool {
 				pos = min(pos, time.Duration(song.Duration)*time.Second-time.Second)
 			}
 			pl.Seek(max(pos, 0))
+			a.notifyRemote(remote.StateChanged) // a seek sends no player event
 		}
 	default:
 		return false

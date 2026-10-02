@@ -40,3 +40,11 @@ visualizer = "off"         # moving picture on Now Playing: off, bars, scope, vu
 
 [cache]
 cover_art_mb = 200         # cover art kept on the SD card, per server
+
+[remote]
+# A web page for your phone or computer: see what is playing, control it, edit
+# the queue, browse and search. Settings → Remote shows the address to open.
+# There is no password: anyone on your home network can control playback while
+# it is on. It uses plain http, so keep it off networks you do not trust.
+enabled = false
+port = 8080                # 1 to 65535

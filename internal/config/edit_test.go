@@ -274,3 +274,16 @@ func TestEditSetsTheVisualizerInPlace(t *testing.T) {
 		t.Fatalf("visualizer written twice:\n%s", again)
 	}
 }
+
+func TestEditSetsTheRemoteInPlace(t *testing.T) {
+	got, _ := saveEdited(t, commented, func(c *Config) { c.Remote.Enabled = true })
+	wantAll(t, got, "[remote]\nenabled = true", "# My own notes on this file.", "keep it quiet at night")
+	again, cfg := saveEdited(t, got, func(c *Config) { c.Remote.Port = 9090; c.Remote.Enabled = false })
+	wantAll(t, again, "enabled = false", "port = 9090")
+	if strings.Count(again, "enabled") != 1 || strings.Count(again, "[remote]") != 1 {
+		t.Fatalf("remote keys written twice:\n%s", again)
+	}
+	if cfg.Remote.Enabled || cfg.Remote.Port != 9090 {
+		t.Fatal(cfg.Remote)
+	}
+}

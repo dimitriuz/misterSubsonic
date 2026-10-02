@@ -11,6 +11,7 @@ import (
 
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/remote"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -74,6 +75,11 @@ func (a *App) Detach() {
 	a.connecting = false
 	a.insecure = false
 	a.stars, a.starBusy, a.starGen = map[starKey]bool{}, map[starKey]bool{}, 0 // they belong to the old connection
+	a.publishLive()
+	a.publishStars()
+	a.seen.reset()
+	a.notifyRemote(remote.QueueChanged)
+	a.notifyRemote(remote.StateChanged)
 	a.dirty = true
 }
 
@@ -95,8 +101,11 @@ func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 	a.connecting = false
 	a.SetInsecure(info.Server.InsecureSkipVerify)
 	a.artists, a.stars, a.starBusy, a.starGen = nil, map[starKey]bool{}, map[starKey]bool{}, 0
+	a.publishStars()
 	a.Replace(NewRootScreen(a.P))
 	a.drainInput()
+	a.notifyRemote(remote.QueueChanged) // open pages show the new connection's queue and state
+	a.notifyRemote(remote.StateChanged)
 }
 
 // ConnectFailed shows why the server couldn't be reached and what to do.

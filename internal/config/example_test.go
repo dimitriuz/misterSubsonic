@@ -16,7 +16,7 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Fatalf("err %v, warnings %v", err, warns)
 	}
 	d := Default()
-	if c.Playback != d.Playback || c.Display != d.Display || c.Cache != d.Cache {
+	if c.Playback != d.Playback || c.Display != d.Display || c.Cache != d.Cache || c.Remote != d.Remote {
 		t.Fatalf("the example's settings differ from the defaults:\n%+v %+v %+v\n%+v %+v %+v",
 			c.Playback, c.Display, c.Cache, d.Playback, d.Display, d.Cache)
 	}
@@ -41,7 +41,7 @@ func TestExampleConfigShowsEveryOption(t *testing.T) {
 		}
 	}
 	for _, typ := range []reflect.Type{reflect.TypeOf(Config{}), reflect.TypeOf(Server{}), reflect.TypeOf(Playback{}),
-		reflect.TypeOf(Display{}), reflect.TypeOf(Cache{})} {
+		reflect.TypeOf(Display{}), reflect.TypeOf(Cache{}), reflect.TypeOf(Remote{})} {
 		for i := range typ.NumField() {
 			key := strings.Split(typ.Field(i).Tag.Get("toml"), ",")[0]
 			if typ.Field(i).Type.Kind() == reflect.Struct || typ.Field(i).Type.Kind() == reflect.Slice {

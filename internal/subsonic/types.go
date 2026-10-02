@@ -198,6 +198,7 @@ type response struct {
 	} `json:"artists"`
 	Artist     *ArtistWithAlbums `json:"artist"`
 	Album      *AlbumWithSongs   `json:"album"`
+	Song       *Song             `json:"song"`
 	AlbumList2 *struct {
 		Albums List[Album] `json:"album"`
 	} `json:"albumList2"`

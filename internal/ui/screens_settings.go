@@ -9,9 +9,10 @@ import (
 	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
+	"mistersubsonic/internal/remote"
 )
 
-// SettingsScreen is Settings (spec §8.2): Servers · Playback · Display ·
+// SettingsScreen is Settings (spec §8.2): Servers · Playback · Display · Remote ·
 // About. It works without a connection (from the unreachable
 // screen): changes are saved to the config and applied to the player when
 // there is one.
@@ -19,7 +20,7 @@ type SettingsScreen struct {
 	list List
 }
 
-var settingsItems = []string{"Servers", "Playback", "Display", "About"}
+var settingsItems = []string{"Servers", "Playback", "Display", "Remote", "About"}
 
 func NewSettingsScreen() *SettingsScreen { return &SettingsScreen{} }
 
@@ -41,6 +42,12 @@ func (s *SettingsScreen) Handle(a *App, e input.Event) bool {
 		a.Push(newSettingsList("Playback", playbackSettings))
 	case "Display":
 		a.Push(newSettingsList("Display", displaySettings))
+	case "Remote":
+		a.remoteURLs = nil
+		if sw := a.o.RemoteSwitch; sw != nil {
+			a.remoteURLs = sw.URLs()
+		}
+		a.Push(newSettingsList("Remote", remoteSettings))
 	case "About":
 		a.Push(&AboutScreen{})
 	}
@@ -62,6 +69,7 @@ type setting struct {
 	change func(a *App, dir int)
 	help   string // what the setting does, shown under the list while it is focused
 	toggle bool   // On/Off: ignores key repeat
+	info   bool   // shows a value only: no arrows, nothing to change
 }
 
 // SettingsListScreen is a list of settings with their values.
@@ -113,7 +121,7 @@ func (s *SettingsListScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	s.help = gfx.R(area.X, list.Y+list.H, area.W, area.Y+area.H-list.Y-list.H)
 	s.list.Draw(c, list, len(rows), a.P.RowH, func(i int, r gfx.Rect, focused bool) {
 		v := rows[i].value(a)
-		if focused {
+		if focused && !rows[i].info {
 			v = "‹ " + v + " ›"
 		}
 		a.drawRow(c, r, row{main: rows[i].label, focused: focused, right: v})
@@ -211,6 +219,7 @@ func (a *App) setVolume(db float64) {
 		a.showVolume()
 	}
 	db = math.Max(-60, math.Min(0, math.Round(db)))
+	defer a.notifyRemote(remote.StateChanged)
 	if pl := a.Player(); pl != nil {
 		pl.SetVolumeDB(db)
 	} else {
@@ -227,6 +236,7 @@ func (a *App) setVolume(db float64) {
 func (a *App) setMuted(on bool) {
 	a.muted = on
 	a.showVolume()
+	a.notifyRemote(remote.StateChanged)
 	if pl := a.Player(); pl != nil {
 		pl.SetMuted(on)
 	}
@@ -321,6 +331,54 @@ func displaySettings(a *App) []setting {
 			},
 			help: "A moving picture of the music on Now Playing. Select there changes it too.", toggle: false},
 	}
+}
+
+// remoteNote is the safety note shown with the remote's settings (spec §2).
+const remoteNote = "Anyone on your network can control playback: there is no password, and it uses plain http."
+
+func remoteSettings(a *App) []setting {
+	enabled := a.remoteRunning
+	return []setting{
+		{label: "Remote", value: func(a *App) string { return onOff(enabled()) },
+			change: func(a *App, dir int) { a.setRemote(!enabled()) },
+			help:   "Control playback from a phone or computer's browser. " + remoteNote, toggle: true},
+		{label: "Address", value: func(a *App) string {
+			switch {
+			case !enabled():
+				return "Off"
+			case len(a.remoteURLs) == 0:
+				return "no network"
+			}
+			return strings.TrimSuffix(a.remoteURLs[0], "/")
+		},
+			change: func(*App, int) {}, info: true,
+			help: "Open this address in a browser on the same network. " + remoteNote},
+	}
+}
+
+// remoteRunning is whether the remote server is up: the switch knows (a start
+// at launch can fail with the config still on); without one, the config.
+func (a *App) remoteRunning() bool {
+	if sw := a.o.RemoteSwitch; sw != nil {
+		return sw.Running()
+	}
+	return a.cfg != nil && a.cfg.Remote.Enabled
+}
+
+// setRemote starts or stops the remote server and, once that worked, saves
+// the choice.
+func (a *App) setRemote(on bool) {
+	sw := a.o.RemoteSwitch
+	if sw == nil {
+		a.Toast("Remote: not available")
+		return
+	}
+	if err := sw.SetEnabled(on); err != nil {
+		a.Toast("Remote: %v", err)
+		return
+	}
+	a.UpdateConfig(func(c *config.Config) { c.Remote.Enabled = on }, false)
+	a.remoteURLs = sw.URLs()
 }
 
 // ServersScreen lists the configured servers: A switches to one, X opens

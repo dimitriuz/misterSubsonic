@@ -83,6 +83,8 @@ func scalars(c *Config) []scalar {
 		{"display", "hints", c.Display.Hints},
 		{"display", "visualizer", c.Display.Visualizer},
 		{"cache", "cover_art_mb", c.Cache.CoverArtMB},
+		{"remote", "enabled", c.Remote.Enabled},
+		{"remote", "port", c.Remote.Port},
 	}
 }
 
