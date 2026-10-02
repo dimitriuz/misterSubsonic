@@ -186,6 +186,7 @@ func TestCmdErrorMapping(t *testing.T) {
 	}{
 		{ErrStale, 409, ErrStale.Error()},
 		{ErrBusy, 503, ErrBusy.Error()},
+		{ErrNoConnection, 503, ErrNoConnection.Error()},
 		{errors.New("boom http://user:pw@server/rest?t=secret"), 500, "internal error"},
 	} {
 		f := newFake()

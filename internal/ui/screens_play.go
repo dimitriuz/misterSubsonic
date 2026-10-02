@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"mistersubsonic/internal/remote"
 	"time"
 
 	"mistersubsonic/internal/gfx"
@@ -129,10 +130,12 @@ func modeEntries(a *App) []menuEntry {
 	return []menuEntry{
 		{shuffle, func(a *App) {
 			a.Player().SetShuffle(!st.Shuffle)
+			a.notifyRemote(remote.StateChanged)
 			a.dirty = true // the mode label changes without a player event
 		}},
 		{repeat, func(a *App) {
 			a.Player().SetRepeat(next)
+			a.notifyRemote(remote.StateChanged)
 			a.dirty = true
 		}},
 	}

@@ -29,6 +29,9 @@ type RemoteNotifier interface {
 type RemoteSwitch interface {
 	SetEnabled(on bool) error
 	URLs() []string
+	// Running is whether the server is listening now (a failed start at
+	// launch leaves the config on and this false).
+	Running() bool
 }
 
 // remoteTimeout is how long a command waits for the UI goroutine.
@@ -41,7 +44,7 @@ const remoteLibTimeout = 10 * time.Second
 const maxSeenSongs = 4096
 
 var (
-	errNoConnection = errors.New("remote: not connected to a server")
+	errNoConnection = remote.ErrNoConnection
 	errNoCover      = errors.New("remote: no cover")
 )
 
@@ -308,7 +311,7 @@ func (c remoteCtl) Play(p remote.PlayRequest) (int, error) {
 	}
 	err = c.a.onUI(func() error {
 		pl := c.a.Player() // the connection may have changed meanwhile
-		if pl == nil {
+		if pl == nil || c.a.live.Load() != r || pl != r.pl {
 			return errNoConnection
 		}
 		switch p.How {

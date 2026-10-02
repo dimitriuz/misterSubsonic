@@ -18,6 +18,10 @@ var ErrStale = errors.New("remote: the queue changed")
 // ErrBusy is what the Controller returns when the UI did not answer in time (503).
 var ErrBusy = errors.New("remote: the MiSTer is busy")
 
+// ErrNoConnection is what the Controller returns when there is no server
+// connection to act on (503).
+var ErrNoConnection = errors.New("remote: no connection")
+
 // Controller is everything the server needs from the app. Tests use fakes.
 type Controller interface {
 	State() State
@@ -272,6 +276,8 @@ func (s *Server) writeCtlError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, ErrStale.Error())
 	case errors.Is(err, ErrBusy):
 		writeError(w, http.StatusServiceUnavailable, ErrBusy.Error())
+	case errors.Is(err, ErrNoConnection):
+		writeError(w, http.StatusServiceUnavailable, ErrNoConnection.Error())
 	default:
 		// A library error out of Play: told by its kind, never by its text,
 		// which can hold the server URL and credentials (as in browse.go).

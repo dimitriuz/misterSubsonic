@@ -541,13 +541,19 @@ type fakeSwitch struct {
 	calls []bool
 	err   error
 	urls  []string
+	// running is whether the server is up; a start that fails leaves it as it was.
+	running bool
 }
 
 func (s *fakeSwitch) SetEnabled(on bool) error {
 	s.calls = append(s.calls, on)
+	if s.err == nil {
+		s.running = on
+	}
 	return s.err
 }
 func (s *fakeSwitch) URLs() []string { return s.urls }
+func (s *fakeSwitch) Running() bool  { return s.running }
 
 func openRemoteSettings(t *testing.T, sw *fakeSwitch) (*testApp, *SettingsListScreen) {
 	t.Helper()
@@ -638,5 +644,100 @@ func TestSettingsRemoteWithoutASwitch(t *testing.T) {
 	ta.press(input.BtnA)
 	if ta.cfg.Remote.Enabled || len(ta.toasts) == 0 {
 		t.Fatalf("turned on with nothing to start (toasts %v)", ta.toasts)
+	}
+}
+
+// A server that failed to start at launch leaves the config on but nothing
+// listening: the row says Off, and the first press tries to start again.
+func TestSettingsRemoteShowsTheRealState(t *testing.T) {
+	sw := &fakeSwitch{err: errors.New("port 8080 is in use")}
+	ta, s := openRemoteSettings(t, sw)
+	ta.cfg.Remote.Enabled = true // as the user set it
+	if got := s.rows(ta.App)[0].value(ta.App); got != "Off" {
+		t.Fatalf("row reads %q although nothing listens", got)
+	}
+	if got := s.rows(ta.App)[1].value(ta.App); got != "Off" {
+		t.Fatalf("address reads %q although nothing listens", got)
+	}
+	sw.err = nil
+	ta.press(input.BtnA)
+	if !slices.Equal(sw.calls, []bool{true}) || !sw.running || !ta.cfg.Remote.Enabled {
+		t.Fatalf("first press: calls %v running %v enabled %v", sw.calls, sw.running, ta.cfg.Remote.Enabled)
+	}
+	if got := s.rows(ta.App)[0].value(ta.App); got != "On" {
+		t.Fatalf("row reads %q", got)
+	}
+}
+
+// Shuffle and repeat from the TV's menus send no player event: the app tells
+// the remote itself.
+func TestRemoteNotifiedOfTVModeChanges(t *testing.T) {
+	ta, _, fr := remoteApp(t)
+	entries := modeEntries(ta.App)
+	for i, name := range []string{"shuffle", "repeat"} {
+		fr.reset()
+		entries[i].run(ta.App)
+		if !slices.Contains(fr.got(), remote.StateChanged) {
+			t.Fatalf("%s: told %v", name, fr.got())
+		}
+	}
+	fr.reset()
+	ta.playSongs([]subsonic.Song{{ID: "s1"}}, 0, true)
+	if !slices.Contains(fr.got(), remote.StateChanged) {
+		t.Fatalf("play shuffled: told %v", fr.got())
+	}
+}
+
+// gateLib holds GetAlbum until released, so a play can be in flight while the
+// connection changes.
+type gateLib struct {
+	*fakeLibrary
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g gateLib) GetAlbum(ctx context.Context, id subsonic.ID) (*subsonic.AlbumWithSongs, error) {
+	g.entered <- struct{}{}
+	<-g.release
+	return g.fakeLibrary.GetAlbum(ctx, id)
+}
+
+// A play resolved against one server must not land on the next one's player.
+func TestRemotePlayNeverCrossesAServerSwitch(t *testing.T) {
+	ta, ctl, _ := remoteApp(t)
+	g := gateLib{ta.lib, make(chan struct{}, 1), make(chan struct{})}
+	ta.Attach(g, ta.pl, nil)
+	old := ta.pl
+	done := make(chan error, 1)
+	go func() {
+		_, err := ctl.Play(remote.PlayRequest{What: "album", ID: "al-1", How: "now"})
+		done <- err
+	}()
+	<-g.entered
+	ta.Detach()
+	other := newFakePlayer()
+	ta.Attach(ta.lib, other, nil)
+	close(g.release)
+	var err error
+loop:
+	for deadline := time.After(3 * time.Second); ; {
+		select {
+		case fn := <-ta.post:
+			fn()
+		case err = <-done:
+			break loop
+		case <-deadline:
+			t.Fatal("the play never returned")
+		}
+	}
+	if !errors.Is(err, remote.ErrNoConnection) {
+		t.Fatalf("err %v", err)
+	}
+	for _, pl := range []*fakePlayer{old, other} {
+		for _, c := range pl.calls {
+			if c == "playnow" || c == "playnext" || c == "enqueue" {
+				t.Fatalf("queued on a player: %v", pl.calls)
+			}
+		}
 	}
 }

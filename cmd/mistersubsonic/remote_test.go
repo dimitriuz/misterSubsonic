@@ -58,8 +58,14 @@ func TestRemoteHostStartsAndStops(t *testing.T) {
 	if got, err := stateStatus(port); err == nil {
 		t.Fatalf("answered before it was started (%d)", got)
 	}
+	if h.Running() {
+		t.Fatal("running before it was started")
+	}
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)
+	}
+	if !h.Running() {
+		t.Fatal("not running after a start")
 	}
 	if err := h.SetEnabled(true); err != nil { // again: nothing changes
 		t.Fatal(err)
@@ -103,8 +109,8 @@ func TestRemoteHostPortInUse(t *testing.T) {
 	if err == nil || err.Error() != fmt.Sprintf("port %d is in use", port) {
 		t.Fatalf("got %v", err)
 	}
-	if h.URLs() != nil {
-		t.Fatalf("urls of a server that did not start: %v", h.URLs())
+	if h.URLs() != nil || h.Running() {
+		t.Fatalf("a server that did not start: urls %v running %v", h.URLs(), h.Running())
 	}
 	h.Notify(remote.QueueChanged)
 	busy.Close()

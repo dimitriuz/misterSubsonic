@@ -73,6 +73,9 @@ func (h *remoteHost) URLs() []string {
 	return nil
 }
 
+// Running is whether the server is listening.
+func (h *remoteHost) Running() bool { return h.cur.Load() != nil }
+
 // Notify tells the running server that the player or the queue changed.
 func (h *remoteHost) Notify(c remote.Change) {
 	if s := h.cur.Load(); s != nil {

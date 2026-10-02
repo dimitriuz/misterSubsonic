@@ -337,7 +337,7 @@ func displaySettings(a *App) []setting {
 const remoteNote = "Anyone on your network can control playback: there is no password, and it uses plain http."
 
 func remoteSettings(a *App) []setting {
-	enabled := func() bool { return a.cfg != nil && a.cfg.Remote.Enabled }
+	enabled := a.remoteRunning
 	return []setting{
 		{label: "Remote", value: func(a *App) string { return onOff(enabled()) },
 			change: func(a *App, dir int) { a.setRemote(!enabled()) },
@@ -354,6 +354,15 @@ func remoteSettings(a *App) []setting {
 			change: func(*App, int) {}, info: true,
 			help: "Open this address in a browser on the same network. " + remoteNote},
 	}
+}
+
+// remoteRunning is whether the remote server is up: the switch knows (a start
+// at launch can fail with the config still on); without one, the config.
+func (a *App) remoteRunning() bool {
+	if sw := a.o.RemoteSwitch; sw != nil {
+		return sw.Running()
+	}
+	return a.cfg != nil && a.cfg.Remote.Enabled
 }
 
 // setRemote starts or stops the remote server and, once that worked, saves
