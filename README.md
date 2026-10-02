@@ -58,6 +58,27 @@ drifting cover after some idle minutes on Now Playing; off with 0). Each server 
 state, scrobble queue and cover cache in `servers/<name>-<id>/` next to the config, so `cover_art_mb`
 applies per server (each server's cache gets that much).
 
+## Web remote
+
+A phone or computer on the same network can control the player from a web page. It is off by
+default. Turn it on in Settings → Remote, or with `enabled = true` under `[remote]` in
+`config.toml`; `port` (default 8080) sets the port and needs a restart. Settings → Remote shows
+the address to open, such as `http://192.168.1.20:8080`. It shows On only while the remote is
+actually running. If it couldn't start (for example the port is in use), it shows Off, and pressing
+it tries again.
+
+The page has four tabs. Now Playing shows the cover and the song, with play/pause, previous,
+next, seek, volume, mute, star, shuffle and repeat. Queue lists the songs: tap one to play from
+it, and remove, move or clear from the menu on each row. Browse and Search find artists, albums,
+playlists, starred songs and genres, and play an album, playlist, artist or song now, next or at the
+end of the queue (a tap on a song opens its menu). Covers show only when the server returns a real
+image. It works while the TV is off, needs no internet,
+and the TV and every open page show the same state. The server login never reaches the browser.
+
+**Safety:** while the remote is on, anyone on your home network can control playback. There is no
+password, and the page uses plain http. Keep it on the LAN only: do not forward the port to the
+internet. Turn it off in Settings when you don't need it.
+
 ## Video settings (MiSTer.ini)
 
 The app draws on the MiSTer's Linux framebuffer. That framebuffer is sized from `MiSTer.ini`; the

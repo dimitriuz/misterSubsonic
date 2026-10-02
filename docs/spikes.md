@@ -223,3 +223,21 @@ The analysis alone (`internal/viz`, `BenchmarkAnalyzerUpdate`): 49 µs on HDMI s
 | Full screen 320×240 | pending | pending | pending | pending |
 
 Then run `docs/testing-on-mister.md` items 31–35 and record them here, with the frame-rate defaults that fit 60% of each budget.
+
+## Plan 7 on the MiSTer
+
+**Remote CPU:** pending. Ask the user before playing anything. Play a FLAC album with the visualizer off, and over ssh run:
+
+```
+top -b -n 12 -d 5 | grep mistersubsonic
+```
+
+Run it once with no phone connected and once with the remote page open on Now Playing (it gets a state event up to 8 times a second while playing). The difference must be under 5% of one core.
+
+| Case | CPU |
+|---|---|
+| Playing, no phone | pending |
+| Playing, phone on Now Playing | pending |
+| Playing, phone browsing and searching | pending |
+
+Then run `docs/testing-on-mister.md` items 35–38 and record them here.
