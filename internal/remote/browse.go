@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,7 +25,24 @@ const (
 	minCover          = 64
 	maxCover          = 600
 	defaultCover      = 300
+	maxCoverBytes     = 8 << 20
+	maxQueryRunes     = 200
+	maxIDBytes        = 256
+	maxOffset         = 100000
 )
+
+// coverTypes are the only types a cover may be served as. Anything else, such
+// as HTML or SVG, would run as part of the page's own origin.
+var coverTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true}
+
+// tooLong answers 400 and reports true when a path value is over maxIDBytes.
+func tooLong(w http.ResponseWriter, v string) bool {
+	if len(v) > maxIDBytes {
+		writeError(w, http.StatusBadRequest, "the name or id is too long")
+		return true
+	}
+	return false
+}
 
 type artistJSON struct {
 	ID         string `json:"id"`
@@ -154,6 +172,9 @@ func (s *Server) handleArtists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleArtist(w http.ResponseWriter, r *http.Request) {
+	if tooLong(w, r.PathValue("id")) {
+		return
+	}
 	libJSON(s, w, r, func(ctx context.Context, l Library) (any, error) {
 		a, err := l.GetArtist(ctx, subsonic.ID(r.PathValue("id")))
 		if err != nil {
@@ -178,8 +199,8 @@ func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request, q subsonic.A
 	off := 0
 	if v := r.URL.Query().Get("offset"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeError(w, http.StatusBadRequest, "offset must be a number, 0 or more")
+		if err != nil || n < 0 || n > maxOffset {
+			writeError(w, http.StatusBadRequest, "offset must be a number, 0 to 100000")
 			return
 		}
 		off = n
@@ -205,10 +226,16 @@ func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGenre(w http.ResponseWriter, r *http.Request) {
+	if tooLong(w, r.PathValue("name")) {
+		return
+	}
 	s.listAlbums(w, r, subsonic.AlbumListQuery{Type: subsonic.ListByGenre, Genre: r.PathValue("name")})
 }
 
 func (s *Server) handleAlbum(w http.ResponseWriter, r *http.Request) {
+	if tooLong(w, r.PathValue("id")) {
+		return
+	}
 	libJSON(s, w, r, func(ctx context.Context, l Library) (any, error) {
 		a, err := l.GetAlbum(ctx, subsonic.ID(r.PathValue("id")))
 		if err != nil {
@@ -237,6 +264,9 @@ func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
+	if tooLong(w, r.PathValue("id")) {
+		return
+	}
 	libJSON(s, w, r, func(ctx context.Context, l Library) (any, error) {
 		p, err := l.GetPlaylist(ctx, subsonic.ID(r.PathValue("id")))
 		if err != nil {
@@ -279,8 +309,8 @@ func (s *Server) handleGenres(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if utf8.RuneCountInString(q) < minSearch {
-		writeError(w, http.StatusBadRequest, "type at least 2 characters")
+	if n := utf8.RuneCountInString(q); n < minSearch || n > maxQueryRunes {
+		writeError(w, http.StatusBadRequest, "type 2 to 200 characters")
 		return
 	}
 	libJSON(s, w, r, func(ctx context.Context, l Library) (any, error) {
@@ -293,6 +323,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
+	if tooLong(w, r.PathValue("id")) {
+		return
+	}
 	size := defaultCover
 	if v := r.URL.Query().Get("size"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -311,8 +344,14 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	mt, _, perr := mime.ParseMediaType(ct)
+	if perr != nil || !coverTypes[mt] || len(b) > maxCoverBytes {
+		writeError(w, http.StatusNotFound, "no cover")
+		return
+	}
 	h := w.Header()
-	h.Set("Content-Type", ct)
+	h.Set("Content-Type", mt)
+	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	h.Set("Cache-Control", "max-age=86400")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.Write(b)

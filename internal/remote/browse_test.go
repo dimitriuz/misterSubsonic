@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -316,8 +317,73 @@ func TestBrowseGuarded(t *testing.T) {
 	if r.Code != http.StatusOK {
 		t.Fatal(r.Code)
 	}
+	fr := httptest.NewRequest("GET", "/api/artists", nil)
+	fr.Host = "evil.example"
+	fw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(fw, fr)
+	if fw.Code != 403 {
+		t.Fatalf("foreign host on a browse route: %d", fw.Code)
+	}
 	r = do(s.Handler(), "GET", "/", "", nil)
 	if r.Code != 404 {
 		t.Fatalf("page route: %d", r.Code)
+	}
+}
+
+func TestCoverTypesAndSize(t *testing.T) {
+	s, c := browse(&fakeLib{})
+	serve := func(ct string, body []byte) *httptest.ResponseRecorder {
+		c.cover = func(ctx context.Context, id string, size int) ([]byte, string, error) { return body, ct, nil }
+		return do(s.Handler(), "GET", "/api/cover/c1", "", nil)
+	}
+	for _, ct := range []string{"text/html", "image/svg+xml", "", "application/octet-stream", "garbage;;"} {
+		w := serve(ct, []byte("<script>x</script>"))
+		if w.Code != 404 || strings.TrimSpace(w.Body.String()) != `{"error":"no cover"}` {
+			t.Errorf("%q: %d %s", ct, w.Code, w.Body)
+		}
+	}
+	for _, ct := range []string{"image/jpeg", "image/png", "image/gif", "image/webp"} {
+		if w := serve(ct, []byte("x")); w.Code != 200 || w.Header().Get("Content-Type") != ct {
+			t.Errorf("%q: %d %q", ct, w.Code, w.Header().Get("Content-Type"))
+		}
+	}
+	w := serve("image/jpeg; charset=x", []byte("x"))
+	if w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" {
+		t.Errorf("parameters: %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); csp != "sandbox; default-src 'none'" {
+		t.Errorf("CSP %q", csp)
+	}
+	if w := serve("image/jpeg", make([]byte, 8<<20)); w.Code != 200 {
+		t.Errorf("8 MiB: %d", w.Code)
+	}
+	if w := serve("image/jpeg", make([]byte, 8<<20+1)); w.Code != 404 {
+		t.Errorf("over 8 MiB: %d", w.Code)
+	}
+}
+
+func TestBrowseLengthCaps(t *testing.T) {
+	s, c := browse(&fakeLib{})
+	c.cover = func(ctx context.Context, id string, size int) ([]byte, string, error) {
+		return []byte("x"), "image/png", nil
+	}
+	long := strings.Repeat("a", 257)
+	for _, p := range []string{
+		"/api/artist/" + long, "/api/album/" + long, "/api/playlist/" + long, "/api/genre/" + long,
+		"/api/cover/" + long,
+		"/api/search?q=" + strings.Repeat("a", 201),
+		"/api/albums?list=recent&offset=100001", "/api/genre/Rock?offset=100001",
+	} {
+		if code, body := get(s, p); code != 400 || !strings.HasPrefix(body, `{"error":`) {
+			t.Errorf("%.40s: %d %.60s", p, code, body)
+		}
+	}
+	for _, p := range []string{
+		"/api/album/" + strings.Repeat("a", 256), "/api/search?q=" + strings.Repeat("a", 200),
+		"/api/albums?list=recent&offset=100000",
+	} {
+		if code, _ := get(s, p); code != 200 {
+			t.Errorf("%.40s: %d", p, code)
+		}
 	}
 }
