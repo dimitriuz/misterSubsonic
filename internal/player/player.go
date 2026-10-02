@@ -393,6 +393,60 @@ func (p *Player) Remove(i int) {
 	})
 }
 
+// Move moves queue[from] to position to, shifting the entries between. The
+// current song keeps playing and the index follows it. The play order (what
+// comes next under shuffle) is kept, only relabelled to the new positions.
+// Without shuffle the order is the queue's own. The prefetched successor is
+// dropped only when the next song changed.
+func (p *Player) Move(from, to int) {
+	p.do(func() {
+		n := len(p.queue)
+		if from < 0 || from >= n || to < 0 || to >= n || from == to {
+			return
+		}
+		moved := func(i int) int { // where old position i ends up
+			switch {
+			case i == from:
+				return to
+			case from < to && i > from && i <= to:
+				return i - 1
+			case to < from && i >= to && i < from:
+				return i + 1
+			}
+			return i
+		}
+		oldNext := -1
+		if c := p.followingCursor(true); c >= 0 {
+			oldNext = moved(p.order[c])
+		}
+		q := make([]subsonic.Song, n)
+		for i, s := range p.queue {
+			q[moved(i)] = s
+		}
+		p.queue = q
+		if p.shuffle { // the same sequence of songs, under their new positions
+			for oi, qi := range p.order {
+				p.order[oi] = moved(qi)
+			}
+		} else { // the order is the queue's: the cursor follows the current song
+			if p.cursor >= 0 {
+				p.cursor = moved(p.cursor)
+			}
+			for i := range p.order {
+				p.order[i] = i
+			}
+		}
+		newNext := -1
+		if c := p.followingCursor(true); c >= 0 {
+			newNext = p.order[c]
+		}
+		if newNext != oldNext {
+			p.invalidateNext()
+		}
+		p.emit(Event{Kind: QueueChanged})
+	})
+}
+
 // Clear empties the queue and stops.
 func (p *Player) Clear() {
 	p.do(func() {

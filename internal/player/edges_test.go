@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -149,5 +150,146 @@ func TestFailedPrefetchReportsOnce(t *testing.T) {
 	}
 	if errs != 1 {
 		t.Fatalf("error events = %d, want 1", errs)
+	}
+}
+
+// Move (the web remote's reorder): the queue order changes, the current song
+// and its playback do not.
+
+func queueIDs(p *Player) []subsonic.ID {
+	var out []subsonic.ID
+	for _, s := range p.State().Queue {
+		out = append(out, s.ID)
+	}
+	return out
+}
+
+func TestMoveReordersAndCurrentIndexFollows(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cur       int
+		from, to  int
+		wantQueue []subsonic.ID
+		wantIndex int
+	}{
+		{"entry before current crosses it", 2, 0, 3, []subsonic.ID{"sb", "sc", "sd", "sa", "se"}, 1},
+		{"entry after current crosses it", 1, 3, 0, []subsonic.ID{"sd", "sa", "sb", "sc", "se"}, 2},
+		{"current itself moves down", 1, 1, 3, []subsonic.ID{"sa", "sc", "sd", "sb", "se"}, 3},
+		{"current itself moves up", 3, 3, 0, []subsonic.ID{"sd", "sa", "sb", "sc", "se"}, 0},
+		{"entries on one side only", 0, 3, 4, []subsonic.ID{"sa", "sb", "sc", "se", "sd"}, 0},
+		{"first to last", 2, 0, 4, []subsonic.ID{"sb", "sc", "sd", "se", "sa"}, 1},
+		{"last to first", 2, 4, 0, []subsonic.ID{"se", "sa", "sb", "sc", "sd"}, 3},
+		{"same place", 2, 2, 2, []subsonic.ID{"sa", "sb", "sc", "sd", "se"}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.p.PlayNow(songs(5, 100), tc.cur)
+			h.playAndStart(1)
+			h.p.Move(tc.from, tc.to)
+			if got := queueIDs(h.p); !slices.Equal(got, tc.wantQueue) {
+				t.Fatalf("queue = %v, want %v", got, tc.wantQueue)
+			}
+			st := h.p.State()
+			if st.Index != tc.wantIndex {
+				t.Fatalf("index = %d, want %d", st.Index, tc.wantIndex)
+			}
+			if cur, _ := st.Current(); cur.ID != subsonic.ID("s"+string(rune('a'+tc.cur))) {
+				t.Fatalf("current song = %v after the move", cur.ID)
+			}
+			if h.eng.playCount() != 1 || h.eng.stops != 0 {
+				t.Fatalf("playback was interrupted: %d plays, %d stops", h.eng.playCount(), h.eng.stops)
+			}
+		})
+	}
+}
+
+func TestMoveOutOfRangeDoesNothing(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(3, 100), 1)
+	h.playAndStart(1)
+	for _, m := range [][2]int{{-1, 0}, {0, -1}, {3, 0}, {0, 3}, {9, 9}} {
+		h.p.Move(m[0], m[1])
+	}
+	if got := queueIDs(h.p); !slices.Equal(got, []subsonic.ID{"sa", "sb", "sc"}) {
+		t.Fatalf("queue = %v", got)
+	}
+	if st := h.p.State(); st.Index != 1 {
+		t.Fatalf("index = %d", st.Index)
+	}
+	newHarness(t, nil).p.Move(0, 1) // an empty queue
+}
+
+// During shuffle the visible queue moves like any other; the play order
+// (which song comes next) is kept, only relabelled.
+func TestMoveDuringShuffleKeepsPlayOrder(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(6, 100), 2)
+	h.playAndStart(1)
+	h.p.SetShuffle(true)
+	seq := func() []subsonic.ID { // ids in play order from the cursor on
+		var out []subsonic.ID
+		h.p.do(func() {
+			for _, qi := range h.p.order[h.p.cursor:] {
+				out = append(out, h.p.queue[qi].ID)
+			}
+		})
+		return out
+	}
+	before := seq()
+	h.p.Move(5, 0)
+	h.p.Move(1, 4)
+	if got := seq(); !slices.Equal(got, before) {
+		t.Fatalf("play order %v, was %v", got, before)
+	}
+	st := h.p.State()
+	if cur, _ := st.Current(); cur.ID != "sc" {
+		t.Fatalf("current = %v", cur.ID)
+	}
+	if next := st.Queue[st.NextIndex].ID; next != before[1] {
+		t.Fatalf("next = %v, want %v", next, before[1])
+	}
+	if h.eng.playCount() != 1 {
+		t.Fatal("shuffled Move restarted playback")
+	}
+}
+
+func TestMoveRePrefetchesOnlyWhenNextChanged(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(5, 100), 0) // sa sb sc sd se
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, 85*time.Second) // prefetches sb
+	h.waitFor("queued", func() bool { return h.eng.queueCount() == 1 })
+	clears := h.eng.clearCount()
+
+	h.p.Move(3, 4) // behind the next song: sb stays next
+	if h.eng.clearCount() != clears {
+		t.Fatal("a move away from the next song dropped the prefetch")
+	}
+	if st := h.p.State(); st.Queue[st.NextIndex].ID != "sb" {
+		t.Fatalf("next = %v", st.Queue[st.NextIndex].ID)
+	}
+
+	h.p.Move(1, 3) // the prefetched song leaves: sc is next now
+	if h.eng.clearCount() == clears {
+		t.Fatal("the prefetched song moved but the prefetch was kept")
+	}
+	h.tickAt(a.ID, 86*time.Second)
+	h.waitFor("re-prefetched", func() bool { return h.eng.queueCount() == 2 })
+	calls := h.opener.callList()
+	if last := calls[len(calls)-1]; last.id != "sc" || !last.prefetch {
+		t.Fatalf("re-prefetch call = %+v, want sc", last)
+	}
+}
+
+// Without shuffle Next follows the moved queue, not the old order.
+func TestMoveThenNextPlaysTheNewNeighbour(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(4, 100), 0) // sa sb sc sd
+	h.playAndStart(1)
+	h.p.Move(3, 1) // sa sd sb sc
+	h.p.Next()
+	h.waitFor("next opened", func() bool { return h.eng.playCount() == 2 })
+	if cur, _ := h.p.State().Current(); cur.ID != "sd" {
+		t.Fatalf("Next played %v, want sd", cur.ID)
 	}
 }

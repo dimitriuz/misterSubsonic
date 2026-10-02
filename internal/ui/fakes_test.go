@@ -221,6 +221,7 @@ func (p *fakePlayer) Prev()                       { p.call("prev") }
 func (p *fakePlayer) Seek(d time.Duration)        { p.call("seek"); p.seekPos, p.st.Position = d, d }
 func (p *fakePlayer) Jump(i int)                  { p.call("jump"); p.st.Index = i }
 func (p *fakePlayer) Remove(i int)                { p.call("remove") }
+func (p *fakePlayer) Move(from, to int)           { p.call("move") }
 func (p *fakePlayer) SetShuffle(on bool)          { p.st.Shuffle = on }
 func (p *fakePlayer) SetRepeat(r player.Repeat)   { p.st.Repeat = r }
 func (p *fakePlayer) ResumeFrom(r *player.Resume) {

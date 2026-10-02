@@ -48,6 +48,7 @@ type Player interface {
 	Seek(pos time.Duration)
 	Jump(i int)
 	Remove(i int)
+	Move(from, to int)
 	SetShuffle(on bool)
 	SetRepeat(r player.Repeat)
 	Resumable(ctx context.Context) (*player.Resume, error)

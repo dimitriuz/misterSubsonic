@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -231,5 +232,40 @@ func TestUnknownVisualizerLoadsAsOffWithAWarning(t *testing.T) {
 	}
 	if len(warns) != 1 || !strings.Contains(warns[0], "display.visualizer") || !strings.Contains(warns[0], "disco") {
 		t.Fatalf("warnings = %v", warns)
+	}
+}
+
+func TestRemoteDefaultsToOffOnPort8080(t *testing.T) {
+	if d := Default().Remote; d.Enabled || d.Port != 8080 {
+		t.Fatalf("default remote = %+v", d)
+	}
+	cfg, warns, err := Load(write(t, minimal))
+	if err != nil || len(warns) != 0 || cfg.Remote.Enabled || cfg.Remote.Port != 8080 {
+		t.Fatalf("minimal: %+v, %v, %v", cfg.Remote, warns, err)
+	}
+	cfg, warns, err = Load(write(t, minimal+"\n[remote]\nenabled = true\nport = 9000\n"))
+	if err != nil || len(warns) != 0 || !cfg.Remote.Enabled || cfg.Remote.Port != 9000 {
+		t.Fatalf("set: %+v, %v, %v", cfg.Remote, warns, err)
+	}
+}
+
+func TestBadRemotePortLoadsAs8080WithAWarning(t *testing.T) {
+	for _, port := range []string{"0", "-1", "65536", "99999"} {
+		cfg, warns, err := Load(write(t, minimal+"\n[remote]\nenabled = true\nport = "+port+"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Remote.Port != 8080 || !cfg.Remote.Enabled {
+			t.Errorf("port %s loaded as %+v, want 8080 and still enabled", port, cfg.Remote)
+		}
+		if len(warns) != 1 || !strings.Contains(warns[0], "remote.port") || !strings.Contains(warns[0], port) {
+			t.Errorf("port %s: warnings = %v", port, warns)
+		}
+	}
+	for _, port := range []string{"1", "65535"} {
+		cfg, warns, _ := Load(write(t, minimal+"\n[remote]\nport = "+port+"\n"))
+		if n, _ := strconv.Atoi(port); len(warns) != 0 || cfg.Remote.Port != n {
+			t.Errorf("port %s: %+v %v", port, cfg.Remote, warns)
+		}
 	}
 }

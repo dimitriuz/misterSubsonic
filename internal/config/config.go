@@ -24,6 +24,7 @@ type Config struct {
 	Playback      Playback `toml:"playback"`
 	Display       Display  `toml:"display"`
 	Cache         Cache    `toml:"cache"`
+	Remote        Remote   `toml:"remote"`
 }
 
 type Server struct {
@@ -61,12 +62,19 @@ type Cache struct {
 	CoverArtMB int `toml:"cover_art_mb"`
 }
 
+// Remote is the web remote: a page on the home network that controls playback.
+type Remote struct {
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+}
+
 // Default returns a config with every default filled in and no servers.
 func Default() *Config {
 	return &Config{
 		Playback: Playback{TranscodeFormat: "mp3", TranscodeBitrate: 320, ReplayGain: "off", Scrobble: true, BufferMB: 32, ALSADevice: "default"},
 		Display:  Display{Profile: "auto", ScreensaverMinutes: 5, FullResolution: true, Hints: true, Visualizer: "off"},
 		Cache:    Cache{CoverArtMB: 200},
+		Remote:   Remote{Port: 8080},
 	}
 }
 
@@ -96,6 +104,10 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 	default: // a typo must not stop the app: show nothing and say so
 		warnings = append(warnings, fmt.Sprintf("display.visualizer: unknown value %q, using off", cfg.Display.Visualizer))
 		cfg.Display.Visualizer = "off"
+	}
+	if cfg.Remote.Port < 1 || cfg.Remote.Port > 65535 { // as a typo above: carry on with the default
+		warnings = append(warnings, fmt.Sprintf("remote.port: %d is not 1..65535, using 8080", cfg.Remote.Port))
+		cfg.Remote.Port = 8080
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, warnings, fmt.Errorf("config: %s: %w", path, err)
