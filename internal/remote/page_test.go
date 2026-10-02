@@ -28,6 +28,12 @@ func TestPageServed(t *testing.T) {
 		if got := r.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 			t.Errorf("%s nosniff %q", c.path, got)
 		}
+		if got := r.Header().Get("Content-Security-Policy"); got != "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'" {
+			t.Errorf("%s CSP %q", c.path, got)
+		}
+		if got := r.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s X-Frame-Options %q", c.path, got)
+		}
 		if !strings.Contains(r.Body.String(), c.sniff) {
 			t.Errorf("%s does not contain %q", c.path, c.sniff)
 		}
@@ -73,5 +79,27 @@ func TestPageJS(t *testing.T) {
 	cmd := exec.Command(node, "--test", "web/app_test.js")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node --test: %v\n%s", err, out)
+	}
+}
+
+// TestPageNeedsNoInlineCode: the CSP forbids inline scripts, styles and event
+// handlers, so the page must not use any.
+func TestPageNeedsNoInlineCode(t *testing.T) {
+	html, _ := webFS.ReadFile("web/index.html")
+	js, _ := webFS.ReadFile("web/app.js")
+	for _, tag := range regexp.MustCompile(`(?i)<script[^>]*>`).FindAllString(string(html), -1) {
+		if !strings.Contains(tag, " src=") {
+			t.Errorf("inline script: %s", tag)
+		}
+	}
+	for _, re := range []string{`(?i)<style`, `(?i)\son[a-z]+\s*=`, `(?i)\sstyle\s*=`, `(?i)javascript:`} {
+		if m := regexp.MustCompile(re).FindString(string(html)); m != "" {
+			t.Errorf("index.html matches %s: %q", re, m)
+		}
+	}
+	for _, re := range []string{`setAttribute\(\s*['"]style`, `\bstyle\s*:`, `\.cssText`, `insertAdjacentHTML|innerHTML|outerHTML|eval\(|new Function`} {
+		if m := regexp.MustCompile(re).FindString(string(js)); m != "" {
+			t.Errorf("app.js matches %s: %q", re, m)
+		}
 	}
 }

@@ -6,11 +6,11 @@
 // ---- pure ----
 
 function initial() {
-  return { state: null, at: 0, queue: { index: -1, songs: [] }, connected: false };
+  return { state: null, at: 0, queue: { index: -1, songs: [] }, connected: false, full: false };
 }
 
 // reduce applies one event to the page state and returns the new state.
-// Events: {type:'state', data, now}, {type:'queue', data}, {type:'conn', up}.
+// Events: {type:'state', data, now}, {type:'queue', data}, {type:'conn', up, full}.
 function reduce(s, ev) {
   switch (ev.type) {
     case 'state': {
@@ -20,7 +20,7 @@ function reduce(s, ev) {
     case 'queue':
       return Object.assign({}, s, { queue: { index: ev.data.index, songs: ev.data.songs || [] } });
     case 'conn':
-      return Object.assign({}, s, { connected: ev.up });
+      return Object.assign({}, s, { connected: ev.up, full: !!ev.full });
   }
   return s;
 }
@@ -37,6 +37,29 @@ function position(s, now) {
 
 // backoff is the wait before reconnect number n (from 0): 1, 2, 4 ... 30 s.
 function backoff(n) { return Math.min(30000, 1000 * Math.pow(2, n)); }
+
+// retryDelay is the wait before reconnect number n. A server with all its
+// slots taken is asked again every 30 s, not faster.
+function retryDelay(n, full) { return full ? 30000 : backoff(n); }
+
+const bannerText = (s) => (s.full ? 'Too many open remotes' : 'Reconnecting…');
+
+// The server sends a ping every 15 s on an otherwise quiet stream; a stream
+// that has said nothing for this long is dead (a phone that left the wifi
+// never gets an error from EventSource).
+const WATCHDOG_MS = 40000;
+function makeWatchdog(clock) {
+  let last = clock();
+  return { heard() { last = clock(); }, stale() { return clock() - last > WATCHDOG_MS; } };
+}
+
+// splitPath decodes the parts of a browse path, or gives null when the hash
+// holds a bad escape (the page then shows the Browse home).
+function splitPath(rest) {
+  try { return rest.split('/').map(decodeURIComponent); } catch (e) { return null; }
+}
+
+const albumsURL = (list, offset) => '/api/albums?list=' + encodeURIComponent(list) + '&offset=' + offset;
 
 function fmtTime(ms) {
   const t = Math.floor(Math.max(0, ms || 0) / 1000);
@@ -84,7 +107,7 @@ function parseHash(h) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { initial, reduce, position, backoff, fmtTime, makeApi, addedMessage, plural, moveTarget, parseHash };
+  module.exports = { initial, reduce, position, backoff, retryDelay, bannerText, WATCHDOG_MS, makeWatchdog, splitPath, albumsURL, fmtTime, makeApi, addedMessage, plural, moveTarget, parseHash };
 }
 
 // ---- the page ----
@@ -169,29 +192,48 @@ if (typeof document !== 'undefined') (function () {
       renderQueue();
     } else if (ev.type === 'conn') {
       $('banner').hidden = ev.up;
+      $('banner').textContent = bannerText(S);
     }
   }
   const now = () => performance.now();
   async function loadState() { const st = await attempt(() => api.get('/api/state')); if (st) dispatch({ type: 'state', data: st, now: now() }); }
   async function loadQueue() { const q = await attempt(() => api.get('/api/queue')); if (q) dispatch({ type: 'queue', data: q }); }
 
-  let es = null, tries = 0, wasDown = false;
+  // The event stream. It counts as up at its first state or queue event (a
+  // full server answers 200 and then a "full" event). It is dropped when it
+  // errors, when the server says it is full, or when nothing at all (not even
+  // a ping) has arrived for WATCHDOG_MS.
+  let es = null, tries = 0, wasDown = false, retrying = false, isUp = false, retryTimer = 0;
+  const dog = makeWatchdog(now);
+  function down(full) {
+    if (es) es.close();
+    es = null;
+    wasDown = true;
+    isUp = false;
+    dispatch({ type: 'conn', up: false, full });
+    clearTimeout(retryTimer);
+    retrying = true;
+    retryTimer = setTimeout(connect, retryDelay(tries++, full));
+  }
   function connect() {
-    es = new EventSource('/api/events');
-    es.onopen = () => {
+    retrying = false;
+    dog.heard();
+    const mine = es = new EventSource('/api/events');
+    const up = () => {
+      dog.heard();
+      if (isUp) return;
+      isUp = true;
       tries = 0;
       dispatch({ type: 'conn', up: true });
-      if (wasDown) { wasDown = false; loadState(); loadQueue(); }
+      if (wasDown) { wasDown = false; artistsCache = null; loadState(); loadQueue(); } // the server may be another one
     };
-    es.addEventListener('state', (e) => dispatch({ type: 'state', data: JSON.parse(e.data), now: now() }));
-    es.addEventListener('queue', (e) => dispatch({ type: 'queue', data: JSON.parse(e.data) }));
-    es.onerror = () => {
-      es.close();
-      wasDown = true;
-      dispatch({ type: 'conn', up: false });
-      setTimeout(connect, backoff(tries++));
-    };
+    mine.addEventListener('state', (e) => { up(); dispatch({ type: 'state', data: JSON.parse(e.data), now: now() }); });
+    mine.addEventListener('queue', (e) => { up(); dispatch({ type: 'queue', data: JSON.parse(e.data) }); });
+    mine.addEventListener('ping', () => dog.heard());
+    mine.addEventListener('full', () => { if (es === mine) down(true); });
+    mine.onerror = () => { if (es === mine) down(false); };
   }
+  setInterval(() => { if (es && !retrying && dog.stale()) down(false); }, 5000);
 
   // ---- Now Playing ----
   let coverID = null, dragging = null, volTimer = 0, volHold = 0;
@@ -326,9 +368,7 @@ if (typeof document !== 'undefined') (function () {
     const row = o.href ? h('a', { class: 'row', href: o.href }, inner)
       : h('div', { class: 'row', role: 'button', tabindex: 0, onclick: o.onTap || toggle,
         onkeydown: (e) => { if (e.key === 'Enter') (o.onTap || toggle)(); } }, inner);
-    const top = h('div', { style: 'display:flex;align-items:center' }, row);
-    row.style.flex = '1';
-    row.style.minWidth = '0';
+    const top = h('div', { class: 'toprow' }, row);
     if (o.menu) {
       top.append(iconBtn('more', 'More', toggle));
       li.append(top, h('div', { class: 'menu' }, o.menu.map((m) =>
@@ -402,7 +442,7 @@ if (typeof document !== 'undefined') (function () {
 
   async function renderBrowse(rest) {
     const my = ++nav, root = $('browse');
-    const p = rest.split('/').map(decodeURIComponent);
+    const p = splitPath(rest) || [''];
     const show = (...kids) => { if (my === nav) { root.replaceChildren(...kids); } };
     const get = async (url) => {
       try { return await api.get(url); } catch (e) { show(head('Browse', '#browse'), msg('error', e.message)); return null; }
@@ -426,13 +466,13 @@ if (typeof document !== 'undefined') (function () {
       }
       case 'albums': case 'genre': {
         const isGenre = p[0] === 'genre', list = isGenre ? 'genre' : p[1] || 'recent';
-        const base = isGenre ? '/api/genre/' + enc(p[1]) + '?' : '/api/albums?list=' + list + '&';
+        const url = (o) => (isGenre ? '/api/genre/' + enc(p[1]) + '?offset=' + o : albumsURL(list, o));
         const grid = h('div', { class: 'grid' }), more = h('button', { class: 'btn', hidden: true }, 'More');
         let off = 0;
         const load = async () => {
           more.disabled = true;
           let r;
-          try { r = await api.get(base + 'offset=' + off); } catch (e) { more.disabled = false; return toast(e.message, true); }
+          try { r = await api.get(url(off)); } catch (e) { more.disabled = false; return toast(e.message, true); }
           if (my !== nav) return;
           off += r.albums.length;
           grid.append(...r.albums.map(albumCard));

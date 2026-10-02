@@ -135,3 +135,46 @@ test('route: hash to tab and browse path', () => {
   assert.deepStrictEqual(A.parseHash('#search'), { tab: 'search', rest: '' });
   assert.deepStrictEqual(A.parseHash('#nonsense'), { tab: 'now', rest: '' });
 });
+
+test('splitPath: decodes each part, and a bad escape gives null (Browse home)', () => {
+  assert.deepStrictEqual(A.splitPath('album/a%2Fb'), ['album', 'a/b']);
+  assert.deepStrictEqual(A.splitPath(''), ['']);
+  assert.deepStrictEqual(A.splitPath('artist/%E4%BD%A0'), ['artist', '你']);
+  assert.strictEqual(A.splitPath('album/%E0%A4%A'), null);
+  assert.strictEqual(A.splitPath('genre/%'), null);
+});
+
+test('albumsURL: the list name is encoded', () => {
+  assert.strictEqual(A.albumsURL('recent', 50), '/api/albums?list=recent&offset=50');
+  assert.strictEqual(A.albumsURL('a&offset=9#x', 0), '/api/albums?list=a%26offset%3D9%23x&offset=0');
+});
+
+test('reduce: the conn event remembers a full server', () => {
+  let s = A.reduce(A.initial(), { type: 'conn', up: false, full: true });
+  assert.strictEqual(s.full, true);
+  assert.strictEqual(A.bannerText(s), 'Too many open remotes');
+  s = A.reduce(s, { type: 'conn', up: false });
+  assert.strictEqual(s.full, false);
+  assert.strictEqual(A.bannerText(s), 'Reconnecting…');
+});
+
+test('retryDelay: a full server is asked again every 30 s, otherwise the back-off', () => {
+  assert.strictEqual(A.retryDelay(0, true), 30000);
+  assert.strictEqual(A.retryDelay(3, true), 30000);
+  assert.strictEqual(A.retryDelay(2, false), 4000);
+});
+
+test('watchdog: silence for over 40 s is stale, any event resets it', () => {
+  let t = 1000;
+  const w = A.makeWatchdog(() => t);
+  assert.strictEqual(w.stale(), false);
+  t += 39000;
+  assert.strictEqual(w.stale(), false);
+  t += 2000;
+  assert.strictEqual(w.stale(), true);
+  w.heard();
+  assert.strictEqual(w.stale(), false);
+  t += 41000;
+  assert.strictEqual(w.stale(), true);
+  assert.ok(A.WATCHDOG_MS > 15000 * 2, 'longer than two server heartbeats');
+});
