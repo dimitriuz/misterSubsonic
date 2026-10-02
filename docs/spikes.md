@@ -222,7 +222,7 @@ The analysis alone (`internal/viz`, `BenchmarkAnalyzerUpdate`): 49 µs on HDMI s
 | Full screen 1920×1200 | pending | pending | pending | pending |
 | Full screen 320×240 | pending | pending | pending | pending |
 
-Then run `docs/testing-on-mister.md` items 31–35 and record them here, with the frame-rate defaults that fit 60% of each budget.
+Then run `docs/testing-on-mister.md` items 31–34 and record them here, with the frame-rate defaults that fit 60% of each budget.
 
 ## Plan 7 on the MiSTer
 
@@ -232,7 +232,7 @@ Then run `docs/testing-on-mister.md` items 31–35 and record them here, with th
 top -b -n 12 -d 5 | grep mistersubsonic
 ```
 
-Run it once with no phone connected and once with the remote page open on Now Playing (it gets a state event up to 8 times a second while playing). The difference must be under 5% of one core.
+Run it once with no phone connected and once with the remote page open on Now Playing (each connected page gets one state event a second, and only while playing). The difference must be under 5% of one core.
 
 | Case | CPU |
 |---|---|

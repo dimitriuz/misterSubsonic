@@ -75,8 +75,9 @@ end of the queue (a tap on a song opens its menu). Covers show only when the ser
 image. It works while the TV is off, needs no internet,
 and the TV and every open page show the same state. The server login never reaches the browser.
 
-**Safety:** while the remote is on, anyone on your home network can control playback. There is no
-password, and the page uses plain http. Keep it on the LAN only: do not forward the port to the
+**Safety:** while the remote is on, anyone on your home network can control playback. They can also
+star and unstar songs, change the saved play queue, read your library, and set the volume. There is
+no password, and the page uses plain http. Keep it on the LAN only: do not forward the port to the
 internet. Turn it off in Settings when you don't need it.
 
 ## Video settings (MiSTer.ini)
