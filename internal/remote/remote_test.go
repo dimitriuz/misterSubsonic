@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -179,17 +180,48 @@ func TestCmdErrorMapping(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
 		code int
+		body string
 	}{
-		{ErrStale, 409},
-		{ErrBusy, 503},
-		{errors.New("boom"), 500},
+		{ErrStale, 409, ErrStale.Error()},
+		{ErrBusy, 503, ErrBusy.Error()},
+		{errors.New("boom http://user:pw@server/rest?t=secret"), 500, "internal error"},
 	} {
 		f := newFake()
 		f.doErr = tc.err
-		w := do(New(f, Options{}).Handler(), "POST", "/api/cmd", `{"do":"toggle"}`, nil)
-		if w.Code != tc.code || !strings.Contains(w.Body.String(), `{"error":"`+tc.err.Error()+`"}`) {
-			t.Errorf("%v: %d %s", tc.err, w.Code, w.Body)
+		var logs []string
+		s := New(f, Options{Log: func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }})
+		for _, path := range []string{"/api/cmd", "/api/play"} {
+			body := `{"do":"toggle"}`
+			if path == "/api/play" {
+				body = `{"what":"album","id":"a"}`
+			}
+			w := do(s.Handler(), "POST", path, body, nil)
+			if w.Code != tc.code || strings.TrimSpace(w.Body.String()) != `{"error":"`+tc.body+`"}` {
+				t.Errorf("%v %s: %d %s", tc.err, path, w.Code, w.Body)
+			}
 		}
+		if tc.code == 500 {
+			if len(logs) != 2 || !strings.Contains(logs[0], "boom") {
+				t.Errorf("the real error should reach the log: %q", logs)
+			}
+		}
+	}
+}
+
+func TestCmdMissingFields(t *testing.T) {
+	for _, body := range []string{
+		`{"do":"volume"}`, `{"do":"volume","db":null}`, `{"do":"seek"}`,
+		`{"do":"mute"}`, `{"do":"shuffle"}`, `{"do":"star"}`,
+	} {
+		f := newFake()
+		w := do(New(f, Options{}).Handler(), "POST", "/api/cmd", body, nil)
+		if w.Code != 400 || f.ncmds() != 0 {
+			t.Errorf("%s: %d, calls %d", body, w.Code, f.ncmds())
+		}
+	}
+	f := newFake()
+	if w := do(New(f, Options{}).Handler(), "POST", "/api/cmd", `{"do":"mute","on":false}`, nil); w.Code != 200 {
+		t.Errorf("explicit false: %d", w.Code)
 	}
 }
 
@@ -242,7 +274,7 @@ func TestPlay(t *testing.T) {
 func TestGuards(t *testing.T) {
 	f := newFake()
 	var logs []string
-	s := New(f, Options{Hostnames: []string{"mister"}, Log: func(format string, args ...any) { logs = append(logs, format) }})
+	s := New(f, Options{Hostnames: []string{"mister"}, Log: func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }})
 	h := s.Handler()
 	req := func(method, path, host, ctype, origin string) int {
 		r := httptest.NewRequest(method, path, strings.NewReader(`{"do":"toggle"}`))
@@ -274,6 +306,8 @@ func TestGuards(t *testing.T) {
 		{"post form", "POST", "/api/cmd", "192.168.1.50:8080", "application/x-www-form-urlencoded", "", 403},
 		{"post text/plain", "POST", "/api/cmd", "192.168.1.50:8080", "text/plain", "", 403},
 		{"post no type", "POST", "/api/cmd", "192.168.1.50:8080", "", "", 403},
+		{"post origin null", "POST", "/api/cmd", "192.168.1.50:8080", "application/json", "null", 403},
+		{"post mixed-case type", "POST", "/api/cmd", "192.168.1.50:8080", "Application/JSON; charset=utf-8", "", 200},
 		{"post dns host", "POST", "/api/play", "evil.example", "application/json", "", 403},
 	}
 	for _, tc := range tests {

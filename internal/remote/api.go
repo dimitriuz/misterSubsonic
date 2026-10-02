@@ -125,51 +125,83 @@ func queueOrEmpty(q QueueView) QueueView {
 	return q
 }
 
+// cmdBody is what /api/cmd decodes: the Command the Controller sees, with the
+// fields whose zero value is a real setting (loudest volume, seek to the
+// start, off) shadowed by pointers, so an absent field can be told from zero.
+type cmdBody struct {
+	Command
+	PositionMS *int64   `json:"position_ms"`
+	DB         *float64 `json:"db"`
+	On         *bool    `json:"on"`
+}
+
 func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
-	var c Command
-	if !readBody(w, r, &c) {
+	var b cmdBody
+	if !readBody(w, r, &b) {
 		return
 	}
-	if err := validate(&c); err != nil {
+	c, err := validate(&b)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.ctl.Do(c); err != nil {
-		writeCtlError(w, err)
+		s.writeCtlError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// validate checks the fields the command uses and clamps the volume.
-func validate(c *Command) error {
+// validate checks the fields the command uses, requires the ones whose
+// absence would silently mean a zero value, and clamps the volume.
+func validate(b *cmdBody) (Command, error) {
+	c := b.Command
+	if b.PositionMS != nil {
+		c.PositionMS = *b.PositionMS
+	}
+	if b.DB != nil {
+		c.DB = *b.DB
+	}
+	if b.On != nil {
+		c.On = *b.On
+	}
 	switch c.Do {
-	case "toggle", "next", "prev", "mute", "shuffle", "star", "clear":
+	case "toggle", "next", "prev", "clear":
+	case "mute", "shuffle", "star":
+		if b.On == nil {
+			return c, errors.New("on is required")
+		}
 	case "seek":
+		if b.PositionMS == nil {
+			return c, errors.New("position_ms is required")
+		}
 		if c.PositionMS < 0 {
-			return errors.New("position_ms must not be negative")
+			return c, errors.New("position_ms must not be negative")
 		}
 	case "volume":
+		if b.DB == nil {
+			return c, errors.New("db is required")
+		}
 		if math.IsNaN(c.DB) {
-			return errors.New("db is not a number")
+			return c, errors.New("db is not a number")
 		}
 		c.DB = math.Max(minVolumeDB, math.Min(0, c.DB))
 	case "repeat":
 		if c.Mode != "off" && c.Mode != "all" && c.Mode != "one" {
-			return errors.New("mode must be off, all or one")
+			return c, errors.New("mode must be off, all or one")
 		}
 	case "jump", "remove":
 		if c.Index < 0 {
-			return errors.New("index must not be negative")
+			return c, errors.New("index must not be negative")
 		}
 	case "move":
 		if c.From < 0 || c.To < 0 {
-			return errors.New("from and to must not be negative")
+			return c, errors.New("from and to must not be negative")
 		}
 	default:
-		return fmt.Errorf("unknown command %q", c.Do)
+		return c, fmt.Errorf("unknown command %q", c.Do)
 	}
-	return nil
+	return c, nil
 }
 
 func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +218,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.ctl.Play(p)
 	if err != nil {
-		writeCtlError(w, err)
+		s.writeCtlError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"added": n})
@@ -231,14 +263,20 @@ func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-func writeCtlError(w http.ResponseWriter, err error) {
+// writeCtlError maps a Controller error to a status. Only the known kinds put
+// their text in the body; anything else may carry a server URL, a path or
+// credentials, so it goes to the log and the page gets a fixed text.
+func (s *Server) writeCtlError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrStale):
-		writeError(w, http.StatusConflict, err.Error())
+		writeError(w, http.StatusConflict, ErrStale.Error())
 	case errors.Is(err, ErrBusy):
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeError(w, http.StatusServiceUnavailable, ErrBusy.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if s.opts.Log != nil {
+			s.opts.Log("remote: internal error: %v", err)
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }
 

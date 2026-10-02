@@ -158,7 +158,7 @@ func (s *Server) Listen(addr string) error {
 		return err
 	}
 	s.ln = ln
-	s.srv = &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	s.srv = &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	go s.srv.Serve(ln)
 	return nil
 }
