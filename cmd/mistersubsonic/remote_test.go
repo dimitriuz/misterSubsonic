@@ -53,7 +53,7 @@ func stateStatus(port int) (int, error) {
 
 func TestRemoteHostStartsAndStops(t *testing.T) {
 	port := freePort(t)
-	h := &remoteHost{ctl: idleCtl{}, port: port}
+	h := &remoteHost{ctl: idleCtl{}, port: port, bind: "127.0.0.1"}
 	defer h.Close()
 	if got, err := stateStatus(port); err == nil {
 		t.Fatalf("answered before it was started (%d)", got)
@@ -98,12 +98,12 @@ func TestRemoteHostStartsAndStops(t *testing.T) {
 }
 
 func TestRemoteHostPortInUse(t *testing.T) {
-	busy, err := net.Listen("tcp", "0.0.0.0:0")
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	port := busy.Addr().(*net.TCPAddr).Port
-	h := &remoteHost{ctl: idleCtl{}, port: port}
+	h := &remoteHost{ctl: idleCtl{}, port: port, bind: "127.0.0.1"}
 	defer h.Close()
 	err = h.SetEnabled(true)
 	if err == nil || err.Error() != fmt.Sprintf("port %d is in use", port) {
@@ -121,7 +121,7 @@ func TestRemoteHostPortInUse(t *testing.T) {
 
 func TestRemoteHostClosesWhenClosed(t *testing.T) {
 	port := freePort(t)
-	h := &remoteHost{ctl: idleCtl{}, port: port}
+	h := &remoteHost{ctl: idleCtl{}, port: port, bind: "127.0.0.1"}
 	if err := h.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
@@ -145,13 +145,13 @@ func (f *fakeToaster) Toast(format string, args ...any) {
 }
 
 func TestStartRemoteBindFailureIsAToast(t *testing.T) {
-	busy, err := net.Listen("tcp", "0.0.0.0:0")
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer busy.Close()
 	port := busy.Addr().(*net.TCPAddr).Port
-	h := &remoteHost{ctl: idleCtl{}, port: port}
+	h := &remoteHost{ctl: idleCtl{}, port: port, bind: "127.0.0.1"}
 	defer h.Close()
 	ft := &fakeToaster{}
 	startRemote(h, ft) // must not panic or exit
@@ -159,7 +159,7 @@ func TestStartRemoteBindFailureIsAToast(t *testing.T) {
 		t.Fatalf("toasts %q, want %q", ft.toasts, want)
 	}
 	// A start that works says nothing.
-	ok := &remoteHost{ctl: idleCtl{}, port: freePort(t)}
+	ok := &remoteHost{ctl: idleCtl{}, port: freePort(t), bind: "127.0.0.1"}
 	defer ok.Close()
 	ft = &fakeToaster{}
 	startRemote(ok, ft)
@@ -186,7 +186,7 @@ func TestRunStartsTheRemoteWhenEnabledAndStopsItOnExit(t *testing.T) {
 	old := beforeRun
 	beforeRun = func(a *ui.App) { code, getErr = stateStatus(port) }
 	defer func() { beforeRun = old }()
-	err := run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: filepath.Join(t.TempDir(), "log.txt")})
+	err := run(flags{config: cfg, remoteBind: "127.0.0.1", display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: filepath.Join(t.TempDir(), "log.txt")})
 	if err != nil {
 		t.Fatalf("run returned %v", err)
 	}
@@ -205,7 +205,7 @@ func TestRunWithTheRemoteOffListensNowhere(t *testing.T) {
 	old := beforeRun
 	beforeRun = func(a *ui.App) { _, getErr = stateStatus(port) }
 	defer func() { beforeRun = old }()
-	err := run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: filepath.Join(t.TempDir(), "log.txt")})
+	err := run(flags{config: cfg, remoteBind: "127.0.0.1", display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: filepath.Join(t.TempDir(), "log.txt")})
 	if err != nil {
 		t.Fatalf("run returned %v", err)
 	}
@@ -215,7 +215,7 @@ func TestRunWithTheRemoteOffListensNowhere(t *testing.T) {
 }
 
 func TestRunCarriesOnWhenThePortIsInUse(t *testing.T) {
-	busy, err := net.Listen("tcp", "0.0.0.0:0")
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,12 +223,23 @@ func TestRunCarriesOnWhenThePortIsInUse(t *testing.T) {
 	port := busy.Addr().(*net.TCPAddr).Port
 	cfg := remoteConfig(t, true, port)
 	logPath := filepath.Join(t.TempDir(), "log.txt")
-	err = run(flags{config: cfg, display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: logPath})
+	err = run(flags{config: cfg, remoteBind: "127.0.0.1", display: "headless", null: true, volume: math.NaN(), exitAfter: 300 * time.Millisecond, log: logPath})
 	if err != nil {
 		t.Fatalf("run returned %v", err)
 	}
 	b, _ := os.ReadFile(logPath)
 	if !strings.Contains(string(b), "remote:") || !strings.Contains(string(b), "MiSTer Subsonic exiting") {
 		t.Fatalf("log %q", b)
+	}
+}
+
+// The remote listens on every interface unless told otherwise (a phone has to
+// reach it); tests and the e2e pass a loopback address.
+func TestRemoteHostBindAddress(t *testing.T) {
+	if got := (&remoteHost{port: 8080}).listenAddr(); got != "0.0.0.0:8080" {
+		t.Errorf("default bind %q", got)
+	}
+	if got := (&remoteHost{port: 8080, bind: "127.0.0.1"}).listenAddr(); got != "127.0.0.1:8080" {
+		t.Errorf("loopback bind %q", got)
 	}
 }

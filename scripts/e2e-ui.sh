@@ -109,7 +109,7 @@ rpost() { curl -fs --max-time 5 -H 'Content-Type: application/json' -H "Origin: 
 # rwait PATH PATTERN: poll a GET until its body matches (5 s at most).
 rwait() { for _ in $(seq 50); do rget "$1" 2>/dev/null | grep -q "$2" && return 0; sleep 0.1; done; return 1; }
 rbefore=$(wc -l < "$tmp/mock.log")
-"$tmp/mistersubsonic" -config "$tmp/remote/config.toml" -display headless -null -exit-after 20s > "$tmp/remote.log" 2>&1 &
+"$tmp/mistersubsonic" -config "$tmp/remote/config.toml" -remote-bind 127.0.0.1 -display headless -null -exit-after 20s > "$tmp/remote.log" 2>&1 &
 app=$!
 rwait /api/state '"status":"stopped"' || remote_fail "/api/state never answered"
 # The page and its script and style are served.
@@ -120,6 +120,7 @@ rget /app.css | grep -q -- '--accent' || remote_fail "app.css was not served"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -d '{"do":"toggle"}' "$base/api/cmd")" = 403 ] || remote_fail "a POST without a JSON content type was not refused"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Content-Type: application/json' -H 'Origin: http://evil.example' -d '{"do":"toggle"}' "$base/api/cmd")" = 403 ] || remote_fail "a foreign Origin was not refused"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: evil.example' "$base/api/state")" = 403 ] || remote_fail "a foreign Host was not refused"
+[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Sec-Fetch-Site: cross-site' "$base/api/state")" = 403 ] || remote_fail "a cross-site GET was not refused"
 # A song by its id alone, before anything was browsed: the app asks the server
 # (getSong). Retried until the app has connected to the mock server.
 one=""

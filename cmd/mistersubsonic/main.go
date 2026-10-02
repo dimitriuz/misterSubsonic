@@ -37,10 +37,10 @@ var openDevice = audio.OpenDevice
 var version = "dev"
 
 type flags struct {
-	config, display, viewerAddr, frames, profile, fbdev, keys, log, screenshots string
-	null, restoreConsole, verifyRedraw                                          bool
-	volume                                                                      float64
-	exitAfter                                                                   time.Duration
+	config, display, viewerAddr, frames, profile, fbdev, keys, log, screenshots, remoteBind string
+	null, restoreConsole, verifyRedraw                                                      bool
+	volume                                                                                  float64
+	exitAfter                                                                               time.Duration
 }
 
 func main() {
@@ -58,6 +58,7 @@ func main() {
 	flag.BoolVar(&f.verifyRedraw, "verify-redraw", false, "check every partial redraw against a full one and log any difference (debugging)")
 	flag.DurationVar(&f.exitAfter, "exit-after", 0, "quit after this long (testing)")
 	flag.Float64Var(&f.volume, "volume", math.NaN(), "start volume in dB (-60..0); default: config, or -30 anywhere but the MiSTer")
+	flag.StringVar(&f.remoteBind, "remote-bind", "", "address the web remote listens on (default every interface; testing uses 127.0.0.1)")
 	flag.BoolVar(&f.restoreConsole, "restore-console", false, "put the console back in text mode and exit (the launcher runs this after the app)")
 	flag.Parse()
 	if f.restoreConsole {
@@ -410,7 +411,7 @@ func run(f flags) (err error) {
 	// engine and device close (defers run last-in first-out).
 	sess := newSessions(ctx, eng, dataDir, vol)
 	defer sess.close()
-	host := &remoteHost{port: cfg.Remote.Port}
+	host := &remoteHost{port: cfg.Remote.Port, bind: f.remoteBind}
 	defer host.Close()                          // before the player stops, after the UI has quit
 	defer armDeadline(&deadline, shutdownLimit) // runs first: bounds the clean-ups above
 

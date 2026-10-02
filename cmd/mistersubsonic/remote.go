@@ -20,13 +20,15 @@ import (
 type remoteHost struct {
 	ctl  remote.Controller // set once, before the first SetEnabled
 	port int
+	bind string // address to listen on; default 0.0.0.0 (tests and the e2e use 127.0.0.1)
 
 	mu  sync.Mutex // serialises SetEnabled and Close
 	srv *remote.Server
 	cur atomic.Pointer[remote.Server] // srv, for Notify and URLs from any goroutine
 }
 
-// SetEnabled starts the server on 0.0.0.0:<port> or stops it. Starting a
+// SetEnabled starts the server on <bind>:<port> (every interface unless
+// bind says otherwise) or stops it. Starting a
 // running server, or stopping a stopped one, does nothing. The error of a
 // failed start is short and safe to show on the TV.
 func (h *remoteHost) SetEnabled(on bool) error {
@@ -40,7 +42,7 @@ func (h *remoteHost) SetEnabled(on bool) error {
 		return nil
 	}
 	srv := remote.New(h.ctl, remote.Options{Hostnames: webguard.Hostnames(), Log: log.Printf})
-	if err := srv.Listen(net.JoinHostPort("0.0.0.0", strconv.Itoa(h.port))); err != nil {
+	if err := srv.Listen(h.listenAddr()); err != nil {
 		log.Printf("remote: %v", err)
 		if errors.Is(err, syscall.EADDRINUSE) {
 			return fmt.Errorf("port %d is in use", h.port)
@@ -51,6 +53,14 @@ func (h *remoteHost) SetEnabled(on bool) error {
 	h.cur.Store(srv)
 	log.Printf("remote: listening on %v", srv.URLs())
 	return nil
+}
+
+func (h *remoteHost) listenAddr() string {
+	bind := h.bind
+	if bind == "" {
+		bind = "0.0.0.0"
+	}
+	return net.JoinHostPort(bind, strconv.Itoa(h.port))
 }
 
 func (h *remoteHost) stopLocked() {
