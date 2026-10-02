@@ -357,13 +357,9 @@ func (a *App) resolve(ctx context.Context, r *liveRefs, p remote.PlayRequest) ([
 		if err != nil {
 			return nil, err
 		}
-		var songs []subsonic.Song
-		for _, al := range ar.Albums {
-			full, err := r.lib.GetAlbum(ctx, al.ID)
-			if err != nil {
-				return nil, err
-			}
-			songs = append(songs, full.Songs...)
+		songs, err := artistSongsOf(r.lib, ar.Albums)
+		if err != nil {
+			return nil, err
 		}
 		a.seen.add(songs)
 		return songs, nil
@@ -396,6 +392,85 @@ func (a *App) resolve(ctx context.Context, r *liveRefs, p remote.PlayRequest) ([
 		return out, nil
 	}
 	return nil, errors.New("remote: unknown play request " + p.What)
+}
+
+// artistFetchers is how many of an artist's albums are fetched at once.
+const artistFetchers = 4
+
+// artistSongsOf is the songs of albums in order, at most remote.MaxPlay (the
+// cap the server puts on a play request). The albums are fetched a few at a
+// time, each under its own remoteLibTimeout, so a big artist on a slow server
+// is not cut off by one budget for all of them. Albums past the cap are not
+// fetched.
+func artistSongsOf(lib Library, albums []subsonic.Album) ([]subsonic.Song, error) {
+	type result struct {
+		songs []subsonic.Song
+		err   error
+		done  bool
+	}
+	res := make([]result, len(albums))
+	var (
+		mu   sync.Mutex
+		next int
+		have int // songs in the leading run of finished albums
+		stop bool
+		wg   sync.WaitGroup
+	)
+	for range min(artistFetchers, len(albums)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				if stop || next >= len(albums) {
+					mu.Unlock()
+					return
+				}
+				i := next
+				next++
+				mu.Unlock()
+				ctx, cancel := context.WithTimeout(context.Background(), remoteLibTimeout)
+				full, err := lib.GetAlbum(ctx, albums[i].ID)
+				cancel()
+				mu.Lock()
+				res[i].done, res[i].err = true, err
+				if err == nil {
+					res[i].songs = full.Songs
+				}
+				// Once the albums from the start already hold enough, or one failed, stop.
+				have = 0
+				for j := range res {
+					if !res[j].done {
+						break
+					}
+					if res[j].err != nil {
+						stop = true
+						break
+					}
+					if have += len(res[j].songs); have >= remote.MaxPlay {
+						stop = true
+						break
+					}
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	var songs []subsonic.Song
+	for _, r := range res {
+		if !r.done {
+			break
+		}
+		if r.err != nil {
+			return nil, r.err
+		}
+		songs = append(songs, r.songs...)
+		if len(songs) >= remote.MaxPlay {
+			return songs[:remote.MaxPlay], nil
+		}
+	}
+	return songs, nil
 }
 
 // songMemory keeps the songs the remote's library calls returned, so a play

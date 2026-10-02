@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -334,6 +335,42 @@ func TestRemotePlay(t *testing.T) {
 	}
 }
 
+// A big artist plays up to the cap the server puts on a play request, in
+// album order, however the albums were fetched.
+func TestRemotePlayBigArtistIsCapped(t *testing.T) {
+	ta, ctl, _ := remoteApp(t)
+	ta.lib.albums, ta.lib.tracks = nil, map[subsonic.ID][]subsonic.Song{}
+	for i := range 30 {
+		id := subsonic.ID(fmt.Sprintf("big-%02d", i))
+		ta.lib.albums = append(ta.lib.albums, subsonic.Album{ID: id, ArtistID: "ar-1"})
+		for j := range 50 {
+			ta.lib.tracks[id] = append(ta.lib.tracks[id], subsonic.Song{ID: subsonic.ID(fmt.Sprintf("%s-%02d", id, j)), Title: "t"})
+		}
+	}
+	var n int
+	err := ta.serve(t, func() (err error) {
+		n, err = ctl.Play(remote.PlayRequest{What: "artist", ID: "ar-1", How: "end"})
+		return
+	})
+	if err != nil || n != remote.MaxPlay || len(ta.pl.played) != remote.MaxPlay {
+		t.Fatalf("n %d, queued %d, err %v; want %d", n, len(ta.pl.played), err, remote.MaxPlay)
+	}
+	if first, last := ta.pl.played[0].ID, ta.pl.played[len(ta.pl.played)-1].ID; first != "big-00-00" || last != "big-19-49" {
+		t.Fatalf("first %s last %s", first, last)
+	}
+}
+
+// A connect lands pages that are already open on the new server's queue and state.
+func TestConnectedNotifiesTheRemote(t *testing.T) {
+	ta, _, fr := remoteApp(t)
+	fr.reset()
+	ta.Connected(ConnInfo{Info: &subsonic.ServerInfo{}}, ta.lib, ta.pl, newFakeArt())
+	got := fr.got()
+	if !slices.Contains(got, remote.QueueChanged) || !slices.Contains(got, remote.StateChanged) {
+		t.Fatalf("told %v", got)
+	}
+}
+
 // Songs by id come from what the page browsed and the queue, and anything
 // else from the server (getSong): the page may show results from before an
 // app restart. An id the server doesn't know is a not-found error.
@@ -527,6 +564,24 @@ func TestRemoteNotifiedOfTheButtons(t *testing.T) {
 	ta.toggleMute()
 	if !slices.Contains(fr.got(), remote.StateChanged) {
 		t.Fatalf("mute: told %v", fr.got())
+	}
+}
+
+// A seek made on the TV (the Now Playing screen's left and right, or the
+// keyboard's media keys) moves the position the pages show.
+func TestRemoteNotifiedOfASeekOnTheTV(t *testing.T) {
+	ta, _, fr := remoteApp(t)
+	ta.Push(NewNowPlayingScreen())
+	fr.reset()
+	ta.press(input.BtnRight)
+	if !slices.Contains(fr.got(), remote.StateChanged) {
+		t.Fatalf("Now Playing seek: told %v", fr.got())
+	}
+	fr.reset()
+	ta.pl.st.Position = time.Minute
+	ta.press(input.BtnSeekFwd)
+	if !slices.Contains(fr.got(), remote.StateChanged) {
+		t.Fatalf("media-key seek: told %v", fr.got())
 	}
 }
 

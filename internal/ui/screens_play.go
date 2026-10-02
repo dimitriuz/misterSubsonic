@@ -1,12 +1,12 @@
 package ui
 
 import (
-	"mistersubsonic/internal/remote"
 	"time"
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
 	"mistersubsonic/internal/player"
+	"mistersubsonic/internal/remote"
 	"mistersubsonic/internal/subsonic"
 )
 
@@ -84,7 +84,7 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 		return
 	}
 	if (b == input.BtnLeft || b == input.BtnRight || b == input.BtnSeekBack || b == input.BtnSeekFwd) && s.unsent && s.song == s.curID(a.Player().State()) {
-		s.send(a.Player(), a.o.Now())
+		s.send(a, a.Player(), a.o.Now())
 		a.dirty = true
 	}
 }
@@ -94,7 +94,7 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 // the pending target is forgotten, so it can't outlive the hold.
 func (s *NowPlayingScreen) settle(a *App, st player.State) {
 	if s.unsent && s.song == s.curID(st) {
-		s.send(a.Player(), a.o.Now())
+		s.send(a, a.Player(), a.o.Now())
 	}
 	s.unsent, s.song = false, ""
 }
@@ -146,8 +146,9 @@ func (s *NowPlayingScreen) curID(st player.State) subsonic.ID {
 	return song.ID
 }
 
-func (s *NowPlayingScreen) send(pl Player, now time.Time) {
+func (s *NowPlayingScreen) send(a *App, pl Player, now time.Time) {
 	pl.Seek(s.target)
+	a.notifyRemote(remote.StateChanged) // a seek sends no player event
 	s.unsent, s.lastSeek = false, now
 }
 
@@ -189,7 +190,7 @@ func (s *NowPlayingScreen) Handle(a *App, e input.Event) bool {
 		s.target = s.clamp(s.position(a, st, now)+step, st)
 		s.song, s.unsent = s.curID(st), true
 		if e.Kind == input.Press || now.Sub(s.lastSeek) >= seekEvery {
-			s.send(pl, now)
+			s.send(a, pl, now)
 		}
 		return true
 	}

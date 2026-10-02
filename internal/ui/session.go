@@ -104,6 +104,8 @@ func (a *App) Connected(info ConnInfo, lib Library, pl Player, art ArtSource) {
 	a.publishStars()
 	a.Replace(NewRootScreen(a.P))
 	a.drainInput()
+	a.notifyRemote(remote.QueueChanged) // open pages show the new connection's queue and state
+	a.notifyRemote(remote.StateChanged)
 }
 
 // ConnectFailed shows why the server couldn't be reached and what to do.
