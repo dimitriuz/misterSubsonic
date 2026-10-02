@@ -111,6 +111,7 @@ type PlayRequest struct {
 const (
 	minVolumeDB = -60
 	maxPlayIDs  = 1000
+	MaxPlay     = maxPlayIDs // most songs one play request may start with (the UI caps an artist at it)
 )
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +304,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(code)
 	w.Write(append(b, '\n'))
 }

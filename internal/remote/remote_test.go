@@ -625,11 +625,11 @@ func TestSSEHeartbeat(t *testing.T) {
 	for {
 		select {
 		case l := <-st.all:
-			if strings.HasPrefix(l, ":") {
+			if l == "event: ping" {
 				return
 			}
 		case <-deadline:
-			t.Fatal("no heartbeat comment")
+			t.Fatal("no ping event")
 		}
 	}
 }
@@ -642,14 +642,14 @@ func TestSSECapAndDisconnect(t *testing.T) {
 	b.next(t)
 	waitClients(t, s, 2)
 
-	resp, err := http.Get(url + "/api/events")
-	if err != nil {
-		t.Fatal(err)
+	// Over the cap the answer is a short stream with one "full" event, so the
+	// page (which can't read an EventSource status) can tell the user why.
+	f9 := open(t, url)
+	if e := f9.next(t); e.name != "full" {
+		t.Fatalf("over the cap: %+v", e)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 503 || !strings.Contains(string(body), `"error"`) {
-		t.Fatalf("over the cap: %d %s", resp.StatusCode, body)
+	if _, ok := <-f9.ev; ok {
+		t.Fatal("the full stream did not end")
 	}
 
 	a.resp.Body.Close() // a disconnects
@@ -727,5 +727,78 @@ func TestNotifyWithoutClientsIsCheap(t *testing.T) {
 	s := New(newFake(), Options{})
 	for i := 0; i < 100000; i++ {
 		s.Notify(StateChanged)
+	}
+}
+
+func TestCrossSiteGetsRefused(t *testing.T) {
+	srv, f := browse(&fakeLib{})
+	h := srv.Handler()
+	f.cover = func(ctx context.Context, id string, size int) ([]byte, string, error) {
+		return []byte("\xff\xd8jpeg"), "image/jpeg", nil
+	}
+	for _, path := range []string{"/api/state", "/api/cover/x", "/api/search?q=ab", "/api/albums?list=recent"} {
+		for _, tc := range []struct {
+			name string
+			hdr  map[string]string
+			code int
+		}{
+			{"cross-site", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+			{"same-site", map[string]string{"Sec-Fetch-Site": "same-site"}, 403},
+			{"foreign origin", map[string]string{"Origin": "http://evil.example"}, 403},
+			{"origin null", map[string]string{"Origin": "null"}, 403},
+			{"same-origin", map[string]string{"Sec-Fetch-Site": "same-origin"}, 200},
+			{"typed address", map[string]string{"Sec-Fetch-Site": "none"}, 200},
+			{"same origin header", map[string]string{"Origin": "http://192.168.1.50:8080"}, 200},
+			{"no headers", nil, 200},
+		} {
+			if w := do(h, "GET", path, "", tc.hdr); w.Code != tc.code {
+				t.Errorf("%s %s: %d, want %d", path, tc.name, w.Code, tc.code)
+			}
+		}
+	}
+	// The events stream is guarded the same way (a refused one never joins).
+	if w := do(h, "GET", "/api/events", "", map[string]string{"Sec-Fetch-Site": "cross-site"}); w.Code != 403 {
+		t.Errorf("events cross-site: %d", w.Code)
+	}
+	// The page itself stays open: a link from another site may open it.
+	for _, p := range []string{"/", "/app.js", "/app.css"} {
+		if w := do(h, "GET", p, "", map[string]string{"Sec-Fetch-Site": "cross-site"}); w.Code != 200 {
+			t.Errorf("%s cross-site: %d", p, w.Code)
+		}
+	}
+}
+
+func TestJSONNosniff(t *testing.T) {
+	h := New(newFake(), Options{}).Handler()
+	for _, w := range []*httptest.ResponseRecorder{
+		do(h, "GET", "/api/state", "", nil),
+		do(h, "GET", "/api/queue", "", nil),
+		do(h, "GET", "/api/nope", "", nil),
+		do(h, "POST", "/api/cmd", `{"do":"bogus"}`, nil),
+	} {
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%d: nosniff %q", w.Code, got)
+		}
+	}
+}
+
+// A body that never finishes is cut off by the read deadline.
+func TestPostBodyReadDeadline(t *testing.T) {
+	f := newFake()
+	s := New(f, Options{})
+	s.bodyTimeout = 200 * time.Millisecond
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /api/cmd HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"do\":")
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	start := time.Now()
+	b, _ := io.ReadAll(conn) // ends when the server answers and closes
+	if time.Since(start) > 2*time.Second || f.ncmds() != 0 {
+		t.Fatalf("the trickled body held the connection %v (%d commands, %q)", time.Since(start), f.ncmds(), b)
 	}
 }

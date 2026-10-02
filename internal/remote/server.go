@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,7 +22,7 @@ import (
 type Options struct {
 	MaxClients int           // open event streams allowed; default 8
 	Tick       time.Duration // position event period while playing; default 1 s
-	Heartbeat  time.Duration // comment line period on idle streams; default 15 s
+	Heartbeat  time.Duration // period of the ping event on every stream; default 15 s
 	Hostnames  []string      // extra Host names accepted besides IPs and localhost
 	Log        func(format string, args ...any)
 }
@@ -54,7 +55,8 @@ type Server struct {
 	done    chan struct{}
 	closed  bool
 
-	libTimeout time.Duration // per library or cover call
+	libTimeout  time.Duration // per library or cover call
+	bodyTimeout time.Duration // a POST body must arrive within this
 
 	logMu   sync.Mutex
 	lastLog map[string]time.Time
@@ -84,15 +86,16 @@ func New(ctl Controller, opts Options) *Server {
 		opts.Heartbeat = 15 * time.Second
 	}
 	s := &Server{
-		ctl:        ctl,
-		opts:       opts,
-		mux:        http.NewServeMux(),
-		clients:    map[*client]struct{}{},
-		done:       make(chan struct{}),
-		lastLog:    map[string]time.Time{},
-		libTimeout: defaultLibTimeout,
-		now:        time.Now,
-		ifaces:     net.InterfaceAddrs,
+		ctl:         ctl,
+		opts:        opts,
+		mux:         http.NewServeMux(),
+		clients:     map[*client]struct{}{},
+		done:        make(chan struct{}),
+		lastLog:     map[string]time.Time{},
+		libTimeout:  defaultLibTimeout,
+		bodyTimeout: 10 * time.Second,
+		now:         time.Now,
+		ifaces:      net.InterfaceAddrs,
 	}
 	s.mux.HandleFunc("GET /api/state", s.handleState)
 	s.mux.HandleFunc("GET /api/queue", s.handleQueue)
@@ -120,11 +123,17 @@ func New(ctl Controller, opts Options) *Server {
 func (s *Server) Handler() http.Handler { return http.HandlerFunc(s.guarded) }
 
 // guarded applies the checks every route needs: the Host header against DNS
-// rebinding, and for POSTs a JSON content type and a same-origin Origin
-// against cross-site requests, then caps the body.
+// rebinding; for every /api/ request (GETs too, or any site could fill the
+// event slots and make the server resize covers) a same-origin Sec-Fetch-Site
+// and Origin; for POSTs also a JSON content type. It then caps the body and
+// gives it a read deadline. The page itself (/, /app.js, /app.css) is open.
 func (s *Server) guarded(w http.ResponseWriter, r *http.Request) {
 	if !webguard.HostAllowed(r.Host, s.opts.Hostnames...) {
 		s.reject(w, "unexpected Host header")
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") && !webguard.SameOrigin(r) {
+		s.reject(w, "request from another origin")
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -132,10 +141,10 @@ func (s *Server) guarded(w http.ResponseWriter, r *http.Request) {
 			s.reject(w, "POST without a JSON content type")
 			return
 		}
-		if !webguard.SameOrigin(r) {
-			s.reject(w, "POST from another origin")
-			return
-		}
+		// A body that trickles in must not hold the connection. This is a
+		// per-request deadline, not a server ReadTimeout, which would also
+		// cut the event streams' idle reads.
+		http.NewResponseController(w).SetReadDeadline(time.Now().Add(s.bodyTimeout))
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	}
 	s.mux.ServeHTTP(w, r)
@@ -274,17 +283,26 @@ func (s *Server) leave(c *client) {
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
-	c, ok := s.join()
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "too many open remotes")
-		return
-	}
-	defer s.leave(c)
-
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
+	c, ok := s.join()
+	if !ok {
+		select {
+		case <-s.done:
+			writeError(w, http.StatusServiceUnavailable, "shutting down")
+			return
+		default:
+		}
+		// A page can't read an EventSource's status code, so a full server
+		// answers with a stream of one "full" event and ends it; the page
+		// shows why it can't connect.
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "event: full\ndata: {}\n\n")
+		return
+	}
+	defer s.leave(c)
 	w.WriteHeader(http.StatusOK)
 
 	send := func(event string, v any) bool {
@@ -327,7 +345,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-beat.C:
 			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
-			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil || rc.Flush() != nil {
+			// A named event, not a comment: the page can't see comments, and
+			// its watchdog needs to hear something from a quiet stream.
+			if _, err := fmt.Fprint(w, "event: ping\ndata: {}\n\n"); err != nil || rc.Flush() != nil {
 				return
 			}
 		}

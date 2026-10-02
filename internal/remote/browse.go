@@ -22,14 +22,16 @@ const (
 	searchArtists     = 20
 	searchAlbums      = 20
 	searchSongs       = 50
-	minCover          = 64
-	maxCover          = 600
 	defaultCover      = 300
 	maxCoverBytes     = 8 << 20
 	maxQueryRunes     = 200
 	maxIDBytes        = 256
 	maxOffset         = 100000
 )
+
+// coverSizes are the only sizes asked of the server (the nearest at or above
+// the request; the last is the largest), so its cache holds few variants.
+var coverSizes = []int{96, 200, 300, 500, 600}
 
 // coverTypes are the only types a cover may be served as. Anything else, such
 // as HTML or SVG, would run as part of the page's own origin.
@@ -329,7 +331,13 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	size := defaultCover
 	if v := r.URL.Query().Get("size"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			size = max(minCover, min(maxCover, n))
+			size = coverSizes[len(coverSizes)-1]
+			for _, c := range coverSizes {
+				if n <= c {
+					size = c
+					break
+				}
+			}
 		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.libTimeout)

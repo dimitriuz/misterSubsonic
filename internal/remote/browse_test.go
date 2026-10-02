@@ -282,7 +282,9 @@ func TestCover(t *testing.T) {
 	if cc := w.Header().Get("Cache-Control"); cc != "max-age=86400" {
 		t.Fatalf("Cache-Control %q", cc)
 	}
-	for q, want := range map[string]int{"": 300, "?size=10": 64, "?size=64": 64, "?size=200": 200, "?size=600": 600, "?size=5000": 600, "?size=-3": 64, "?size=abc": 300} {
+	// Sizes snap up to a few buckets so the server's cache doesn't fill with variants.
+	for q, want := range map[string]int{"": 300, "?size=10": 96, "?size=64": 96, "?size=96": 96, "?size=97": 200, "?size=150": 200, "?size=200": 200,
+		"?size=201": 300, "?size=301": 500, "?size=500": 500, "?size=501": 600, "?size=600": 600, "?size=5000": 600, "?size=-3": 96, "?size=abc": 300} {
 		do(s.Handler(), "GET", "/api/cover/c1"+q, "", nil)
 		if c.size != want {
 			t.Errorf("size%s: got %d want %d", q, c.size, want)
