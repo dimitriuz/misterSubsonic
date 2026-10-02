@@ -54,6 +54,8 @@ type Server struct {
 	done    chan struct{}
 	closed  bool
 
+	libTimeout time.Duration // per library or cover call
+
 	logMu   sync.Mutex
 	lastLog map[string]time.Time
 
@@ -82,20 +84,32 @@ func New(ctl Controller, opts Options) *Server {
 		opts.Heartbeat = 15 * time.Second
 	}
 	s := &Server{
-		ctl:     ctl,
-		opts:    opts,
-		mux:     http.NewServeMux(),
-		clients: map[*client]struct{}{},
-		done:    make(chan struct{}),
-		lastLog: map[string]time.Time{},
-		now:     time.Now,
-		ifaces:  net.InterfaceAddrs,
+		ctl:        ctl,
+		opts:       opts,
+		mux:        http.NewServeMux(),
+		clients:    map[*client]struct{}{},
+		done:       make(chan struct{}),
+		lastLog:    map[string]time.Time{},
+		libTimeout: defaultLibTimeout,
+		now:        time.Now,
+		ifaces:     net.InterfaceAddrs,
 	}
 	s.mux.HandleFunc("GET /api/state", s.handleState)
 	s.mux.HandleFunc("GET /api/queue", s.handleQueue)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("POST /api/cmd", s.handleCmd)
 	s.mux.HandleFunc("POST /api/play", s.handlePlay)
+	s.mux.HandleFunc("GET /api/artists", s.handleArtists)
+	s.mux.HandleFunc("GET /api/artist/{id}", s.handleArtist)
+	s.mux.HandleFunc("GET /api/albums", s.handleAlbums)
+	s.mux.HandleFunc("GET /api/album/{id}", s.handleAlbum)
+	s.mux.HandleFunc("GET /api/playlists", s.handlePlaylists)
+	s.mux.HandleFunc("GET /api/playlist/{id}", s.handlePlaylist)
+	s.mux.HandleFunc("GET /api/starred", s.handleStarred)
+	s.mux.HandleFunc("GET /api/genres", s.handleGenres)
+	s.mux.HandleFunc("GET /api/genre/{name}", s.handleGenre)
+	s.mux.HandleFunc("GET /api/search", s.handleSearch)
+	s.mux.HandleFunc("GET /api/cover/{id}", s.handleCover)
 	return s
 }
 
