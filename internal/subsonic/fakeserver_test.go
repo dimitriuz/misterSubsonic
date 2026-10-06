@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,7 +23,8 @@ type fakeServer struct {
 	apiKey           string // "" means the server doesn't support API keys (error 42)
 	tokenUnsupported bool   // answer token auth with error 41 (LDAP-style users)
 	override         map[string]string
-	postStatus       int // when set, answer POSTs with this HTTP status and no body
+	postStatus       int               // when set, answer POSTs with this HTTP status and no body
+	postOverride     map[string]string // endpoint to a JSON body, for POSTs only
 
 	lastMethod map[string]string // endpoint -> the method of its last request
 	lastType   map[string]string // endpoint -> the Content-Type of its last request
@@ -84,6 +86,14 @@ func (s *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if r.Method == http.MethodPost && s.postStatus != 0 {
 		w.WriteHeader(s.postStatus)
+		return
+	}
+	s.mu.Lock()
+	po := s.postOverride[endpoint]
+	s.mu.Unlock()
+	if r.Method == http.MethodPost && po != "" {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, po)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -222,12 +222,19 @@ func (c *Client) SavePlayQueue(ctx context.Context, ids []ID, current ID, pos ti
 	c.mu.Unlock()
 	if getOnly {
 		_, err := c.call(ctx, "savePlayQueue", v)
+		if err != nil {
+			// The way back: the next save tries POST again.
+			c.mu.Lock()
+			c.getOnly = false
+			c.mu.Unlock()
+		}
 		return err
 	}
 	_, err := c.callPost(ctx, "savePlayQueue", v)
 	if postUnsupported(err) {
+		postErr := err
 		_, err = c.call(ctx, "savePlayQueue", v)
-		if err == nil {
+		if err == nil && postRefusedByStatus(postErr) {
 			c.mu.Lock()
 			c.getOnly = true
 			c.mu.Unlock()
@@ -253,4 +260,12 @@ func postUnsupported(err error) bool {
 		return Classify(err) == KindOther
 	}
 	return false
+}
+
+// postRefusedByStatus reports whether err is the HTTP status of a server that
+// does not take a POST there. Only that is worth remembering; a Subsonic error
+// may be a one-off.
+func postRefusedByStatus(err error) bool {
+	var he *HTTPError
+	return errors.As(err, &he)
 }

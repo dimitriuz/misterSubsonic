@@ -285,3 +285,37 @@ func TestSavePlayQueueFallsBackOnASubsonicError(t *testing.T) {
 		t.Fatalf("a generic error did not fall back; last method %s", m)
 	}
 }
+
+const subsonicGenericError = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"use GET"}}}`
+
+// A Subsonic error on the POST is a one-off: the next save tries POST again.
+func TestSavePlayQueueDoesNotStickToGetAfterASubsonicError(t *testing.T) {
+	s, c := connected(t)
+	s.postOverride = map[string]string{"savePlayQueue": subsonicGenericError}
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET POST GET" {
+		t.Fatalf("requests = %q, want POST tried each time", got)
+	}
+}
+
+// When a GET fails after the client stuck to GET, it goes back to POST.
+func TestSavePlayQueueGoesBackToPostWhenTheStickyGetFails(t *testing.T) {
+	s, c := connected(t)
+	s.postStatus = http.StatusMethodNotAllowed
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	s.override["savePlayQueue"] = subsonicGenericError
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err == nil {
+		t.Fatal("want the error")
+	}
+	s.postStatus = 0
+	delete(s.override, "savePlayQueue")
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET GET POST" {
+		t.Fatalf("requests = %q", got)
+	}
+}
