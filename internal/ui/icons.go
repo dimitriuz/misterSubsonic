@@ -64,13 +64,26 @@ func starPoints(r gfx.Rect) [][2]float64 {
 	return pts
 }
 
+// polyRows counts the scanlines fillPolygon worked on (a test reads it to
+// see that shapes outside the clip cost nothing).
+var polyRows int
+
 // fillPolygon fills the pixels whose centres are inside pts (even-odd rule).
+// Rows and columns outside the canvas clip are skipped before any maths: a
+// partial frame draws the whole screen clipped, so most shapes are outside.
 func fillPolygon(c *gfx.Canvas, pts [][2]float64, col gfx.Color) {
-	minY, maxY := pts[0][1], pts[0][1]
+	minX, maxX, minY, maxY := pts[0][0], pts[0][0], pts[0][1], pts[0][1]
 	for _, p := range pts {
+		minX, maxX = math.Min(minX, p[0]), math.Max(maxX, p[0])
 		minY, maxY = math.Min(minY, p[1]), math.Max(maxY, p[1])
 	}
-	for y := int(minY); y <= int(maxY); y++ {
+	clip := c.Clip()
+	if clip.Empty() || maxX+1 < float64(clip.X) || minX-1 > float64(clip.Right()) ||
+		maxY < float64(clip.Y) || minY > float64(clip.Bottom()) {
+		return
+	}
+	for y := max(int(minY), clip.Y); y <= min(int(maxY), clip.Bottom()-1); y++ {
+		polyRows++
 		py := float64(y) + 0.5
 		var xbuf [16]float64 // on the stack: no allocation per scanline
 		xs := xbuf[:0]

@@ -172,7 +172,11 @@ func (a *App) drawHints(c *gfx.Canvas) {
 	if r.Empty() {
 		return
 	}
-	c.Fill(gfx.R(r.X, r.Y, r.W, a.P.H-r.Y), colPanel) // to the bottom edge, past the safe area
+	bar := gfx.R(r.X, r.Y, r.W, a.P.H-r.Y) // to the bottom edge, past the safe area
+	if bar.Intersect(c.Clip()).Empty() {   // a partial frame elsewhere: no layout either
+		return
+	}
+	c.Fill(bar, colPanel)
 	f := a.F.Small
 	p := a.P
 	pad := max(p.Margin/4, 2)
