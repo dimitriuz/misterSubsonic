@@ -18,6 +18,7 @@ func runFor(t *testing.T, ta *testApp, d time.Duration) {
 // budget of 30 fps, though over the old 30% step-up rule's 10 ms.
 func TestVizValveStepsUpWhenTheCostFitsTheFasterBudget(t *testing.T) {
 	ta := vizApp(t, ProfileHDMI, VizBars)
+	ta.verify = false // the valve is the subject; many frames
 	cost := 100 * time.Millisecond
 	ta.o.Display = slowDisplay{ta.disp, ta, &cost}
 	runFor(t, ta, 8*time.Second)
@@ -46,7 +47,8 @@ func TestVizValveStepsUpWhenTheCostFitsTheFasterBudget(t *testing.T) {
 // rate when the picture changes size, measurements cleared.
 func TestVizValveStartsAgainWhenThePanelChangesSize(t *testing.T) {
 	for _, toFull := range []bool{false, true} {
-		ta := vizApp(t, PickProfile(1920, 1200, "auto"), VizBars)
+		ta := vizApp(t, ProfileHDMI, VizBars)
+		ta.verify = false
 		if !toFull {
 			ta.press(input.BtnStart)
 			ta.settle(t)
