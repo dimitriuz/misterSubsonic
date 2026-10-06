@@ -57,11 +57,14 @@ func TestLongQueueIsWrittenOnceWhilePlaying(t *testing.T) {
 	h.p.PlayNow(songs(600, 3000), 5)
 	a := h.playAndStart(1)
 	runFor(h, a.ID, 0, 2*time.Minute)
+	h.settle()
 	if got := w.get("state.json"); got != 1 {
 		t.Fatalf("queue file written %d times in 2 minutes, want 1", got)
 	}
-	if got := w.get("position.json"); got < 4 || got > 5 {
-		t.Fatalf("position file written %d times in 2 minutes, want 4 or 5", got)
+	// Four or five saves, and one more write when the first server save's
+	// result turns the synced flag on.
+	if got := w.get("position.json"); got < 5 || got > 6 {
+		t.Fatalf("position file written %d times in 2 minutes, want 5 or 6", got)
 	}
 	r, err := LoadResume(h.p.o.ResumePath)
 	if err != nil || r == nil || len(r.Songs) != 600 || r.Index != 5 || r.Position < 85*time.Second {
@@ -86,7 +89,6 @@ func TestEveryQueueChangeWritesTheQueueFileOnce(t *testing.T) {
 		{"play next", false, func(p *Player) { p.PlayNext(songs(2, 100)) }},
 		{"remove", false, func(p *Player) { p.Remove(3) }},
 		{"move", false, func(p *Player) { p.Move(4, 1) }},
-		{"jump", true, func(p *Player) { p.Jump(3) }},
 		{"play now", true, func(p *Player) { p.PlayNow(songs(4, 100), 1) }},
 	}
 	for _, op := range ops {
@@ -95,11 +97,14 @@ func TestEveryQueueChangeWritesTheQueueFileOnce(t *testing.T) {
 			h.p.PlayNow(songs(6, 3000), 0)
 			a := h.playAndStart(1)
 			h.tickAt(a.ID, time.Second)
+			h.settle()
 			if w.get("state.json") != 1 {
 				t.Fatalf("first save wrote the queue %d times", w.get("state.json"))
 			}
 			savedAgain(h, a.ID) // nothing changed: position only
-			if w.get("state.json") != 1 || w.get("position.json") != 2 {
+			h.settle()
+			// The position file: the first save, the synced flag, this save.
+			if w.get("state.json") != 1 || w.get("position.json") != 3 {
 				t.Fatalf("unchanged queue: %d queue writes, %d position writes", w.get("state.json"), w.get("position.json"))
 			}
 			op.do(h.p)
@@ -107,10 +112,12 @@ func TestEveryQueueChangeWritesTheQueueFileOnce(t *testing.T) {
 				h.playAndStart(2)
 			}
 			savedAgain(h, h.eng.lastPlayed().ID)
+			h.settle()
 			if got := w.get("state.json"); got != 2 {
 				t.Fatalf("after %s the queue file was written %d times in all, want 2", op.name, got)
 			}
 			savedAgain(h, h.eng.lastPlayed().ID)
+			h.settle()
 			if got := w.get("state.json"); got != 2 {
 				t.Fatalf("a second save rewrote the queue (%d)", got)
 			}
@@ -139,6 +146,7 @@ func TestExitWritesWhatChanged(t *testing.T) {
 	h.p.PlayNow(songs(3, 3000), 0)
 	a := h.playAndStart(1)
 	h.tickAt(a.ID, time.Second) // first save: both files
+	h.settle()
 	h.p.Enqueue(songs(1, 100))
 	h.cancel()
 	<-h.done
@@ -304,9 +312,10 @@ func TestResumePrefersTheMatchingLocalQueue(t *testing.T) {
 			t.Fatalf("resumable = %+v, %v", r, err)
 		}
 	})
-	t.Run("they differ: the server's", func(t *testing.T) {
+	t.Run("they differ and the local one is synced: the server's", func(t *testing.T) {
 		h := newHarness(t, nil)
 		SaveResume(h.p.o.ResumePath, Resume{Songs: q, Index: 7, Position: 20 * time.Second})
+		SavePosition(h.p.o.ResumePath, SavedPosition{ID: q[7].ID, Index: 7, Position: 20 * time.Second, Synced: true})
 		h.api.queue = &subsonic.PlayQueue{Songs: q[:5], Current: q[4].ID, Position: 3000}
 		r, _ := h.p.Resumable(t.Context())
 		if len(r.Songs) != 5 || r.Index != 4 || r.Position != 3*time.Second {

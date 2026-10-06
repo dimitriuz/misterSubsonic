@@ -149,6 +149,8 @@ type fakeAPI struct {
 	saveCur   subsonic.ID
 	savePos   time.Duration
 	queue     *subsonic.PlayQueue
+	failSaves bool          // SavePlayQueue fails
+	blockSave chan struct{} // SavePlayQueue waits for this to close
 }
 
 func (a *fakeAPI) Scrobble(_ context.Context, id subsonic.ID, _ time.Time, sub bool) error {
@@ -163,7 +165,16 @@ func (a *fakeAPI) Scrobble(_ context.Context, id subsonic.ID, _ time.Time, sub b
 }
 func (a *fakeAPI) SavePlayQueue(_ context.Context, ids []subsonic.ID, cur subsonic.ID, pos time.Duration) error {
 	a.mu.Lock()
+	block := a.blockSave
+	a.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.failSaves {
+		return errors.New("server down")
+	}
 	a.saves = append(a.saves, ids)
 	a.saveCur, a.savePos = cur, pos
 	return nil
@@ -340,4 +351,19 @@ func songs(n int, durationSec int) []subsonic.Song {
 		out[i] = subsonic.Song{ID: subsonic.ID("s" + string(rune('a'+i))), Title: "Song " + string(rune('A'+i)), Suffix: "flac", Duration: durationSec}
 	}
 	return out
+}
+
+// settle waits until every background save has reported back and the player
+// has handled the reports.
+func (h *harness) settle() {
+	h.t.Helper()
+	h.waitFor("background saves", func() bool { return h.p.busy.Load() == 0 })
+	h.p.do(func() {})
+}
+
+// idleTick runs one tick with no engine movement, 31 s later on the clock.
+func (h *harness) idleTick() {
+	h.clock.advance(31 * time.Second)
+	h.tick <- h.clock.now()
+	h.p.do(func() {})
 }

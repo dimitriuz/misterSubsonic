@@ -5,12 +5,14 @@ package player
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"math"
 	"math/rand/v2"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mistersubsonic/internal/audio"
@@ -182,9 +184,28 @@ type Player struct {
 	openSeek    time.Duration
 	hasOpenSeek bool
 
-	queueGen  uint64            // bumped whenever the queue changes
-	savedGen  uint64            // the queueGen the queue file holds
-	writeHook func(path string) // tests: called after each local file write
+	queueGen      uint64                            // bumped whenever the queue changes
+	savedGen      uint64                            // the queueGen the queue file holds
+	writeHook     func(path string)                 // tests: called after each local file write
+	busy          atomic.Int32                      // background saves not yet reported back
+	corruptLogged atomic.Bool                       // the corrupt local queue file was logged
+	writeFile     func(path string, b []byte) error // tests: replaces the queue file's write
+
+	writingGen uint64        // the queueGen of the queue-file write handed to the writer
+	stateLoads atomic.Uint64 // queue-file writes started: a Resume from the local file is stale after one
+	fileMu     sync.Mutex    // held while the writer writes the queue file
+	jobMu      sync.Mutex
+	job        *fileJob // the newest queue-file write not yet started
+	jobRunning bool
+
+	// What the server's saved queue is known to hold (the last save that
+	// succeeded), and what the files and the server were last given.
+	srv      srvState
+	lastSrv  srvKey
+	srvKnown bool
+	posRec   SavedPosition // the position file as written
+	posGen   uint64        // the queueGen it was written at
+	posOK    bool
 }
 
 func New(o Options) *Player {
@@ -469,8 +490,7 @@ func (p *Player) Jump(i int) {
 		p.failures = 0 // a user action starts a fresh failure count
 		for oi, qi := range p.order {
 			if qi == i {
-				p.queueGen++ // the queue file keeps the index too
-				p.startAt(oi, 0)
+				p.startAt(oi, 0) // the position file keeps the index
 				return
 			}
 		}
@@ -628,24 +648,40 @@ const serverLead = 45 * time.Second
 
 // Resumable finds a saved queue. The local queue (the whole of it) is used
 // when its current song is the server's current song, taking the server's
-// position if that is clearly later. When they differ (the user played
-// elsewhere) the server's queue is used; with no server queue, the local one.
+// position if that is clearly later. When they differ there are two cases.
+// If the last save to the server succeeded for the local state (it is
+// "synced"), the user played elsewhere and the server's queue is used. If
+// not, the server's queue is only what an earlier save left there (saves may
+// have been failing for a long time) and the local one is used. With no
+// server queue, the local one.
 func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
 	var local *Resume
 	var localErr error
 	if p.o.ResumePath != "" {
+		loads := p.stateLoads.Load()
 		local, localErr = LoadResume(p.o.ResumePath)
+		if local != nil {
+			local.local, local.loads = true, loads
+		}
+		if localErr != nil && p.corruptLogged.CompareAndSwap(false, true) {
+			log.Printf("player: the local queue file is unreadable: %v", localErr)
+		}
 	}
 	pq, err := p.o.API.GetPlayQueue(ctx)
 	if err != nil || pq == nil || len(pq.Songs) == 0 {
 		return local, localErr
 	}
 	srvPos := time.Duration(pq.Position) * time.Millisecond
-	if local != nil && local.Songs[local.Index].ID == pq.Current {
-		if srvPos > local.Position+serverLead {
-			local.Position = srvPos
+	if local != nil {
+		if local.Songs[local.Index].ID == pq.Current {
+			if srvPos > local.Position+serverLead {
+				local.Position = srvPos
+			}
+			return local, nil
 		}
-		return local, nil
+		if !local.Synced {
+			return local, nil
+		}
 	}
 	r := &Resume{Songs: pq.Songs, Position: srvPos}
 	for i, s := range pq.Songs {
@@ -666,6 +702,10 @@ func (p *Player) ResumeFrom(r *Resume) {
 		p.queue = append([]subsonic.Song(nil), r.Songs...)
 		p.rebuildOrder(r.Index)
 		p.emit(Event{Kind: QueueChanged})
+		if r.local && r.loads == p.stateLoads.Load() {
+			p.savedGen = p.queueGen // the file holds this very queue
+			p.writingGen = p.queueGen
+		}
 		p.startAt(p.cursor, r.Position)
 	})
 }
@@ -1050,8 +1090,15 @@ func (p *Player) onTick() {
 		p.maybeScrobble()
 		p.maybePrefetch()
 	}
-	if (p.status == Playing || p.status == Paused) && now.Sub(p.lastSave) >= saveInterval {
-		p.saveNow(p.ctx, false)
+	if now.Sub(p.lastSave) >= saveInterval {
+		if p.status == Playing || p.status == Paused {
+			p.saveNow(p.ctx, false)
+		} else if p.queueDirty(false) {
+			// Stopped (the queue ended, or it was cleared or edited since):
+			// the queue still has to reach the disk.
+			p.lastSave = now
+			p.saveQueue(false)
+		}
 	}
 }
 
@@ -1115,47 +1162,212 @@ func (p *Player) maybeScrobble() {
 	}()
 }
 
+// srvState is what the server's saved queue is known to hold.
+type srvState struct {
+	ok  bool        // the last save succeeded
+	cur subsonic.ID // its current song
+	gen uint64      // the queueGen it was made at
+}
+
+// srvKey identifies what a server save carried.
+type srvKey struct {
+	cur    subsonic.ID
+	cursor int
+	pos    time.Duration
+	gen    uint64
+}
+
+// fileJob is a queue-file write waiting for the writer goroutine.
+type fileJob struct {
+	path string
+	b    []byte
+	gen  uint64
+}
+
+// post hands f to the player goroutine from another one; it is dropped when
+// Run has exited.
+func (p *Player) post(f func()) {
+	select {
+	case p.cmds <- f:
+	case <-p.runDone:
+	}
+}
+
+// queueDirty: the queue file is out of date (and, unless force, no write of
+// the current queue is already on its way).
+func (p *Player) queueDirty(force bool) bool {
+	return p.o.ResumePath != "" && p.queueGen != p.savedGen && (force || p.queueGen != p.writingGen)
+}
+
 // saveNow stores the position locally and on the server, and the queue
-// locally if it changed since it was last written. sync waits for the server
-// call (used on exit).
-func (p *Player) saveNow(ctx context.Context, sync bool) {
+// locally if it changed since it was last written. wait makes it synchronous
+// (used on exit).
+func (p *Player) saveNow(ctx context.Context, wait bool) {
 	p.lastSave = p.o.Now()
+	if p.queueDirty(wait) {
+		p.saveQueue(wait)
+	}
 	i := p.currentIndex()
 	if i < 0 {
-		if len(p.queue) == 0 && p.queueGen != p.savedGen {
-			p.writeEmptyQueue() // cleared: don't resume the old queue
-		}
 		return
 	}
 	songs := p.queue
 	pos := p.position
+	cur := songs[i].ID
 	if p.o.ResumePath != "" {
-		if p.queueGen != p.savedGen {
-			if err := SaveResume(p.o.ResumePath, Resume{Songs: songs, Index: i, Position: pos}); err != nil {
-				log.Printf("player: save resume: %v", err)
-			} else {
-				p.savedGen = p.queueGen
-				p.wrote(p.o.ResumePath)
-			}
-		}
-		if err := SavePosition(p.o.ResumePath, SavedPosition{ID: songs[i].ID, Index: i, Position: pos}); err != nil {
-			log.Printf("player: save position: %v", err)
-		} else {
-			p.wrote(positionPath(p.o.ResumePath))
-		}
+		p.writePosition(SavedPosition{ID: cur, Index: i, Position: pos}, p.queueGen)
+	}
+	key := srvKey{cur: cur, cursor: p.cursor, pos: pos, gen: p.queueGen}
+	if p.srvKnown && p.lastSrv == key {
+		return // the server already has exactly this
 	}
 	ids, current := serverWindow(songs, p.order, p.cursor)
-	save := func() {
+	save := func() error {
 		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if err := p.o.API.SavePlayQueue(sctx, ids, current, pos); err != nil && !errors.Is(err, context.Canceled) {
+		err := p.o.API.SavePlayQueue(sctx, ids, current, pos)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("player: savePlayQueue: %v", err)
 		}
+		return err
 	}
-	if sync {
-		save()
-	} else {
-		go save()
+	if wait {
+		p.serverSaved(key, save())
+		return
+	}
+	p.busy.Add(1)
+	go func() {
+		err := save()
+		p.post(func() { p.serverSaved(key, err) })
+		p.busy.Add(-1)
+	}()
+}
+
+// serverSaved records the result of a server save, and brings the position
+// file's synced flag in line with it.
+func (p *Player) serverSaved(k srvKey, err error) {
+	switch {
+	case err == nil:
+		p.srv = srvState{ok: true, cur: k.cur, gen: k.gen}
+		p.lastSrv, p.srvKnown = k, true
+	case errors.Is(err, context.Canceled):
+		return
+	default:
+		p.srv.ok = false
+		p.srvKnown = false
+	}
+	if p.posOK && p.o.ResumePath != "" {
+		p.writePosition(p.posRec, p.posGen) // the same record, the flag may differ
+	}
+}
+
+// writePosition writes the small position file for rec (made at queueGen
+// gen) unless it already holds exactly that. The synced flag is true only
+// when the last server save was for this very song and queue.
+func (p *Player) writePosition(rec SavedPosition, gen uint64) {
+	rec.Synced = p.srv.ok && p.srv.cur == rec.ID && p.srv.gen == gen
+	if p.posOK && p.posRec == rec {
+		return
+	}
+	if err := SavePosition(p.o.ResumePath, rec); err != nil {
+		log.Printf("player: save position: %v", err)
+		return
+	}
+	p.posRec, p.posGen, p.posOK = rec, gen, true
+	p.wrote(positionPath(p.o.ResumePath))
+}
+
+// saveQueue writes the queue file: an empty one when the queue was cleared.
+// The marshalling happens here, on the player goroutine, so the bytes are a
+// consistent snapshot; the (large) write happens on the writer goroutine
+// unless wait is set.
+func (p *Player) saveQueue(wait bool) {
+	if p.o.ResumePath == "" {
+		return
+	}
+	if len(p.queue) == 0 {
+		p.writeEmptyQueue()
+		return
+	}
+	r := Resume{Songs: p.queue}
+	if i := p.currentIndex(); i >= 0 {
+		r.Index, r.Position = i, p.position
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		log.Printf("player: save resume: %v", err)
+		return
+	}
+	job := &fileJob{path: p.o.ResumePath, b: b, gen: p.queueGen}
+	if wait {
+		p.fileMu.Lock()
+		p.jobMu.Lock()
+		p.job = nil // this write is newer
+		p.jobMu.Unlock()
+		err := p.writeQueueFile(job)
+		p.fileMu.Unlock()
+		p.queueFileWritten(job.gen, err)
+		return
+	}
+	p.writingGen = job.gen
+	p.jobMu.Lock()
+	p.job = job // replaces an older write that has not started
+	start := !p.jobRunning
+	p.jobRunning = true
+	p.jobMu.Unlock()
+	if start {
+		p.busy.Add(1)
+		go p.runJobs()
+	}
+}
+
+func (p *Player) writeQueueFile(j *fileJob) error {
+	write := p.writeFile
+	if write == nil {
+		write = writeBytesAtomic
+	}
+	err := write(j.path, j.b)
+	p.stateLoads.Add(1)
+	if err != nil {
+		return err
+	}
+	p.wrote(j.path)
+	return nil
+}
+
+// runJobs is the writer goroutine: it writes the newest pending queue file
+// until there is none. Writes are serialized with the exit path by fileMu.
+func (p *Player) runJobs() {
+	for {
+		p.fileMu.Lock()
+		p.jobMu.Lock()
+		j := p.job
+		p.job = nil
+		if j == nil {
+			p.jobRunning = false
+			p.jobMu.Unlock()
+			p.fileMu.Unlock()
+			p.busy.Add(-1)
+			return
+		}
+		p.jobMu.Unlock()
+		err := p.writeQueueFile(j)
+		p.fileMu.Unlock()
+		p.post(func() { p.queueFileWritten(j.gen, err) })
+	}
+}
+
+// queueFileWritten records the result of a queue-file write.
+func (p *Player) queueFileWritten(gen uint64, err error) {
+	if err != nil {
+		log.Printf("player: save resume: %v", err)
+		if p.writingGen == gen {
+			p.writingGen = p.savedGen // try again at the next save
+		}
+		return
+	}
+	if gen > p.savedGen {
+		p.savedGen = gen
 	}
 }
 
@@ -1166,16 +1378,21 @@ func (p *Player) wrote(path string) {
 }
 
 func (p *Player) writeEmptyQueue() {
-	if p.o.ResumePath == "" {
-		return
-	}
-	if err := SaveResume(p.o.ResumePath, Resume{}); err != nil {
+	p.fileMu.Lock()
+	p.jobMu.Lock()
+	p.job = nil
+	p.jobMu.Unlock()
+	err := SaveResume(p.o.ResumePath, Resume{})
+	p.stateLoads.Add(1)
+	p.fileMu.Unlock()
+	if err != nil {
 		log.Printf("player: save resume: %v", err)
 		return
 	}
-	p.savedGen = p.queueGen
+	p.savedGen, p.writingGen = p.queueGen, p.queueGen
 	p.wrote(p.o.ResumePath)
 	os.Remove(positionPath(p.o.ResumePath))
+	p.posOK = false
 }
 
 const (

@@ -18,6 +18,14 @@ type Resume struct {
 	Songs    []subsonic.Song `json:"songs"`
 	Index    int             `json:"index"`
 	Position time.Duration   `json:"position"`
+
+	// Synced is set by LoadResume from the position file: the server's saved
+	// queue was last brought up to this very state by a save that succeeded.
+	// local marks a Resume read from the local files by Player.Resumable;
+	// loads is the player's count of queue-file writes at that time.
+	Synced bool `json:"-"`
+	local  bool
+	loads  uint64
 }
 
 func writeJSONAtomic(path string, v any) error {
@@ -25,6 +33,11 @@ func writeJSONAtomic(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	return writeBytesAtomic(path, b)
+}
+
+// writeBytesAtomic writes b to path through a temporary file and a rename.
+func writeBytesAtomic(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -41,6 +54,9 @@ type SavedPosition struct {
 	ID       subsonic.ID   `json:"id"`
 	Index    int           `json:"index"`
 	Position time.Duration `json:"position"`
+	// Synced: the last save of this queue to the server succeeded, so the
+	// server's copy is this device's own, not another device's.
+	Synced bool `json:"synced"`
 }
 
 // positionPath is the position file that goes with the queue file at path.
@@ -66,7 +82,7 @@ func LoadResume(path string) (*Resume, error) {
 	if b, err := os.ReadFile(positionPath(path)); err == nil {
 		var sp SavedPosition
 		if json.Unmarshal(b, &sp) == nil && sp.Index >= 0 && sp.Index < len(r.Songs) && r.Songs[sp.Index].ID == sp.ID && sp.Position >= 0 {
-			r.Index, r.Position = sp.Index, sp.Position
+			r.Index, r.Position, r.Synced = sp.Index, sp.Position, sp.Synced
 		}
 	}
 	return r, nil
