@@ -1,6 +1,8 @@
 package subsonic
 
 import (
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +194,62 @@ func TestGetSongMissingIsNotFound(t *testing.T) {
 	s.override["getSong"] = `{"subsonic-response":{"status":"ok","version":"1.16.1"}}`
 	if _, err := c.GetSong(ctx, "nope"); Classify(err) != KindNotFound {
 		t.Fatalf("empty reply: err = %v", err)
+	}
+}
+
+func TestSavePlayQueuePostsAForm(t *testing.T) {
+	s, c := connected(t)
+	ids := make([]ID, 700)
+	for i := range ids {
+		ids[i] = ID(fmt.Sprintf("so-%d", i))
+	}
+	if err := c.SavePlayQueue(ctx, ids, "so-9", 61500*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	method, ct, urlq := s.request("savePlayQueue")
+	if method != "POST" || ct != "application/x-www-form-urlencoded" {
+		t.Fatalf("savePlayQueue was %s %q", method, ct)
+	}
+	if urlq != "" {
+		t.Fatalf("the URL carries a query (%d bytes); credentials and ids belong in the body", len(urlq))
+	}
+	q := s.query("savePlayQueue")
+	if len(q["id"]) != 700 || q.Get("current") != "so-9" || q.Get("position") != "61500" || q.Get("t") == "" || q.Get("u") != "alice" {
+		t.Fatalf("form = %d ids, current %q, position %q, t %q", len(q["id"]), q.Get("current"), q.Get("position"), q.Get("t"))
+	}
+}
+
+func TestSavePlayQueueFallsBackToGet(t *testing.T) {
+	for _, status := range []int{http.StatusMethodNotAllowed, http.StatusNotImplemented} {
+		s, c := connected(t)
+		s.postStatus = status
+		if err := c.SavePlayQueue(ctx, []ID{"so-1", "so-2"}, "so-2", time.Second); err != nil {
+			t.Fatalf("status %d: %v", status, err)
+		}
+		method, _, _ := s.request("savePlayQueue")
+		q := s.query("savePlayQueue")
+		if method != "GET" || strings.Join(q["id"], ",") != "so-1,so-2" || q.Get("current") != "so-2" {
+			t.Fatalf("status %d: fallback was %s %v", status, method, q)
+		}
+	}
+}
+
+func TestSavePlayQueueDoesNotRetryAuthErrors(t *testing.T) {
+	s, c := connected(t)
+	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":50,"message":"not allowed"}}}`
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err == nil {
+		t.Fatal("want the error")
+	}
+	if m, _, _ := s.request("savePlayQueue"); m != "POST" {
+		t.Fatalf("an authorization error fell back to %s", m)
+	}
+}
+
+func TestSavePlayQueueFallsBackOnASubsonicError(t *testing.T) {
+	s, c := connected(t)
+	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"use GET"}}}`
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	if m, _, _ := s.request("savePlayQueue"); m != "GET" {
+		t.Fatalf("a generic error did not fall back; last method %s", m)
 	}
 }

@@ -3,6 +3,7 @@ package subsonic
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 	"time"
@@ -213,6 +214,31 @@ func (c *Client) SavePlayQueue(ctx context.Context, ids []ID, current ID, pos ti
 		v.Set("current", string(current))
 		v.Set("position", strconv.FormatInt(pos.Milliseconds(), 10))
 	}
-	_, err := c.call(ctx, "savePlayQueue", v)
+	// A long queue does not fit a URL (servers cut such requests off), so it
+	// goes in a form body. A server that does not take that gets the same
+	// request as a GET.
+	_, err := c.callPost(ctx, "savePlayQueue", v)
+	if postUnsupported(err) {
+		_, err = c.call(ctx, "savePlayQueue", v)
+	}
 	return err
+}
+
+// postUnsupported reports whether err means the server refused the POST
+// itself, as opposed to the request: HTTP 404, 405, 415 or 501, or a Subsonic
+// error that is not about credentials or permission.
+func postUnsupported(err error) bool {
+	var he *HTTPError
+	if errors.As(err, &he) {
+		switch he.Status {
+		case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType, http.StatusNotImplemented:
+			return true
+		}
+		return false
+	}
+	var ae *APIError
+	if errors.As(err, &ae) {
+		return Classify(err) == KindOther
+	}
+	return false
 }

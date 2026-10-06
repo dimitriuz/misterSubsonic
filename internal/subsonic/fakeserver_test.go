@@ -22,13 +22,18 @@ type fakeServer struct {
 	apiKey           string // "" means the server doesn't support API keys (error 42)
 	tokenUnsupported bool   // answer token auth with error 41 (LDAP-style users)
 	override         map[string]string
+	postStatus       int // when set, answer POSTs with this HTTP status and no body
+
+	lastMethod map[string]string // endpoint -> the method of its last request
+	lastType   map[string]string // endpoint -> the Content-Type of its last request
+	lastURLQ   map[string]string // endpoint -> the raw URL query of its last request
 
 	mu      sync.Mutex
 	queries map[string]url.Values
 }
 
 func newFakeServer(t *testing.T, tls bool) *fakeServer {
-	s := &fakeServer{user: "alice", pass: "sesame", override: map[string]string{}, queries: map[string]url.Values{}}
+	s := &fakeServer{user: "alice", pass: "sesame", override: map[string]string{}, queries: map[string]url.Values{}, lastMethod: map[string]string{}, lastType: map[string]string{}, lastURLQ: map[string]string{}}
 	h := http.HandlerFunc(s.serve)
 	if tls {
 		s.Server = httptest.NewTLSServer(h)
@@ -45,16 +50,30 @@ func (s *fakeServer) query(endpoint string) url.Values {
 	return s.queries[endpoint]
 }
 
+func (s *fakeServer) request(endpoint string) (method, contentType, urlQuery string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastMethod[endpoint], s.lastType[endpoint], s.lastURLQ[endpoint]
+}
+
 func fail(w http.ResponseWriter, code int, msg string) {
 	fmt.Fprintf(w, `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":%d,"message":%q}}}`, code, msg)
 }
 
 func (s *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 	endpoint := strings.TrimSuffix(path.Base(r.URL.Path), ".view")
-	q := r.URL.Query()
+	r.ParseForm() // the URL query, plus the body of a form POST
+	q := r.Form
 	s.mu.Lock()
 	s.queries[endpoint] = q
+	s.lastMethod[endpoint] = r.Method
+	s.lastType[endpoint] = r.Header.Get("Content-Type")
+	s.lastURLQ[endpoint] = r.URL.RawQuery
 	s.mu.Unlock()
+	if r.Method == http.MethodPost && s.postStatus != 0 {
+		w.WriteHeader(s.postStatus)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	switch {
