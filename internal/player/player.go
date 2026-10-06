@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"math/rand/v2"
+	"os"
 	"sync"
 	"time"
 
@@ -180,6 +181,10 @@ type Player struct {
 	// open applies it when it lands (openSeek is valid when hasOpenSeek).
 	openSeek    time.Duration
 	hasOpenSeek bool
+
+	queueGen  uint64            // bumped whenever the queue changes
+	savedGen  uint64            // the queueGen the queue file holds
+	writeHook func(path string) // tests: called after each local file write
 }
 
 func New(o Options) *Player {
@@ -464,6 +469,7 @@ func (p *Player) Jump(i int) {
 		p.failures = 0 // a user action starts a fresh failure count
 		for oi, qi := range p.order {
 			if qi == i {
+				p.queueGen++ // the queue file keeps the index too
 				p.startAt(oi, 0)
 				return
 			}
@@ -615,21 +621,39 @@ func (p *Player) SetScrobble(on bool) {
 	p.do(func() { p.o.Scrobble = on })
 }
 
-// Resumable finds a saved queue: the server's first, then the local file.
+// serverLead is how far ahead of the local position the server's must be
+// to win for the same song: the local one lags by up to saveInterval, so
+// anything beyond that is a listen somewhere else.
+const serverLead = 45 * time.Second
+
+// Resumable finds a saved queue. The local queue (the whole of it) is used
+// when its current song is the server's current song, taking the server's
+// position if that is clearly later. When they differ (the user played
+// elsewhere) the server's queue is used; with no server queue, the local one.
 func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
-	if pq, err := p.o.API.GetPlayQueue(ctx); err == nil && pq != nil && len(pq.Songs) > 0 {
-		r := &Resume{Songs: pq.Songs, Position: time.Duration(pq.Position) * time.Millisecond}
-		for i, s := range pq.Songs {
-			if s.ID == pq.Current {
-				r.Index = i
-			}
+	var local *Resume
+	var localErr error
+	if p.o.ResumePath != "" {
+		local, localErr = LoadResume(p.o.ResumePath)
+	}
+	pq, err := p.o.API.GetPlayQueue(ctx)
+	if err != nil || pq == nil || len(pq.Songs) == 0 {
+		return local, localErr
+	}
+	srvPos := time.Duration(pq.Position) * time.Millisecond
+	if local != nil && local.Songs[local.Index].ID == pq.Current {
+		if srvPos > local.Position+serverLead {
+			local.Position = srvPos
 		}
-		return r, nil
+		return local, nil
 	}
-	if p.o.ResumePath == "" {
-		return nil, nil
+	r := &Resume{Songs: pq.Songs, Position: srvPos}
+	for i, s := range pq.Songs {
+		if s.ID == pq.Current {
+			r.Index = i
+		}
 	}
-	return LoadResume(p.o.ResumePath)
+	return r, nil
 }
 
 // ResumeFrom loads r into the queue and starts playing at its position.
@@ -651,6 +675,9 @@ func (p *Player) ResumeFrom(r *Resume) {
 func dbToLinear(db float64) float32 { return float32(math.Pow(10, db/20)) }
 
 func (p *Player) emit(ev Event) {
+	if ev.Kind == QueueChanged {
+		p.queueGen++ // the queue file is now out of date
+	}
 	// I1: publish the snapshot before the event is visible to a consumer,
 	// so State() is never stale relative to an event already received.
 	p.publish()
@@ -1088,29 +1115,40 @@ func (p *Player) maybeScrobble() {
 	}()
 }
 
-// saveNow stores the queue locally and on the server. sync waits for the
-// server call (used on exit).
+// saveNow stores the position locally and on the server, and the queue
+// locally if it changed since it was last written. sync waits for the server
+// call (used on exit).
 func (p *Player) saveNow(ctx context.Context, sync bool) {
 	p.lastSave = p.o.Now()
 	i := p.currentIndex()
 	if i < 0 {
+		if len(p.queue) == 0 && p.queueGen != p.savedGen {
+			p.writeEmptyQueue() // cleared: don't resume the old queue
+		}
 		return
 	}
 	songs := p.queue
 	pos := p.position
 	if p.o.ResumePath != "" {
-		if err := SaveResume(p.o.ResumePath, Resume{Songs: songs, Index: i, Position: pos}); err != nil {
-			log.Printf("player: save resume: %v", err)
+		if p.queueGen != p.savedGen {
+			if err := SaveResume(p.o.ResumePath, Resume{Songs: songs, Index: i, Position: pos}); err != nil {
+				log.Printf("player: save resume: %v", err)
+			} else {
+				p.savedGen = p.queueGen
+				p.wrote(p.o.ResumePath)
+			}
+		}
+		if err := SavePosition(p.o.ResumePath, SavedPosition{ID: songs[i].ID, Index: i, Position: pos}); err != nil {
+			log.Printf("player: save position: %v", err)
+		} else {
+			p.wrote(positionPath(p.o.ResumePath))
 		}
 	}
-	ids := make([]subsonic.ID, len(songs))
-	for k, s := range songs {
-		ids[k] = s.ID
-	}
+	ids, current := serverWindow(songs, p.order, p.cursor)
 	save := func() {
 		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if err := p.o.API.SavePlayQueue(sctx, ids, songs[i].ID, pos); err != nil && !errors.Is(err, context.Canceled) {
+		if err := p.o.API.SavePlayQueue(sctx, ids, current, pos); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("player: savePlayQueue: %v", err)
 		}
 	}
@@ -1119,4 +1157,45 @@ func (p *Player) saveNow(ctx context.Context, sync bool) {
 	} else {
 		go save()
 	}
+}
+
+func (p *Player) wrote(path string) {
+	if p.writeHook != nil {
+		p.writeHook(path)
+	}
+}
+
+func (p *Player) writeEmptyQueue() {
+	if p.o.ResumePath == "" {
+		return
+	}
+	if err := SaveResume(p.o.ResumePath, Resume{}); err != nil {
+		log.Printf("player: save resume: %v", err)
+		return
+	}
+	p.savedGen = p.queueGen
+	p.wrote(p.o.ResumePath)
+	os.Remove(positionPath(p.o.ResumePath))
+}
+
+const (
+	serverWindowMax    = 500 // songs sent to the server
+	serverWindowBefore = 50  // of them, at most this many before the current one
+)
+
+// serverWindow is the part of the queue sent to the server: songs in play
+// order (as the listener will hear them), from at most serverWindowBefore
+// before the current one, serverWindowMax at most. The server rejects or
+// drops requests that carry thousands of ids.
+func serverWindow(queue []subsonic.Song, order []int, cursor int) (ids []subsonic.ID, current subsonic.ID) {
+	if cursor < 0 || cursor >= len(order) {
+		return nil, ""
+	}
+	start := max(0, cursor-serverWindowBefore)
+	end := min(len(order), start+serverWindowMax)
+	ids = make([]subsonic.ID, 0, end-start)
+	for _, qi := range order[start:end] {
+		ids = append(ids, queue[qi].ID)
+	}
+	return ids, queue[order[cursor]].ID
 }

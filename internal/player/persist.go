@@ -35,11 +35,44 @@ func writeJSONAtomic(path string, v any) error {
 	return os.Rename(tmp, path)
 }
 
-// SaveResume writes the local resume file.
+// SavedPosition is the small file written every few seconds, next to the
+// (large) queue file: where in the queue the listener is.
+type SavedPosition struct {
+	ID       subsonic.ID   `json:"id"`
+	Index    int           `json:"index"`
+	Position time.Duration `json:"position"`
+}
+
+// positionPath is the position file that goes with the queue file at path.
+func positionPath(path string) string { return filepath.Join(filepath.Dir(path), "position.json") }
+
+// SaveResume writes the local queue file (the songs, and the index and
+// position at the time of writing).
 func SaveResume(path string, r Resume) error { return writeJSONAtomic(path, r) }
 
-// LoadResume reads the local resume file; (nil, nil) if absent.
+// SavePosition writes the small position file that goes with the queue file
+// at path.
+func SavePosition(path string, p SavedPosition) error { return writeJSONAtomic(positionPath(path), p) }
+
+// LoadResume reads the local resume files; (nil, nil) if absent. The queue
+// file gives the songs; the position file's index and position replace the
+// queue file's when its song is the one at that index. A queue file written
+// by an older version holds the position itself and loads as it is.
 func LoadResume(path string) (*Resume, error) {
+	r, err := loadQueueFile(path)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	if b, err := os.ReadFile(positionPath(path)); err == nil {
+		var sp SavedPosition
+		if json.Unmarshal(b, &sp) == nil && sp.Index >= 0 && sp.Index < len(r.Songs) && r.Songs[sp.Index].ID == sp.ID && sp.Position >= 0 {
+			r.Index, r.Position = sp.Index, sp.Position
+		}
+	}
+	return r, nil
+}
+
+func loadQueueFile(path string) (*Resume, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

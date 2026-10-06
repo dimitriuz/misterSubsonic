@@ -210,8 +210,8 @@ The loop records the **frame index where each track starts in the ring's output*
 - A failed submission is appended to a persistent retry queue (`cache/scrobbles.json`, capped at 500 entries). The queue is flushed on the next success and at startup.
 
 **Resume**
-- On exit, and every 30 s while playing, the player calls `savePlayQueue(ids, current, position)` and also writes the same data locally to `state.json`.
-- At startup, `getPlayQueue` is used when available, with `state.json` as the fallback.
+- On exit, and every 30 s while playing, the player calls `savePlayQueue(ids, current, position)` by form POST (GET if the server refuses), with a window of at most 500 songs in play order, from at most 50 before the current one. Locally it writes `position.json` (song, index, position) every time, and the queue file `state.json` only when the queue changed.
+- At startup, the local queue is used when its current song is the server's current song (with the server's position if clearly later); otherwise `getPlayQueue`'s queue is used, or `state.json` if the server has none.
 - If a saved queue exists, Home shows a "Resume: <title> — <artist>" item.
 
 **Errors**
