@@ -104,6 +104,25 @@ func indexOfSong(songs []subsonic.Song, id subsonic.ID) int {
 	return -1
 }
 
+// nearestSong is the index of the song with this id that is closest to near
+// (the earlier one on a tie), or -1.
+func nearestSong(songs []subsonic.Song, id subsonic.ID, near int) int {
+	best := -1
+	for i := range songs {
+		if songs[i].ID == id && (best < 0 || abs(i-near) < abs(best-near)) {
+			best = i
+		}
+	}
+	return best
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 func loadQueueFile(path string) (*Resume, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

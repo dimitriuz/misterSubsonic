@@ -203,6 +203,8 @@ type Player struct {
 	srv       srvState
 	lastSrv   srvKey
 	srvKnown  bool
+	srvDoubt  bool           // a background save ended in error at exit: the server may still take it
+	srvCut    atomic.Bool    // set by a background save that ended in error
 	srvFlight sync.WaitGroup // background server saves still talking to the server
 	posRec    SavedPosition  // the position file as written
 	posGen    uint64         // the queueGen it was written at
@@ -686,7 +688,7 @@ func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
 		}
 		// Synced and the server is on another song. If that song is in the
 		// local queue, the user only moved within it: keep the whole queue.
-		if i := indexOfSong(local.Songs, pq.Current); i >= 0 {
+		if i := nearestSong(local.Songs, pq.Current, local.Index); i >= 0 {
 			local.Index, local.Position = i, srvPos
 			return local, nil
 		}
@@ -1243,7 +1245,11 @@ func (p *Player) saveNow(ctx context.Context, wait bool) {
 		// A background save may still be in flight, and the server could
 		// take it after this one and end on an older song; save() bounds
 		// its own wait by its timeout.
+		// One that ended in error (cut off by the exit's own cancel, say)
+		// may still be committed by the server after this one, so then the
+		// files must not claim to be synced.
 		p.srvFlight.Wait()
+		p.srvDoubt = p.srvCut.Load()
 		p.serverSaved(key, save())
 		return
 	}
@@ -1251,6 +1257,9 @@ func (p *Player) saveNow(ctx context.Context, wait bool) {
 	p.srvFlight.Add(1)
 	go func() {
 		err := save()
+		if err != nil {
+			p.srvCut.Store(true)
+		}
 		p.srvFlight.Done()
 		p.post(func() { p.serverSaved(key, err) })
 		p.busy.Add(-1)
@@ -1279,7 +1288,7 @@ func (p *Player) serverSaved(k srvKey, err error) {
 // gen) unless it already holds exactly that. The synced flag is true only
 // when the last server save was for this very song and queue.
 func (p *Player) writePosition(rec SavedPosition, gen uint64) {
-	rec.Synced = p.srv.ok && p.srv.cur == rec.ID && p.srv.gen == gen
+	rec.Synced = !p.srvDoubt && p.srv.ok && p.srv.cur == rec.ID && p.srv.gen == gen
 	if p.posOK && p.posRec == rec {
 		return
 	}

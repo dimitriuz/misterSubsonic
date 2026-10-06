@@ -142,16 +142,17 @@ type scrobbleCall struct {
 }
 
 type fakeAPI struct {
-	mu        sync.Mutex
-	scrobbles []scrobbleCall
-	failNext  int // fail this many submission=true calls
-	saves     [][]subsonic.ID
-	saveCur   subsonic.ID
-	savePos   time.Duration
-	queue     *subsonic.PlayQueue
-	failSaves bool          // SavePlayQueue fails
-	blockSave chan struct{} // SavePlayQueue waits for this to close
-	blockOnce chan struct{} // the first SavePlayQueue waits for this to close; then it is nil
+	mu         sync.Mutex
+	scrobbles  []scrobbleCall
+	failNext   int // fail this many submission=true calls
+	saves      [][]subsonic.ID
+	saveCur    subsonic.ID
+	savePos    time.Duration
+	queue      *subsonic.PlayQueue
+	failSaves  bool          // SavePlayQueue fails
+	blockSave  chan struct{} // SavePlayQueue waits for this to close
+	lateCommit bool          // a save cut off by its context is still committed once its gate opens (a server that took the request)
+	blockOnce  chan struct{} // the first SavePlayQueue waits for this to close; then it is nil
 }
 
 func (a *fakeAPI) Scrobble(_ context.Context, id subsonic.ID, _ time.Time, sub bool) error {
@@ -164,7 +165,7 @@ func (a *fakeAPI) Scrobble(_ context.Context, id subsonic.ID, _ time.Time, sub b
 	a.scrobbles = append(a.scrobbles, scrobbleCall{id, sub})
 	return nil
 }
-func (a *fakeAPI) SavePlayQueue(_ context.Context, ids []subsonic.ID, cur subsonic.ID, pos time.Duration) error {
+func (a *fakeAPI) SavePlayQueue(ctx context.Context, ids []subsonic.ID, cur subsonic.ID, pos time.Duration) error {
 	a.mu.Lock()
 	block := a.blockSave
 	if a.blockOnce != nil {
@@ -172,7 +173,23 @@ func (a *fakeAPI) SavePlayQueue(_ context.Context, ids []subsonic.ID, cur subson
 	}
 	a.mu.Unlock()
 	if block != nil {
-		<-block
+		select {
+		case <-block:
+		case <-ctx.Done():
+			a.mu.Lock()
+			late := a.lateCommit
+			a.mu.Unlock()
+			if late {
+				go func() {
+					<-block
+					a.mu.Lock()
+					a.saves = append(a.saves, ids)
+					a.saveCur, a.savePos = cur, pos
+					a.mu.Unlock()
+				}()
+			}
+			return ctx.Err()
+		}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

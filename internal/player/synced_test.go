@@ -477,8 +477,9 @@ func TestExitWritesTheNewestQueueEvenIfAWriteIsPending(t *testing.T) {
 }
 
 // A server save for song A is still in flight when the user moves on to B and
-// quits. The exit save for B must be the last the server hears, or the
-// server ends on A while the local file says B is synced.
+// quits. Run's context is cancelled first, so the save is cut off and the
+// server may still commit A after the exit save for B. Then the local file
+// must not claim to be synced, and the local queue wins on the next start.
 func TestTheExitSaveWaitsForASaveInFlight(t *testing.T) {
 	h := newHarness(t, nil)
 	h.p.PlayNow(songs(6, 3000), 0)
@@ -489,22 +490,40 @@ func TestTheExitSaveWaitsForASaveInFlight(t *testing.T) {
 	gate := make(chan struct{})
 	h.api.mu.Lock()
 	h.api.blockOnce = gate
+	h.api.lateCommit = true
 	h.api.mu.Unlock()
 	savedAgain(h, a.ID) // the save for A is now stuck in the server
 	h.p.Next()
 	b := h.playAndStart(2)
 	h.tickAt(b.ID, time.Second)
-	go func() { time.Sleep(100 * time.Millisecond); close(gate) }()
 	h.cancel()
 	<-h.done
-	h.waitFor("saves idle", func() bool { return h.p.busy.Load() == 0 })
-	h.api.mu.Lock()
-	cur := h.api.saveCur
-	h.api.mu.Unlock()
-	if cur != "sb" {
-		t.Fatalf("the server's last save is for %q, want sb", cur)
+	close(gate) // the server takes A after B
+	h.waitFor("late commit", func() bool {
+		h.api.mu.Lock()
+		defer h.api.mu.Unlock()
+		return h.api.saveCur == "sa"
+	})
+	if sp := readPosition(t, h); sp.ID != "sb" || sp.Synced {
+		t.Fatalf("position file = %+v, want sb not synced", sp)
 	}
-	if sp := readPosition(t, h); sp.ID != "sb" || !sp.Synced {
-		t.Fatalf("position file = %+v, want sb synced", sp)
+	h.api.queue = &subsonic.PlayQueue{Songs: songs(1, 100), Current: "sa"}
+	r, _ := h.p.Resumable(t.Context())
+	if len(r.Songs) != 6 || r.Songs[r.Index].ID != "sb" {
+		t.Fatalf("resumable = %d songs at %v, want the local queue at sb", len(r.Songs), r.Index)
+	}
+}
+
+// A song that is in the queue twice: the copy nearest the local position.
+func TestAServersRepeatedSongResumesAtTheNearestCopy(t *testing.T) {
+	q := songs(40, 100)
+	q[30] = q[4] // the same song twice, at 4 and 30
+	h := newHarness(t, nil)
+	SaveResume(h.p.o.ResumePath, Resume{Songs: q, Index: 28, Position: 20 * time.Second})
+	SavePosition(h.p.o.ResumePath, SavedPosition{ID: q[28].ID, Index: 28, Position: 20 * time.Second, Synced: true})
+	h.api.queue = &subsonic.PlayQueue{Songs: q[3:6], Current: q[4].ID, Position: 3000}
+	r, _ := h.p.Resumable(t.Context())
+	if len(r.Songs) != 40 || r.Index != 30 {
+		t.Fatalf("resumable = %d songs at %d, want the copy at 30", len(r.Songs), r.Index)
 	}
 }
