@@ -268,8 +268,8 @@ func TestNowPlayingHints(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("hints %q, want %q", got, want)
 	}
-	ta.pad = false // Select has no key, so the keyboard bar leaves its hints out
-	if _, ok := ta.capFor(input.BtnSelect); ok {
-		t.Fatal("Select has a key cap")
+	ta.pad = false // on a keyboard the same hints show V
+	if cp, ok := ta.capFor(input.BtnSelect); !ok || cp != "V" {
+		t.Fatalf("Select on a keyboard shows %q (%v), want V", cp, ok)
 	}
 }

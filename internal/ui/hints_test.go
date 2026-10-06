@@ -272,8 +272,8 @@ func TestHintBarFollowsTheInput(t *testing.T) {
 			t.Fatalf("switching the bar (Pad=%v) didn't redraw it", e.Pad)
 		}
 	}
-	if _, ok := ta.capFor(input.BtnSelect); ok {
-		t.Fatal("a keyboard hint for Select, which no key does")
+	if cp, ok := ta.capFor(input.BtnSelect); !ok || cp != "V" {
+		t.Fatalf("Select on a keyboard shows %q (%v), want V", cp, ok)
 	}
 }
 
@@ -362,6 +362,19 @@ func TestTypingScreensHintNowPlayingOnlyForThePad(t *testing.T) {
 	ta.pad = false
 	if !strings.Contains(hintLabels(ta.screenHints()), "Back") {
 		t.Errorf("Search on a keyboard lost Back: %s", hintLabels(ta.screenHints()))
+	}
+}
+
+// On a keyboard V is Select, but a text field takes it as the letter.
+func TestVTypesInATextField(t *testing.T) {
+	ta := hintApp(t, ProfileHDMI, func(ta *testApp) Screen { playingState(ta); return NewSearchScreen() })
+	ta.pad = false
+	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Press, Rune: 'v'})
+	ta.onInput(input.Event{Button: input.BtnSelect, Kind: input.Release, Rune: 'v'})
+	ta.settle(t)
+	s, ok := ta.Top().(*SearchScreen)
+	if !ok || string(s.query) != "v" {
+		t.Fatalf("V in Search: top %T, query %q", ta.Top(), s.query)
 	}
 }
 

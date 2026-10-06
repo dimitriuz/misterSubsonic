@@ -34,8 +34,8 @@ const (
 	BtnSeekFwd
 	BtnSeekBack
 
-	// BtnScreenshot saves the screen as a PNG (Print Screen, or Scroll Lock,
-	// which MiSTer tools such as the Companion remote send with Alt).
+	// BtnScreenshot saves the screen as a PNG (Print Screen, Scroll Lock or F12;
+	// MiSTer tools such as the Companion remote send Scroll Lock with Alt).
 	BtnScreenshot
 )
 

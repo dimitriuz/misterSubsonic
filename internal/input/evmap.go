@@ -25,6 +25,7 @@ const (
 	keyQ          = 16
 	keyEnter      = 28
 	keyLShift     = 42
+	keyV          = 47
 	keyN          = 49
 	keyM          = 50
 	keyRShift     = 54
@@ -38,6 +39,7 @@ const (
 	keyPageDown   = 109
 	keyDown       = 108
 	keyKPEnter    = 96
+	keyF12        = 88
 
 	// Media keys.
 	keyMute         = 113
@@ -73,11 +75,11 @@ var DefaultKeys = map[uint16]Button{
 	keyUp: BtnUp, keyDown: BtnDown, keyLeft: BtnLeft, keyRight: BtnRight,
 	keyEnter: BtnA, keyKPEnter: BtnA, keyEsc: BtnB, keyBackspace: BtnB,
 	keyTab: BtnX, keySpace: BtnStart, keyPageUp: BtnL, keyPageDown: BtnR,
-	keyN: BtnY, keyQ: BtnQueue, keyM: BtnMute,
+	keyN: BtnY, keyQ: BtnQueue, keyM: BtnMute, keyV: BtnSelect,
 	keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
 	keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
 	keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
-	keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot,
+	keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot, keyF12: BtnScreenshot,
 
 	btnEast: BtnA, btnSouth: BtnB, btnNorth: BtnX, btnWest: BtnY,
 	btnTL: BtnL, btnTR: BtnR, btnSelect: BtnSelect, btnStart: BtnStart,

@@ -64,7 +64,7 @@ func padCap(b input.Button) string {
 }
 
 // keyCap is the key for a button on a keyboard (the default key map); ok is
-// false when no key does it (Select).
+// false when no key does it.
 func keyCap(b input.Button) (string, bool) {
 	switch b {
 	case input.BtnA:
@@ -85,6 +85,8 @@ func keyCap(b input.Button) (string, bool) {
 		return "Q", true
 	case input.BtnMute:
 		return "M", true
+	case input.BtnSelect:
+		return "V", true
 	case input.BtnUp, input.BtnDown, input.BtnLeft, input.BtnRight:
 		return "", true
 	}
