@@ -509,3 +509,20 @@ Still open:
   - a play that spans a same-server reconnect gets 503, and the user retries;
   - a late `seen.add` after Detach can re-add old songs;
   - the `URLs` list includes link-local addresses and skips IPv6.
+
+## Plan 7b minors (deferred)
+
+- **Resume:**
+  - After any failed background save in a session, the exit position is never marked synced (`srvCut`). The next start then resumes the local queue even if another device played something else. This is conservative, and protects the local queue.
+  - Membership is a weak test of "same queue". With a library-size local queue, a different queue played elsewhere whose current song is in the local queue resumes the local queue at that song.
+- **Server save:**
+  - A server answering form POSTs with a generic Subsonic error costs POST+GET each save. Stick after N fallbacks in a row if it matters.
+  - Code 40 on a form POST doesn't fall back.
+  - After Clear, the server keeps the old queue.
+  - A shuffle toggle costs one extra big write.
+- **Visualizer (check on the device):**
+  - the step-up margin: `vizCalm` = `vizSlow` can cycle near 60%;
+  - the full-screen scope presents about 1.1 Mpx per frame for high-frequency content;
+  - the hint-bar overlay sends rects through `drawFrame` for 3 s after a press;
+  - bar damage reaches one step low (negligible).
+- **Remote:** the "Screenshot saved" toast shows on acceptance, so a later write failure shows only on the TV and in the log.
