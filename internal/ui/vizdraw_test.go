@@ -147,16 +147,18 @@ func TestVizFrameClockWakesAtTheFrameRate(t *testing.T) {
 		ta.now = ta.now.Add(ta.untilWake())
 		ta.clean()
 		ta.onWake()
-		if ta.dirty || len(ta.damage) == 0 {
-			t.Fatalf("%s: wake left dirty=%v damage=%v", c.prof.Name, ta.dirty, ta.damage)
+		if ta.dirty || len(ta.damage) == 0 || len(ta.viz.dmg) == 0 {
+			t.Fatalf("%s: wake left dirty=%v damage=%v own=%v", c.prof.Name, ta.dirty, ta.damage, ta.viz.dmg)
 		}
-		for _, r := range ta.damage { // the panel, and the progress regions every wake already brings
-			if r != ta.viz.rect && !containsRect(ta.ticks, r) {
-				t.Errorf("%s: wake damaged %v, which is neither the panel %v nor progress %v", c.prof.Name, r, ta.viz.rect, ta.ticks)
+		for _, r := range ta.damage { // the progress regions every wake already brings
+			if !containsRect(ta.ticks, r) {
+				t.Errorf("%s: wake damaged %v, which is not progress %v", c.prof.Name, r, ta.ticks)
 			}
 		}
-		if !containsRect(ta.damage, ta.viz.rect) {
-			t.Errorf("%s: panel not damaged: %v", c.prof.Name, ta.damage)
+		for _, r := range ta.viz.dmg { // the panel's own changes, inside it
+			if r.Intersect(ta.viz.rect) != r {
+				t.Errorf("%s: the panel's damage %v leaves the panel %v", c.prof.Name, r, ta.viz.rect)
+			}
 		}
 	}
 }

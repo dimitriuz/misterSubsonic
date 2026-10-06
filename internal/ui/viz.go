@@ -66,7 +66,7 @@ const (
 
 	vizMeasure = time.Second      // the span a frame's average cost is taken over
 	vizSlow    = 0.6              // step down above this share of the frame budget
-	vizCalm    = 0.3              // ...step up when under this share of the faster budget
+	vizCalm    = vizSlow          // ...step up when under this share of the faster budget (what would step it down again)
 	vizCalmFor = 10 * time.Second // ...for this long
 	vizGap     = 500 * time.Millisecond
 	vizSweep   = 6 // seconds the waterfall's cursor takes across the panel
@@ -84,10 +84,16 @@ type vizState struct {
 	level  int   // index into rates
 	win    []float32
 	scope  []float32 // the scope's points, one per panel column
+	prev   []float32 // the scope's points of the frame before
 	img    *gfx.Image
 	cursor int      // the waterfall's next column
+	wf     wfall    // its tables and the last spectrum
 	style  VizStyle // what the picture in img is of
 	rect   gfx.Rect // where the panel was drawn (empty: not on screen)
+	size   [2]int   // the size it was last drawn at: a new size starts the valve again
+
+	seen vizSeen    // what the picture on screen is made of (viz_damage.go)
+	dmg  []gfx.Rect // the visualizer's own changed areas, awaiting their draw
 
 	last, next time.Time // the last analysis, the next due (zero: now)
 
@@ -114,7 +120,18 @@ func (a *App) vizInterval() time.Duration { return time.Second / time.Duration(a
 
 // markViz records where the visualizer is drawn, like markTick: the frame
 // clock damages it.
-func (a *App) markViz(r gfx.Rect) { a.viz.rect = r }
+func (a *App) markViz(r gfx.Rect) {
+	v := &a.viz
+	v.rect = r
+	if size := [2]int{r.W, r.H}; size != v.size {
+		// The cost of a frame depends on the picture's size, so what the
+		// valve learnt in the panel says nothing about the full screen:
+		// start at the top rate again, with the measurements cleared.
+		v.size = size
+		v.level, v.warned = 0, false
+		v.sum, v.n, v.since, v.calm = 0, 0, time.Time{}, time.Time{}
+	}
+}
 
 // vizActive reports whether the frame clock runs: a visualizer is on screen
 // and the sound plays, or the levels are still falling.
@@ -166,17 +183,20 @@ func (a *App) vizTick(now time.Time) {
 		n = a.o.Visual.Window(v.win)
 	}
 	v.an.Update(v.win, n, dt)
+	strip := stripOf{}
 	switch style := a.VizStyle(); style {
 	case VizScope:
 		if len(v.scope) != v.rect.W {
-			v.scope = make([]float32, v.rect.W)
+			v.scope, v.prev = make([]float32, v.rect.W), make([]float32, v.rect.W)
+			v.seen.valid = false
 		}
+		copy(v.prev, v.scope)
 		v.an.Scope(v.scope)
 	case VizWaterfall:
-		a.sweepWaterfall()
+		strip = a.sweepWaterfall()
 	}
 	v.last, v.next = now, now.Add(a.vizInterval())
-	a.Damage(v.rect)
+	a.vizDamage(strip)
 	v.work, v.pending = a.o.Now().Sub(start), true
 }
 
@@ -186,6 +206,7 @@ func (a *App) vizStyleSync() {
 	v := &a.viz
 	if style := a.VizStyle(); style != v.style {
 		v.style = style
+		v.seen.valid = false
 		if style == VizWaterfall && v.img != nil {
 			clear(v.img.Pix)
 		}
@@ -193,25 +214,71 @@ func (a *App) vizStyleSync() {
 	}
 }
 
+// stripOf is the columns a waterfall frame painted: n from x (mod the
+// width), then the cursor. ok false means the picture began anew.
+type stripOf struct {
+	x, n int
+	ok   bool
+}
+
+// wfall is the waterfall's working storage, made once for a picture size.
+type wfall struct {
+	prev []float32 // the spectrum of the frame before
+	val  []int32   // one column's bands in 1/256 palette steps, plus a copy of the last
+	pos  []int32   // per row: the band below, and how far toward the next (1/256), packed band<<8|frac
+}
+
+// setup sizes the tables for a picture h high and nb bands. A row's position
+// between the bands is worked out once here: the low bands are at the bottom,
+// the first band's centre on the bottom row and the last band's on the top.
+func (w *wfall) setup(h, nb int) {
+	w.prev = make([]float32, nb)
+	w.val = make([]int32, nb+1)
+	w.pos = make([]int32, h)
+	for y := range w.pos {
+		p := (h - 1 - y) * (nb - 1) * 256 / max(h-1, 1)
+		w.pos[y] = int32(p)
+	}
+}
+
 // sweepWaterfall paints this frame's spectrum column at the cursor and moves
-// the cursor on; the picture is never scrolled.
-func (a *App) sweepWaterfall() {
+// the cursor on; the picture is never scrolled. A column blends the two
+// nearest bands in the palette index. A strip wider than a column blends
+// from the previous frame's spectrum to this one's across its width.
+func (a *App) sweepWaterfall() stripOf {
 	v := &a.viz
 	r := v.rect
-	if v.img == nil || v.img.W != r.W || v.img.H != r.H {
-		v.img, v.cursor = gfx.NewImage(r.W, r.H), 0
-	}
 	col := v.an.Column()
+	fresh := false
+	if v.img == nil || v.img.W != r.W || v.img.H != r.H || len(v.wf.prev) != len(col) || len(v.wf.pos) != r.H {
+		v.img, v.cursor = gfx.NewImage(r.W, r.H), 0
+		v.wf.setup(r.H, len(col))
+		copy(v.wf.prev, col)
+		fresh = true
+	}
+	w := &v.wf
 	cw := max(int(math.Round(float64(r.W)/float64(vizSweep*a.vizFPS()))), 1)
+	from := v.cursor
+	nb := len(col)
 	for dx := 0; dx < cw; dx++ {
 		x := (v.cursor + dx) % r.W
-		for y := 0; y < r.H; y++ {
-			b := min((r.H-1-y)*len(col)/r.H, len(col)-1) // low frequencies at the bottom
-			i := int(min(max(col[b], 0), 1)*255 + 0.5)
-			v.img.Pix[y*r.W+x] = 0xFF000000 | viz.Palette[i]
+		t := float32(dx+1) / float32(cw)
+		for k, c := range col {
+			p := w.prev[k]
+			l := min(max(p+(c-p)*t, 0), 1)
+			w.val[k] = int32(l*(255*256) + 0.5)
+		}
+		w.val[nb] = w.val[nb-1] // the top row stands on the last band exactly
+		pix := v.img.Pix[x:]
+		for y, p := range w.pos {
+			k, f := p>>8, p&255
+			i := (w.val[k]*(256-f) + w.val[k+1]*f + 128<<8) >> 16 // palette index: 1/256 steps twice over
+			pix[y*r.W] = 0xFF000000 | viz.Palette[i]
 		}
 	}
+	copy(w.prev, col)
 	v.cursor = (v.cursor + cw) % r.W
+	return stripOf{from, cw, !fresh}
 }
 
 // vizCost takes in what a visualizer frame cost (analysis, draw, present)
@@ -300,57 +367,104 @@ func mixColor(a, b gfx.Color, t int) gfx.Color {
 	return gfx.RGB(ch(16), ch(8), ch(0))
 }
 
-// drawBars: log-spaced bars, accent at the bottom to white at the top, with
-// a brighter cap on each peak.
-func (a *App) drawBars(c *gfx.Canvas, r gfx.Rect) {
-	level, peak := a.viz.an.Bars()
-	n := len(level)
+// barGeom is where the bars stand in r.
+type barGeom struct{ x0, bw, step, seg, capH int }
+
+func (a *App) barGeometry(r gfx.Rect, n int) barGeom {
 	gap := 1
 	if !a.isCRT() {
 		gap = max(r.W/256, 2)
 	}
 	bw := max((r.W-gap*(n-1))/n, 1)
-	x := r.X + (r.W-(bw*n+gap*(n-1)))/2
-	seg := max(r.H/32, 1) // the gradient is drawn in steps this high
-	capH := max(r.H/48, 1)
-	shade := func(y int) gfx.Color { return mixColor(colAccent, colWhite, y*256/r.H) }
-	for i := range level {
-		h := int(min(max(level[i], 0), 1)*float32(r.H) + 0.5)
-		for y := 0; y < h; y += seg {
-			sh := min(seg, h-y)
-			c.Fill(gfx.R(x, r.Bottom()-y-sh, bw, sh), shade(y+sh/2))
-		}
-		if ph := int(min(max(peak[i], 0), 1)*float32(r.H) + 0.5); ph > 0 {
-			ph = max(ph, capH)
-			c.Fill(gfx.R(x, r.Bottom()-ph, bw, capH), mixColor(shade(ph), colWhite, 160))
-		}
-		x += bw + gap
+	return barGeom{
+		x0:   r.X + (r.W-(bw*n+gap*(n-1)))/2,
+		bw:   bw,
+		step: bw + gap,
+		seg:  max(r.H/32, 1), // the gradient is drawn in steps this high
+		capH: max(r.H/48, 1),
 	}
 }
 
+// barHeight is a level's bar in pixels of a panel h high.
+func barHeight(level float32, h int) int { return int(min(max(level, 0), 1)*float32(h) + 0.5) }
+
+// capHeight is where a bar's peak cap sits (its bottom edge above the panel's
+// bottom), or 0 for none.
+func (g barGeom) capHeight(peak float32, h int) int {
+	if ph := barHeight(peak, h); ph > 0 {
+		return max(ph, g.capH)
+	}
+	return 0
+}
+
+// drawBars: log-spaced bars, accent at the bottom to white at the top, with
+// a brighter cap on each peak. Only the bars and steps inside the clip are
+// visited (a partial frame draws a few columns of them).
+func (a *App) drawBars(c *gfx.Canvas, r gfx.Rect) {
+	level, peak := a.viz.an.Bars()
+	g := a.barGeometry(r, len(level))
+	clip := c.Clip().Intersect(r)
+	if clip.Empty() {
+		return
+	}
+	shade := func(y int) gfx.Color { return mixColor(colAccent, colWhite, y*256/r.H) }
+	lo, hi := r.Bottom()-clip.Bottom(), r.Bottom()-clip.Y // the clip's rows, up from the panel's bottom
+	for i := range level {
+		x := g.x0 + i*g.step
+		if x >= clip.Right() || x+g.bw <= clip.X {
+			continue
+		}
+		h := barHeight(level[i], r.H)
+		for y := lo / g.seg * g.seg; y < min(h, hi); y += g.seg {
+			sh := min(g.seg, h-y)
+			c.Fill(gfx.R(x, r.Bottom()-y-sh, g.bw, sh), shade(y+sh/2))
+		}
+		if ph := g.capHeight(peak[i], r.H); ph > 0 {
+			c.Fill(gfx.R(x, r.Bottom()-ph, g.bw, g.capH), mixColor(shade(ph), colWhite, 160))
+		}
+	}
+}
+
+// scopeGeom is the scope's line: its thickness, middle row and amplitude.
+type scopeGeom struct {
+	th, mid int
+	amp     float32
+}
+
+func (a *App) scopeGeometry(r gfx.Rect) scopeGeom {
+	th := 1
+	if !a.isCRT() {
+		th = 2
+	}
+	return scopeGeom{th, r.Y + r.H/2, float32(r.H/2 - th)}
+}
+
+// y is the row of the line at sample v.
+func (g scopeGeom) y(v float32) int { return g.mid - int(min(max(v, -1), 1)*g.amp) }
+
+// span is the rows column i fills: the line from the column before to this one.
+func (g scopeGeom) span(pts []float32, i int) (top, h int) {
+	y := g.y(pts[i])
+	if i == 0 {
+		return y, g.th
+	}
+	prev := g.y(pts[i-1])
+	return min(y, prev), abs(y-prev) + g.th
+}
+
 // drawScope: the wave as one accent line, a point per column, with vertical
-// runs joining neighbours.
+// runs joining neighbours. Only the columns inside the clip are visited.
 func (a *App) drawScope(c *gfx.Canvas, r gfx.Rect) {
 	pts := a.viz.scope
 	if len(pts) != r.W {
 		return
 	}
-	th := 1
-	if !a.isCRT() {
-		th = 2
-	}
-	mid := r.Y + r.H/2
-	c.Fill(gfx.R(r.X, mid, r.W, 1), colArtBg)
-	amp := float32(r.H/2 - th)
-	prev := 0
-	for i, v := range pts {
-		y := mid - int(min(max(v, -1), 1)*amp)
-		top, h := y, th
-		if i > 0 {
-			top, h = min(y, prev), abs(y-prev)+th
-		}
+	g := a.scopeGeometry(r)
+	c.Fill(gfx.R(r.X, g.mid, r.W, 1), colArtBg)
+	clip := c.Clip().Intersect(r)
+	for i := max(clip.X-r.X, 0); i < min(clip.Right()-r.X, r.W); i++ {
+		top, h := g.span(pts, i)
 		c.Fill(gfx.R(r.X+i, top, 1, h), colAccent)
-		prev = y
 	}
 }
 
@@ -372,36 +486,76 @@ var glyphs = map[byte][5]string{
 	'R': {"##.", "#.#", "##.", "#.#", "#.#"},
 }
 
+const vuSegs = 43 // one per dB from -40 to +3
+
+// vuGeom is where the meters stand in r.
+type vuGeom struct{ gap, rowH, segGap, s, mx, segW int }
+
+func (a *App) vuGeometry(r gfx.Rect) vuGeom {
+	g := vuGeom{gap: max(r.H/10, 1), segGap: 1}
+	g.rowH = (r.H - g.gap) / 2
+	if !a.isCRT() {
+		g.segGap = 2
+	}
+	g.s = min(max(g.rowH/6, 1), 6) // glyph dot size
+	g.mx = r.X + 5*g.s
+	g.segW = max((r.Right()-g.mx-g.segGap*(vuSegs-1))/vuSegs, 1)
+	return g
+}
+
+// row is meter ch's top edge.
+func (g vuGeom) row(r gfx.Rect, ch int) int { return r.Y + ch*(g.rowH+g.gap) }
+
+// segs is the rectangle of segments i0 up to i1 of meter ch.
+func (g vuGeom) segs(r gfx.Rect, ch, i0, i1 int) gfx.Rect {
+	return gfx.R(g.mx+i0*(g.segW+g.segGap), g.row(r, ch), (i1-i0-1)*(g.segW+g.segGap)+g.segW, g.rowH)
+}
+
+// vuLit is how many segments of a meter at level are lit (they are a prefix).
+func vuLit(level float32) int {
+	n := 0
+	for n < vuSegs && !(level < float32(n+1)/vuSegs) {
+		n++
+	}
+	return n
+}
+
+// vuPeak is the segment of the peak marker, or -1.
+func vuPeak(peak float32) int {
+	if peak > 0 {
+		return min(int(peak*vuSegs), vuSegs-1)
+	}
+	return -1
+}
+
 // drawVU: two horizontal LED meters, one segment per dB from -40 to +3,
-// green, then yellow, then red above -3 dB, with a peak marker.
+// green, then yellow, then red above -3 dB, with a peak marker. Only what is
+// inside the clip is visited.
 func (a *App) drawVU(c *gfx.Canvas, r gfx.Rect) {
 	level, peak := a.viz.an.VU()
-	gap := max(r.H/10, 1)
-	rowH := (r.H - gap) / 2
-	segGap := 1
-	if !a.isCRT() {
-		segGap = 2
+	g := a.vuGeometry(r)
+	clip := c.Clip().Intersect(r)
+	if clip.Empty() {
+		return
 	}
-	const nseg = 43
-	s := min(max(rowH/6, 1), 6) // glyph dot size
-	mx := r.X + 5*s
-	segW := max((r.Right()-mx-segGap*(nseg-1))/nseg, 1)
 	for ch, name := range "LR" {
-		y := r.Y + ch*(rowH+gap)
+		y := g.row(r, ch)
+		if y >= clip.Bottom() || y+g.rowH <= clip.Y {
+			continue
+		}
 		for gy, line := range glyphs[byte(name)] {
 			for gx, dot := range line {
 				if dot == '#' {
-					c.Fill(gfx.R(r.X+s+gx*s, y+(rowH-5*s)/2+gy*s, s, s), colDim)
+					c.Fill(gfx.R(r.X+g.s+gx*g.s, y+(g.rowH-5*g.s)/2+gy*g.s, g.s, g.s), colDim)
 				}
 			}
 		}
-		pk := -1
-		if peak[ch] > 0 {
-			pk = min(int(peak[ch]*nseg), nseg-1)
-		}
-		for i := 0; i < nseg; i++ {
+		pk := vuPeak(peak[ch])
+		step := g.segW + g.segGap
+		i0 := max((clip.X-g.mx)/step, 0)
+		for i := i0; i < vuSegs && g.mx+i*step < clip.Right(); i++ {
 			col := colLEDGreen
-			switch db := a.viz.an.DB(float32(i) / nseg); {
+			switch db := a.viz.an.DB(float32(i) / vuSegs); {
 			case db >= -3:
 				col = colError
 			case db >= -12:
@@ -410,10 +564,10 @@ func (a *App) drawVU(c *gfx.Canvas, r gfx.Rect) {
 			switch {
 			case i == pk:
 				col = colText
-			case level[ch] < float32(i+1)/nseg:
+			case level[ch] < float32(i+1)/vuSegs:
 				col = mixColor(col, colBg, 210) // unlit
 			}
-			c.Fill(gfx.R(mx+i*(segW+segGap), y, segW, rowH), col)
+			c.Fill(gfx.R(g.mx+i*step, y, g.segW, g.rowH), col)
 		}
 	}
 }

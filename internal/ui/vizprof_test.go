@@ -56,6 +56,32 @@ func (f *fbSim) PresentRects(c *gfx.Canvas, rs []gfx.Rect) error {
 
 var _ gfx.PartialPresenter = (*fbSim)(nil)
 
+// cycleVisual hands out a few different windows in turn, so the levels move
+// from frame to frame like music (made once: making sines is not what the
+// benchmark measures).
+type cycleVisual struct {
+	wins [][]float32
+	i    int
+}
+
+func newCycleVisual(n int) *cycleVisual {
+	c := &cycleVisual{}
+	f := &fakeVisual{}
+	for k := 0; k < 12; k++ {
+		w := make([]float32, n)
+		f.Window(w)
+		c.wins = append(c.wins, w)
+	}
+	return c
+}
+
+func (c *cycleVisual) Window(dst []float32) int {
+	w := c.wins[c.i%len(c.wins)]
+	c.i++
+	copy(dst, w)
+	return min(len(dst), len(w)) / 2
+}
+
 // BenchmarkVizRealFrame is one visualizer frame as the app runs it: advance
 // the clock, onWake (vizTick, progress damage), render (renderDamage,
 // drawFrame per rect, presentRects), into a simulated framebuffer.
@@ -91,9 +117,7 @@ func BenchmarkVizRealFrame(b *testing.B) {
 				ta.press(input.BtnStart)
 			}
 			ta.verify = false
-			sig := make([]float32, 4096)
-			(&fakeVisual{}).Window(sig)
-			ta.o.Visual = &cachedVisual{sig}
+			ta.o.Visual = newCycleVisual(4096)
 			fb := newFBSim(prof.W, prof.H)
 			ta.o.Display = fb
 			runFrames(t, ta, 3)
@@ -106,8 +130,10 @@ func BenchmarkVizRealFrame(b *testing.B) {
 				ta.pl.st.Position += d
 				ta.onWake()
 				full = ta.dirty
-				if err := ta.render(); err != nil {
-					b.Fatal(err)
+				if ta.redrawDue() { // the app's loop renders only then
+					if err := ta.render(); err != nil {
+						b.Fatal(err)
+					}
 				}
 				return
 			}

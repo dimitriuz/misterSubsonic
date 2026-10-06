@@ -116,7 +116,12 @@ func (a *App) renderDamage() (bool, error) {
 		c.SetClip(r)
 		a.drawFrame(c)
 	}
+	own := a.drawVizDamage(c, rs)
 	c.ClearClip()
+	if len(own) > 0 { // the visualizer's own small areas are presented as they are
+		a.presentBuf = append(append(a.presentBuf[:0], rs...), own...)
+		rs = a.presentBuf
+	}
 	if a.verify {
 		if err := a.checkPartial(); err != nil {
 			if a.verifyFail != nil {
@@ -128,6 +133,99 @@ func (a *App) renderDamage() (bool, error) {
 		}
 	}
 	return true, a.presentRects(c, rs)
+}
+
+// vizOwnLimit is how many of the visualizer's small areas a frame may draw
+// through the whole drawFrame (the ones overlapped by something else); more
+// than that are replaced by their bounding box.
+const vizOwnLimit = 4
+
+// drawVizDamage draws the visualizer's own damage (viz_damage.go) and
+// returns the areas to present. An area nothing else covers is drawn by
+// drawViz alone: that is what a full frame leaves there, and it skips the
+// rest of the screen's drawing, which would otherwise run once per area. An
+// area under the hint bar, the info line, a toast, the volume panel or a
+// damaged area goes through drawFrame, in order, clipped.
+func (a *App) drawVizDamage(c *gfx.Canvas, drawn []gfx.Rect) []gfx.Rect {
+	v := &a.viz
+	if len(v.dmg) == 0 {
+		return nil
+	}
+	own := append(a.ownBuf[:0], v.dmg...)
+	v.dmg = v.dmg[:0]
+	a.ownBuf = own
+	direct := a.vizDirect()
+	over := a.vizOverlays(drawn)
+	via, n := a.viaBuf[:0], 0
+	for _, r := range own {
+		if direct && !overlaps(r, over) {
+			own[n] = r
+			n++
+			continue
+		}
+		via = append(via, r)
+	}
+	a.viaBuf = via
+	if len(via) > vizOwnLimit {
+		box := via[0]
+		for _, r := range via[1:] {
+			box = union(box, r)
+		}
+		via = append(via[:0], box)
+	}
+	for _, r := range via {
+		c.SetClip(r)
+		a.drawFrame(c)
+	}
+	style := a.VizStyle()
+	for _, r := range own[:n] {
+		c.SetClip(r)
+		a.drawViz(c, v.rect, style)
+	}
+	return append(own[:n], via...)
+}
+
+func overlaps(r gfx.Rect, rs []gfx.Rect) bool {
+	for _, o := range rs {
+		if !r.Intersect(o).Empty() {
+			return true
+		}
+	}
+	return false
+}
+
+// vizDirect reports whether the visualizer's picture is the last thing a
+// frame draws where nothing overlays it: on Now Playing or its full screen,
+// with no confirmation up.
+func (a *App) vizDirect() bool {
+	if a.confirm {
+		return false
+	}
+	switch a.Top().(type) {
+	case *NowPlayingScreen, *VizScreen:
+		return true
+	}
+	return false
+}
+
+// vizOverlays are the areas drawn over the visualizer, besides the damage.
+func (a *App) vizOverlays(drawn []gfx.Rect) []gfx.Rect {
+	over := append(a.overBuf[:0], drawn...)
+	if a.hintsUp() {
+		r := a.hintRect()
+		over = append(over, gfx.R(r.X, r.Y, r.W, a.P.H-r.Y))
+	}
+	if vs, ok := a.Top().(*VizScreen); ok && vs.text != "" {
+		over = append(over, vs.rect)
+	}
+	if !a.volumeUntil.IsZero() {
+		over = append(over, a.volumePanelRect())
+	}
+	if t := a.toastsArea(); !t.Empty() {
+		over = append(over, t)
+	}
+	a.overBuf = over
+	return over
 }
 
 // checkPartial draws a full frame on the side and compares it with the

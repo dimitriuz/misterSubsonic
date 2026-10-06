@@ -255,6 +255,10 @@ type App struct {
 	overwritten  bool      // the last check found the screen drawn over
 	viz          vizState
 	mergeBuf     []gfx.Rect // renderDamage's merged rectangles, reused
+	presentBuf   []gfx.Rect // ...with the visualizer's own areas, reused
+	ownBuf       []gfx.Rect // the visualizer's areas drawn by drawViz alone, reused
+	viaBuf       []gfx.Rect // ...and those drawn by drawFrame
+	overBuf      []gfx.Rect // what is drawn over the visualizer, reused
 
 	// For the web remote, which reads from other goroutines: the live
 	// connection, this session's song stars, and the songs it has browsed.
@@ -490,7 +494,7 @@ func (a *App) Run(ctx context.Context) error {
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
 	for !a.quit {
-		if a.dirty || len(a.damage) > 0 {
+		if a.dirty || len(a.damage) > 0 || len(a.viz.dmg) > 0 {
 			if err := a.render(); err != nil {
 				return err
 			}
@@ -813,16 +817,16 @@ func (a *App) render() error {
 		a.saver = false
 	}
 	if a.saver {
-		a.damage = a.damage[:0]
+		a.damage, a.viz.dmg = a.damage[:0], a.viz.dmg[:0]
 		a.drawSaver(a.canvas)
 		return a.present(a.canvas)
 	}
-	if !full && len(a.damage) > 0 {
+	if !full && (len(a.damage) > 0 || len(a.viz.dmg) > 0) {
 		if done, err := a.renderDamage(); done || err != nil {
 			return err
 		}
 	}
-	a.damage = a.damage[:0]
+	a.damage, a.viz.dmg = a.damage[:0], a.viz.dmg[:0]
 	a.drawFrame(a.canvas)
 	return a.present(a.canvas)
 }
