@@ -288,6 +288,8 @@ func (a *App) remoteDo(c remote.Command) error {
 		if pl != nil {
 			pl.Clear()
 		}
+	case "screenshot": // as the button; nothing on screen or in the state changes
+		return a.screenshot()
 	default:
 		return errors.New("remote: unknown command " + c.Do)
 	}

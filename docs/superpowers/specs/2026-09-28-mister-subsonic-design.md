@@ -304,15 +304,15 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 | Start | play/pause | full-screen visualizer when a song is loaded and not stopped, else play/pause |
 | Select | shuffle-play current list | press: next visualizer style (Off → Bars → Scope → VU → Waterfall; in full screen without Off); hold 1 s: mute |
 
-Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pause; full screen on Now Playing), PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
+Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pause; full screen on Now Playing), PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue, `v` = Select (a text field takes it as the letter).
 
 **Shuffle and repeat** are independent and can be on together; they live in the X menu on Now Playing and in the queue's X menu. **Visualizer:** see the Plan 6 spec (`2026-10-01-mister-subsonic-visualizer-design.md`).
 
-**Mute** is M on a keyboard, the media Mute key, or holding Select on Now Playing for one second (the release after that hold does nothing). Settings → Playback has no Volume or Mute rows; volume is Up/Down on Now Playing and the media keys. **Settings help:** the focused setting's help text (one or two dim lines) shows under a settings list, and Transcode bitrate is listed only while Transcode to is mp3.
+**Mute** is M on a keyboard, the media Mute key, or holding Select (V on a keyboard) on Now Playing for one second (the release after that hold does nothing). Settings → Playback has no Volume or Mute rows; volume is Up/Down on Now Playing and the media keys. **Settings help:** the focused setting's help text (one or two dim lines) shows under a settings list, and Transcode bitrate is listed only while Transcode to is mp3.
 
 **Media keys** (volume up and down, mute, play/pause, next, previous, fast-forward and rewind) work on every screen. The top screen gets each key first, so a text field or a screen with its own meaning for it keeps it; the X menu, the exit prompt and the screensaver let them through (a media key wakes the screensaver and acts on the first press). Next and previous need a queue. Seeking needs a current track, moves ±10 s (held: ±30 s, at most four seeks a second) and stops a second before the end.
 
-**Screenshot key:** Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity.
+**Screenshot key:** F12, Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity. The web remote has a Screenshot button on Now Playing (`POST /api/cmd {"do":"screenshot"}`: the same save, 409 `remote: screenshot in progress` while one runs).
 
 **Remote (Settings → Remote, Plan 7):** two rows. "Remote" turns the web remote On or Off (`remote.enabled`, saved at once; a failed start, such as a port in use, leaves it off and shows a toast). "Address" is an info row showing the URL to open ("no network" when on without an address, "Off" when off). The port is `remote.port` and needs a restart. The help text says anyone on the network can control playback, over plain http. Details: `2026-10-02-mister-subsonic-web-remote-design.md`.
 

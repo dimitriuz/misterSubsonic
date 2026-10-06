@@ -109,7 +109,7 @@ rpost() { curl -fs --max-time 5 -H 'Content-Type: application/json' -H "Origin: 
 # rwait PATH PATTERN: poll a GET until its body matches (5 s at most).
 rwait() { for _ in $(seq 50); do rget "$1" 2>/dev/null | grep -q "$2" && return 0; sleep 0.1; done; return 1; }
 rbefore=$(wc -l < "$tmp/mock.log")
-"$tmp/mistersubsonic" -config "$tmp/remote/config.toml" -remote-bind 127.0.0.1 -display headless -null -exit-after 20s > "$tmp/remote.log" 2>&1 &
+"$tmp/mistersubsonic" -config "$tmp/remote/config.toml" -remote-bind 127.0.0.1 -display headless -null -screenshots "$tmp/remote/shots" -exit-after 20s > "$tmp/remote.log" 2>&1 &
 app=$!
 rwait /api/state '"status":"stopped"' || remote_fail "/api/state never answered"
 # The page and its script and style are served.
@@ -143,10 +143,19 @@ rpost /api/cmd '{"do":"toggle"}' >/dev/null || remote_fail "toggle failed"
 rwait /api/state '"status":"paused"' || remote_fail "toggle did not pause"
 # A stale song id is a conflict.
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Content-Type: application/json' -H "Origin: $base" -d '{"do":"jump","index":0,"song_id":"nope"}' "$base/api/cmd")" = 409 ] || remote_fail "a stale jump was not a conflict"
+# The Screenshot button's command saves a PNG in the screenshots folder.
+[ "$(rpost /api/cmd '{"do":"screenshot"}')" = '{"ok":true}' ] || remote_fail "the screenshot command was not ok"
+shot=""
+for _ in $(seq 50); do
+  shot=$(ls "$tmp/remote/shots"/*.png 2>/dev/null | head -n 1)
+  [ -n "$shot" ] && break
+  sleep 0.1
+done
+[ -n "$shot" ] && head -c 8 "$shot" | grep -q PNG || remote_fail "no PNG appeared in the screenshots folder"
 # The app ends cleanly and the remote closes with it.
 kill -TERM "$app"
 wait "$app" || remote_fail "the app exited with an error"
 app=""
 if curl -s --max-time 2 "$base/api/state" >/dev/null 2>&1; then remote_fail "the remote still answers after the app exited"; fi
 tail -n +"$((rbefore + 1))" "$tmp/mock.log" | grep -q 'stream so-' || remote_fail "the mock server streamed nothing"
-echo "e2e-ui ok: $frames frames rendered; the feed and Search played; the setup wizard saved a token config and played; the web remote searched, played and paused (null device)"
+echo "e2e-ui ok: $frames frames rendered; the feed and Search played; the setup wizard saved a token config and played; the web remote searched, played, paused and took a screenshot (null device)"

@@ -10,22 +10,21 @@ import (
 	"path/filepath"
 
 	"mistersubsonic/internal/gfx"
+	"mistersubsonic/internal/remote"
 )
 
 // screenshot saves the frame on screen as a PNG in Options.ScreenshotDir,
 // named by the time (20260930_101500.png). The frame is copied here and
 // encoded off the UI goroutine; a toast says how it went. One runs at a
-// time: a press during a save only toasts.
-func (a *App) screenshot() {
+// time: while one saves, this returns remote.ErrShooting (the button toasts
+// it, the remote answers 409) and with no folder remote.ErrNoScreenshots.
+func (a *App) screenshot() error {
 	dir := a.o.ScreenshotDir
 	if dir == "" {
-		return
+		return remote.ErrNoScreenshots
 	}
 	if a.shooting {
-		if !a.saver { // silent over the screensaver: a toast would wake it
-			a.Toast("Still saving the last screenshot")
-		}
-		return
+		return remote.ErrShooting
 	}
 	a.shooting = true
 	snap := gfx.NewCanvas(a.canvas.W, a.canvas.H)
@@ -46,6 +45,7 @@ func (a *App) screenshot() {
 			}
 		})
 	}()
+	return nil
 }
 
 // saveScreenshot writes c to dir/base.png (base-2.png, … if taken), through

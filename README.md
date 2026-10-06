@@ -130,8 +130,8 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 | Select | shuffle-play the list | press: next visualizer style; hold 1 s: mute |
 
 Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, N = Y, Q = queue, M = mute, PgUp/PgDn =
-L/R, Space = Start; the visualizer style is changed with Select, which has no keyboard key, or in Settings → Display → Visualizer. In Search and the setup wizard, letters type and Backspace deletes. With a
-controller, hold Select on Now Playing to mute (and hold X to star); changing the volume turns the sound back on. A
+L/R, Space = Start, V = Select (on Now Playing a short press changes the visualizer style, which Settings → Display → Visualizer sets too). In Search and the setup wizard, letters (V too) type and Backspace deletes. Hold
+Select (V, or the controller's button) on Now Playing to mute, and hold X to star; changing the volume turns the sound back on. A
 multimedia keyboard's media keys work on every screen: volume up/down (held to repeat), mute,
 play/pause, next, previous, and fast-forward/rewind to seek. A volume panel shows the level for a
 moment whenever it changes.
@@ -154,10 +154,11 @@ repeat can be on together.
 **Hints:** the bar along the bottom of every screen shows what the buttons do there: as gamepad
 buttons after a gamepad press, as keys after a key press. Settings → Display → Hints turns it off.
 
-**Screenshots:** Print Screen or Scroll Lock (alone; Alt+Scroll Lock is MiSTer's own key for it
+**Screenshots:** F12, Print Screen or Scroll Lock (alone; Alt+Scroll Lock is MiSTer's own key for it
 too) saves the screen as a PNG. On the MiSTer the folder is `/media/fat/screenshots/MiSTer_Subsonic/`;
 elsewhere it is `screenshots/` next to the config, and `-screenshots` changes it. A press while
-the last one is still saving says so. The MiSTer Companion remote's Capture screenshot button works too.
+the last one is still saving says so. The MiSTer Companion remote's Capture screenshot button works too, and so does the Screenshot button
+in the corner of the web remote's Now Playing tab, which saves to the same folder (it says so if a save is already running).
 
 ## Developing
 

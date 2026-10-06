@@ -178,3 +178,18 @@ test('watchdog: silence for over 40 s is stale, any event resets it', () => {
   assert.strictEqual(w.stale(), true);
   assert.ok(A.WATCHDOG_MS > 15000 * 2, 'longer than two server heartbeats');
 });
+
+test('screenshot: posts the screenshot command and says it is saved', async () => {
+  let seen;
+  const api = A.makeApi(async (url, opt) => { seen = [url, opt]; return reply(200, { ok: true })(); });
+  assert.strictEqual(await A.takeScreenshot(api), 'Screenshot saved');
+  assert.strictEqual(seen[0], '/api/cmd');
+  assert.strictEqual(seen[1].method, 'POST');
+  assert.strictEqual(seen[1].headers['Content-Type'], 'application/json');
+  assert.strictEqual(seen[1].body, '{"do":"screenshot"}');
+});
+
+test('screenshot: a save already running is an error with the server text', async () => {
+  const api = A.makeApi(reply(409, { error: 'remote: screenshot in progress' }));
+  await assert.rejects(A.takeScreenshot(api), (e) => e.status === 409 && /in progress/.test(e.message));
+});

@@ -653,8 +653,8 @@ func (a *App) onInput(e input.Event) {
 	if e.Button == input.BtnScreenshot {
 		// On every screen, the screensaver too: it captures the frame as
 		// it is, so it neither wakes the screen nor counts as activity.
-		if e.Kind == input.Press {
-			a.screenshot()
+		if e.Kind == input.Press && a.screenshot() == remote.ErrShooting && !a.saver { // silent over the screensaver: a toast would wake it
+			a.Toast("Still saving the last screenshot")
 		}
 		return
 	}

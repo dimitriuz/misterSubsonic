@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -794,5 +795,42 @@ loop:
 				t.Fatalf("queued on a player: %v", pl.calls)
 			}
 		}
+	}
+}
+
+// The remote's screenshot command takes the same screenshot as the button:
+// a PNG in the folder and the toast on the TV.
+func TestRemoteScreenshot(t *testing.T) {
+	ta, ctl, _ := remoteApp(t)
+	ta.o.ScreenshotDir = t.TempDir()
+	if err := ta.do(t, ctl, remote.Command{Do: "screenshot"}); err != nil {
+		t.Fatal(err)
+	}
+	if !ta.shooting {
+		t.Fatal("no screenshot started")
+	}
+	// A second one while the first saves is a conflict, not a toast.
+	if err := ta.do(t, ctl, remote.Command{Do: "screenshot"}); !errors.Is(err, remote.ErrShooting) {
+		t.Fatalf("second screenshot: %v, want ErrShooting", err)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	if got := lastToast(ta); got != "Screenshot saved" {
+		t.Fatalf("toast %q", got)
+	}
+	if entries, _ := os.ReadDir(ta.o.ScreenshotDir); len(entries) != 1 || !strings.HasSuffix(entries[0].Name(), ".png") {
+		t.Fatalf("screenshots folder holds %v", entries)
+	}
+}
+
+func TestRemoteScreenshotNeedsAFolder(t *testing.T) {
+	ta, ctl, _ := remoteApp(t)
+	ta.o.ScreenshotDir = ""
+	if err := ta.do(t, ctl, remote.Command{Do: "screenshot"}); !errors.Is(err, remote.ErrNoScreenshots) {
+		t.Fatalf("got %v, want ErrNoScreenshots", err)
+	}
+	if ta.shooting {
+		t.Fatal("a screenshot started with no folder")
 	}
 }
