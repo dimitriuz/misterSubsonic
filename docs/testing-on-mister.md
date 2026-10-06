@@ -124,6 +124,7 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 39. **Plan 7b checks.** Ask the user before playing anything, and keep the volume low.
     - With a long queue playing (thousands of songs), `servers/<name>-<id>/state.json`'s mtime stays put for minutes (`ls -l --time-style=full-iso`), while `position.json` updates every 30 s.
     - `log.txt` has no "savePlayQueue" error line.
+    - The per-server folder is `servers/<name>-<8 hex digits>/` (or the legacy `servers/<name>/` on an upgraded install), and the cover art and scrobble cache is its `cache/` folder, not `/media/fat/mistersubsonic/cache/`.
     - Restart the app and accept the Resume card: the whole local queue is back, not the server's 500-song window.
     - The visualizer in full screen at 1920×1200 holds its rate, and `log.txt` has no "visualizer: slowing to" line.
     - The waterfall looks smooth: no vertical bands, and no steps between one frame and the next.

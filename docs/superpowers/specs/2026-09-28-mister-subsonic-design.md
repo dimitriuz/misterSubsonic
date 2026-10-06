@@ -207,16 +207,16 @@ The loop records the **frame index where each track starts in the ring's output*
 - At track start the player sends `scrobble(id, submission=false)`.
 - When accumulated *listened* time reaches `min(duration/2, 240 s)`, it sends `scrobble(id, submission=true, time=<start epoch ms>)` once. Seeking does not count as listening.
 - Scrobbling can be turned off with `scrobble = false`.
-- A failed submission is appended to a persistent retry queue (`cache/scrobbles.json`, capped at 500 entries). The queue is flushed on the next success and at startup.
+- A failed submission is appended to a persistent retry queue (`cache/scrobbles.json` in the server's folder, `servers/<name>-<id>/`, capped at 500 entries). The queue is flushed on the next success and at startup.
 
 **Resume**
-- On exit, and every 30 s while playing or paused, the player calls `savePlayQueue(ids, current, position)` by form POST (GET if the server refuses, remembered for the session), with a window of at most 500 songs in play order, from at most 50 before the current one. A paused player whose song, index and position haven't changed sends and writes nothing new.
-- Locally it keeps two files per server, in `servers/<name>-<id>/`:
+- On exit, and every 30 s while playing or paused, the player calls `savePlayQueue(ids, current, position)` by form POST (GET if the server refuses; only an HTTP 404, 405, 415 or 501 is remembered, until a GET fails), with a window of at most 500 songs in play order, from at most 50 before the current one. A paused player whose song, index and position haven't changed sends and writes nothing new.
+- Locally it keeps two files per server, in `servers/<name>-<id>/` (`<id>` is 8 hex digits of the name's hash; an upgraded install keeps the legacy `servers/<name>/`):
   - `state.json`, the whole queue (6,000 songs is about 7 MB), written only when the queue changed (a jump or a natural song change is not a change), marshalled on the player goroutine and written on another, and on exit;
   - `position.json`, a few bytes: the song id, its index, the position, and `synced`, written at each save when it differs from the last.
 - A queue change is also saved while stopped (the queue ended, or Clear or an edit after it), at the next 30 s tick, so a power-off after it keeps it.
 - `synced` is true when the last server save succeeded for that very song and queue. It is how a device tells "the server's queue is another device's" from "my saves to the server failed".
-- At startup, the local queue is used when its current song is the server's current song (with the server's position if clearly later). When they differ: if the local copy is `synced`, the user played elsewhere and `getPlayQueue`'s queue is used; if it is not (an old install, whose files lack `position.json` or the field, counts as not synced), the server's queue may be only what an earlier save left there, and the local one is used. With no server queue, the local one.
+- At startup, the local queue is used when its current song is the server's current song (with the server's position if clearly later). When they differ: if the local copy is `synced`, the user played elsewhere: when the server's song is in the local queue, the whole local queue resumes at that song and the server's position, otherwise `getPlayQueue`'s queue is used; if it is not (an old install, whose files lack `position.json` or the field, counts as not synced), the server's queue may be only what an earlier save left there, and the local one is used. With no server queue, the local one.
 - If a saved queue exists, Home shows a "Resume: <title> — <artist>" item.
 
 **Errors**
@@ -346,7 +346,8 @@ Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the
 /media/fat/mistersubsonic/mistersubsonic     binary
 /media/fat/mistersubsonic/config.toml        created by wizard or by hand (example shipped as config.example.toml)
 /media/fat/mistersubsonic/fonts/             optional fallback fonts
-/media/fat/mistersubsonic/cache/             cover art LRU, scrobble retry queue
+/media/fat/mistersubsonic/servers/<name>-<id>/            one folder per server: <id> is 8 hex digits of the name's hash (an upgraded install keeps its legacy servers/<name>/)
+/media/fat/mistersubsonic/servers/<name>-<id>/cache/      cover art LRU, scrobble retry queue
 /media/fat/mistersubsonic/servers/<name>-<id>/state.json     local resume: the queue
 /media/fat/mistersubsonic/servers/<name>-<id>/position.json  local resume: where in it, and whether the server has it
 /media/fat/mistersubsonic/log.txt            rotating log (1 MB × 2)

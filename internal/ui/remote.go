@@ -56,11 +56,11 @@ type liveRefs struct {
 	art ArtSource
 }
 
-// publishLive makes the current library, player and art visible to the
-// remote. Call on the UI goroutine after changing them.
 // minRemoteShotGap is the least time between two screenshots taken from the remote.
 const minRemoteShotGap = time.Second
 
+// publishLive makes the current library, player and art visible to the
+// remote. Call on the UI goroutine after changing them.
 func (a *App) publishLive() {
 	a.live.Store(&liveRefs{lib: a.o.Library, pl: a.o.Player, art: a.o.Art})
 }
