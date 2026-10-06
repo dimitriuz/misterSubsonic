@@ -234,6 +234,38 @@ func TestSavePlayQueueFallsBackToGet(t *testing.T) {
 	}
 }
 
+// A server that refuses POSTs gets one request per save, not two, once the
+// client has learned that.
+func TestSavePlayQueueRemembersThatThePostFellBack(t *testing.T) {
+	s, c := connected(t)
+	s.postStatus = http.StatusMethodNotAllowed
+	for i := 0; i < 3; i++ {
+		if err := c.SavePlayQueue(ctx, []ID{"so-1", "so-2"}, "so-2", time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET GET GET" {
+		t.Fatalf("requests = %q, want one POST and then GETs only", got)
+	}
+}
+
+// The memory is only for a GET that worked: a server that is down does not
+// make the client give up on POST.
+func TestSavePlayQueueDoesNotRememberAFailedFallback(t *testing.T) {
+	s, c := connected(t)
+	s.postStatus = http.StatusMethodNotAllowed
+	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}`
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	s.postStatus = 0
+	delete(s.override, "savePlayQueue")
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET POST" {
+		t.Fatalf("requests = %q", got)
+	}
+}
+
 func TestSavePlayQueueDoesNotRetryAuthErrors(t *testing.T) {
 	s, c := connected(t)
 	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":50,"message":"not allowed"}}}`

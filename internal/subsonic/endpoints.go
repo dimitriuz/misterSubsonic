@@ -216,10 +216,22 @@ func (c *Client) SavePlayQueue(ctx context.Context, ids []ID, current ID, pos ti
 	}
 	// A long queue does not fit a URL (servers cut such requests off), so it
 	// goes in a form body. A server that does not take that gets the same
-	// request as a GET.
+	// request as a GET, and remembers that, so the next save is one request.
+	c.mu.Lock()
+	getOnly := c.getOnly
+	c.mu.Unlock()
+	if getOnly {
+		_, err := c.call(ctx, "savePlayQueue", v)
+		return err
+	}
 	_, err := c.callPost(ctx, "savePlayQueue", v)
 	if postUnsupported(err) {
 		_, err = c.call(ctx, "savePlayQueue", v)
+		if err == nil {
+			c.mu.Lock()
+			c.getOnly = true
+			c.mu.Unlock()
+		}
 	}
 	return err
 }

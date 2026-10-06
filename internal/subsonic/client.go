@@ -74,6 +74,8 @@ type Client struct {
 	mu     sync.Mutex
 	method AuthMethod
 	info   *ServerInfo
+
+	getOnly bool // savePlayQueue: the server refused a POST once and took the GET
 }
 
 // NewTokenPair returns a random salt and md5(password+salt), for storing

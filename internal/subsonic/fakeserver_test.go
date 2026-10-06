@@ -30,6 +30,7 @@ type fakeServer struct {
 
 	mu      sync.Mutex
 	queries map[string]url.Values
+	methods map[string][]string // endpoint -> the method of every request
 }
 
 func newFakeServer(t *testing.T, tls bool) *fakeServer {
@@ -42,6 +43,13 @@ func newFakeServer(t *testing.T, tls bool) *fakeServer {
 	}
 	t.Cleanup(s.Close)
 	return s
+}
+
+// methodList is the method of every request to endpoint so far.
+func (s *fakeServer) methodList(endpoint string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.methods[endpoint]...)
 }
 
 func (s *fakeServer) query(endpoint string) url.Values {
@@ -67,6 +75,10 @@ func (s *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.queries[endpoint] = q
 	s.lastMethod[endpoint] = r.Method
+	if s.methods == nil {
+		s.methods = map[string][]string{}
+	}
+	s.methods[endpoint] = append(s.methods[endpoint], r.Method)
 	s.lastType[endpoint] = r.Header.Get("Content-Type")
 	s.lastURLQ[endpoint] = r.URL.RawQuery
 	s.mu.Unlock()
