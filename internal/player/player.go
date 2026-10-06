@@ -200,12 +200,13 @@ type Player struct {
 
 	// What the server's saved queue is known to hold (the last save that
 	// succeeded), and what the files and the server were last given.
-	srv      srvState
-	lastSrv  srvKey
-	srvKnown bool
-	posRec   SavedPosition // the position file as written
-	posGen   uint64        // the queueGen it was written at
-	posOK    bool
+	srv       srvState
+	lastSrv   srvKey
+	srvKnown  bool
+	srvFlight sync.WaitGroup // background server saves still talking to the server
+	posRec    SavedPosition  // the position file as written
+	posGen    uint64         // the queueGen it was written at
+	posOK     bool
 }
 
 func New(o Options) *Player {
@@ -650,7 +651,8 @@ const serverLead = 45 * time.Second
 // when its current song is the server's current song, taking the server's
 // position if that is clearly later. When they differ there are two cases.
 // If the last save to the server succeeded for the local state (it is
-// "synced"), the user played elsewhere and the server's queue is used. If
+// "synced"), the user played elsewhere: the local queue at the server's song
+// if that is in it, else the server's queue. If
 // not, the server's queue is only what an earlier save left there (saves may
 // have been failing for a long time) and the local one is used. With no
 // server queue, the local one.
@@ -680,6 +682,12 @@ func (p *Player) Resumable(ctx context.Context) (*Resume, error) {
 			return local, nil
 		}
 		if !local.Synced {
+			return local, nil
+		}
+		// Synced and the server is on another song. If that song is in the
+		// local queue, the user only moved within it: keep the whole queue.
+		if i := indexOfSong(local.Songs, pq.Current); i >= 0 {
+			local.Index, local.Position = i, srvPos
 			return local, nil
 		}
 	}
@@ -1232,12 +1240,18 @@ func (p *Player) saveNow(ctx context.Context, wait bool) {
 		return err
 	}
 	if wait {
+		// A background save may still be in flight, and the server could
+		// take it after this one and end on an older song; save() bounds
+		// its own wait by its timeout.
+		p.srvFlight.Wait()
 		p.serverSaved(key, save())
 		return
 	}
 	p.busy.Add(1)
+	p.srvFlight.Add(1)
 	go func() {
 		err := save()
+		p.srvFlight.Done()
 		p.post(func() { p.serverSaved(key, err) })
 		p.busy.Add(-1)
 	}()

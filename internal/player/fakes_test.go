@@ -151,6 +151,7 @@ type fakeAPI struct {
 	queue     *subsonic.PlayQueue
 	failSaves bool          // SavePlayQueue fails
 	blockSave chan struct{} // SavePlayQueue waits for this to close
+	blockOnce chan struct{} // the first SavePlayQueue waits for this to close; then it is nil
 }
 
 func (a *fakeAPI) Scrobble(_ context.Context, id subsonic.ID, _ time.Time, sub bool) error {
@@ -166,6 +167,9 @@ func (a *fakeAPI) Scrobble(_ context.Context, id subsonic.ID, _ time.Time, sub b
 func (a *fakeAPI) SavePlayQueue(_ context.Context, ids []subsonic.ID, cur subsonic.ID, pos time.Duration) error {
 	a.mu.Lock()
 	block := a.blockSave
+	if a.blockOnce != nil {
+		block, a.blockOnce = a.blockOnce, nil
+	}
 	a.mu.Unlock()
 	if block != nil {
 		<-block

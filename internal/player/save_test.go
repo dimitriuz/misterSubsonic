@@ -173,15 +173,9 @@ func TestPositionFileAppliesOnlyToItsSong(t *testing.T) {
 	if r, _ := LoadResume(path); r.Index != 3 || r.Position != 40*time.Second || len(r.Songs) != 5 {
 		t.Fatalf("matching position file: %+v", r)
 	}
-	for name, sp := range map[string]SavedPosition{
-		"another song": {ID: "zz", Index: 3, Position: 40 * time.Second},
-		"wrong index":  {ID: q[3].ID, Index: 2, Position: 40 * time.Second},
-		"out of range": {ID: q[3].ID, Index: 9, Position: 40 * time.Second},
-	} {
-		SavePosition(path, sp)
-		if r, _ := LoadResume(path); r.Index != 1 || r.Position != 5*time.Second {
-			t.Fatalf("%s: the position file applied: %+v", name, r)
-		}
+	SavePosition(path, SavedPosition{ID: "zz", Index: 3, Position: 40 * time.Second})
+	if r, _ := LoadResume(path); r.Index != 1 || r.Position != 5*time.Second {
+		t.Fatalf("another song: the position file applied: %+v", r)
 	}
 	os.WriteFile(positionPath(path), []byte("{garbage"), 0o600)
 	if r, err := LoadResume(path); err != nil || r.Index != 1 {
@@ -316,7 +310,8 @@ func TestResumePrefersTheMatchingLocalQueue(t *testing.T) {
 		h := newHarness(t, nil)
 		SaveResume(h.p.o.ResumePath, Resume{Songs: q, Index: 7, Position: 20 * time.Second})
 		SavePosition(h.p.o.ResumePath, SavedPosition{ID: q[7].ID, Index: 7, Position: 20 * time.Second, Synced: true})
-		h.api.queue = &subsonic.PlayQueue{Songs: q[:5], Current: q[4].ID, Position: 3000}
+		other := []subsonic.Song{{ID: "x1"}, {ID: "x2"}, {ID: "x3"}, {ID: "x4"}, {ID: "x5"}}
+		h.api.queue = &subsonic.PlayQueue{Songs: other, Current: "x5", Position: 3000}
 		r, _ := h.p.Resumable(t.Context())
 		if len(r.Songs) != 5 || r.Index != 4 || r.Position != 3*time.Second {
 			t.Fatalf("resumable = %+v", r)
@@ -356,4 +351,21 @@ func TestResumePrefersTheMatchingLocalQueue(t *testing.T) {
 			t.Fatalf("resumable = %+v", r)
 		}
 	})
+}
+
+// A crash between the big write and the small one can leave a queue file
+// from an older order: the position file's song is found by its id.
+func TestThePositionFileFindsItsSongInAnOlderQueueFile(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	q := songs(5, 100)
+	if err := SaveResume(path, Resume{Songs: q, Index: 1, Position: 5 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	for name, idx := range map[string]int{"another index": 0, "out of range": 9} {
+		SavePosition(path, SavedPosition{ID: q[3].ID, Index: idx, Position: 40 * time.Second, Synced: true})
+		r, _ := LoadResume(path)
+		if r.Index != 3 || r.Position != 40*time.Second || r.Synced {
+			t.Fatalf("%s: %+v, want song 3 at 40 s, not synced", name, r)
+		}
+	}
 }

@@ -81,11 +81,27 @@ func LoadResume(path string) (*Resume, error) {
 	}
 	if b, err := os.ReadFile(positionPath(path)); err == nil {
 		var sp SavedPosition
-		if json.Unmarshal(b, &sp) == nil && sp.Index >= 0 && sp.Index < len(r.Songs) && r.Songs[sp.Index].ID == sp.ID && sp.Position >= 0 {
-			r.Index, r.Position, r.Synced = sp.Index, sp.Position, sp.Synced
+		if json.Unmarshal(b, &sp) == nil && sp.Position >= 0 {
+			if sp.Index >= 0 && sp.Index < len(r.Songs) && r.Songs[sp.Index].ID == sp.ID {
+				r.Index, r.Position, r.Synced = sp.Index, sp.Position, sp.Synced
+			} else if i := indexOfSong(r.Songs, sp.ID); i >= 0 {
+				// The queue file is older than the position file (a crash
+				// between the two writes): the song moved. Synced stays
+				// false, as the queue it describes is not this one.
+				r.Index, r.Position = i, sp.Position
+			}
 		}
 	}
 	return r, nil
+}
+
+func indexOfSong(songs []subsonic.Song, id subsonic.ID) int {
+	for i := range songs {
+		if songs[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func loadQueueFile(path string) (*Resume, error) {

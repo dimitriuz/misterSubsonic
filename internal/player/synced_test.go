@@ -77,9 +77,25 @@ func TestASyncedLocalQueueYieldsToADifferingServerQueue(t *testing.T) {
 	h := newHarness(t, nil)
 	SaveResume(h.p.o.ResumePath, Resume{Songs: q, Index: 7, Position: 20 * time.Second})
 	SavePosition(h.p.o.ResumePath, SavedPosition{ID: q[7].ID, Index: 7, Position: 20 * time.Second, Synced: true})
+	other := []subsonic.Song{{ID: "x1"}, {ID: "x2"}, {ID: "x3"}}
+	h.api.queue = &subsonic.PlayQueue{Songs: other, Current: "x2", Position: 3000}
+	r, _ := h.p.Resumable(t.Context())
+	if len(r.Songs) != 3 || r.Index != 1 || r.Position != 3*time.Second {
+		t.Fatalf("resumable = %+v", r)
+	}
+}
+
+// The server is on another song of the same queue (the user skipped on
+// another device): the whole local queue resumes there, not the 500-song
+// window.
+func TestASyncedLocalQueueResumesAtTheServersSongWhenItIsInTheQueue(t *testing.T) {
+	q := songs(40, 100)
+	h := newHarness(t, nil)
+	SaveResume(h.p.o.ResumePath, Resume{Songs: q, Index: 7, Position: 20 * time.Second})
+	SavePosition(h.p.o.ResumePath, SavedPosition{ID: q[7].ID, Index: 7, Position: 20 * time.Second, Synced: true})
 	h.api.queue = &subsonic.PlayQueue{Songs: q[:5], Current: q[4].ID, Position: 3000}
 	r, _ := h.p.Resumable(t.Context())
-	if len(r.Songs) != 5 || r.Index != 4 || r.Position != 3*time.Second {
+	if len(r.Songs) != 40 || r.Index != 4 || r.Position != 3*time.Second {
 		t.Fatalf("resumable = %+v", r)
 	}
 }
@@ -457,5 +473,38 @@ func TestExitWritesTheNewestQueueEvenIfAWriteIsPending(t *testing.T) {
 	r, _ := LoadResume(h.p.o.ResumePath)
 	if r == nil || len(r.Songs) != 10 {
 		t.Fatalf("resume = %+v", r)
+	}
+}
+
+// A server save for song A is still in flight when the user moves on to B and
+// quits. The exit save for B must be the last the server hears, or the
+// server ends on A while the local file says B is synced.
+func TestTheExitSaveWaitsForASaveInFlight(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(6, 3000), 0)
+	a := h.playAndStart(1)
+	h.tickAt(a.ID, time.Second)
+	h.settle()
+
+	gate := make(chan struct{})
+	h.api.mu.Lock()
+	h.api.blockOnce = gate
+	h.api.mu.Unlock()
+	savedAgain(h, a.ID) // the save for A is now stuck in the server
+	h.p.Next()
+	b := h.playAndStart(2)
+	h.tickAt(b.ID, time.Second)
+	go func() { time.Sleep(100 * time.Millisecond); close(gate) }()
+	h.cancel()
+	<-h.done
+	h.waitFor("saves idle", func() bool { return h.p.busy.Load() == 0 })
+	h.api.mu.Lock()
+	cur := h.api.saveCur
+	h.api.mu.Unlock()
+	if cur != "sb" {
+		t.Fatalf("the server's last save is for %q, want sb", cur)
+	}
+	if sp := readPosition(t, h); sp.ID != "sb" || !sp.Synced {
+		t.Fatalf("position file = %+v, want sb synced", sp)
 	}
 }
