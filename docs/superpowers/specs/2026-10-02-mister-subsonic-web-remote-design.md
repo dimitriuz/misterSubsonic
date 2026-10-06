@@ -116,6 +116,7 @@ JSON over HTTP. Errors are `{"error": "message"}`, with 400, 403, 404 or 503.
 | `remove` | `index` | |
 | `move` | `from`, `to` | |
 | `clear` | | empty the queue |
+| `screenshot` | | as the screenshot key (F12): a PNG in the screenshots folder, and the toast on the TV. 409 `remote: screenshot in progress` while one is saving, and also when the last one from the remote was less than 1 s ago (so a phone that taps again and again doesn't write to the SD card); 503 `remote: screenshots are off` with no screenshots folder |
 
 - An index that is out of range, or no longer refers to the song the page showed, gets 409. The page then reloads the queue.
 - To make that check possible, `jump`, `remove` and `move` carry the song id the page saw.
@@ -155,7 +156,8 @@ All of these are read-only, with a 10 s timeout.
   - a progress bar you can tap or drag to seek;
   - previous, play/pause and next;
   - a volume slider and mute;
-  - star, shuffle and repeat (off, all, one).
+  - star, shuffle and repeat (off, all, one);
+  - a small Screenshot button on its own line above the cover, at the right. It is a deliberate exception to the 44 px rule: it is a rare maintenance action, and a full-size button would take a line of the phone's screen from the cover.
 - **Queue:**
   - the current song is highlighted, and tapping a song plays from it;
   - each row has a ⋯ menu: Remove, Move up, Move down;
@@ -220,7 +222,7 @@ All of these are read-only, with a 10 s timeout.
 - **`internal/player`:** `Move` keeps the current song playing, and its index follows the move.
 - **`internal/config`:** the keys, the default, the bad-port warning, and an editor round trip.
 - **`cmd/mistersubsonic`:** the server starts when enabled, the bind failure is a toast not a crash, and it closes on exit.
-- **e2e (`scripts/e2e-ui.sh`):** the app runs with the mock Subsonic server and the remote on; curl fetches `/api/state`, sends a toggle, and runs a search and a play.
+- **e2e (`scripts/e2e-ui.sh`):** the app runs with the mock Subsonic server and the remote on; curl fetches `/api/state`, sends a toggle, and runs a search and a play. It also posts `screenshot` and checks that a PNG appears in the screenshots folder.
 - **JS:** if `node` is on the build machine, a small test of the page's state reducer runs. Otherwise it is skipped. The page itself is checked by hand on the desktop app (`-display view`, with the remote on) before the plan's last task.
 - **No test touches real devices or sound.**
 

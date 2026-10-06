@@ -22,6 +22,14 @@ var ErrBusy = errors.New("remote: the MiSTer is busy")
 // connection to act on (503).
 var ErrNoConnection = errors.New("remote: no connection")
 
+// ErrShooting is what the Controller returns when a screenshot is already
+// being saved (409).
+var ErrShooting = errors.New("remote: screenshot in progress")
+
+// ErrNoScreenshots is what the Controller returns when the app has no
+// screenshots folder (503).
+var ErrNoScreenshots = errors.New("remote: screenshots are off")
+
 // Controller is everything the server needs from the app. Tests use fakes.
 type Controller interface {
 	State() State
@@ -171,7 +179,7 @@ func validate(b *cmdBody) (Command, error) {
 		c.On = *b.On
 	}
 	switch c.Do {
-	case "toggle", "next", "prev", "clear":
+	case "toggle", "next", "prev", "clear", "screenshot":
 	case "mute", "shuffle", "star":
 		if b.On == nil {
 			return c, errors.New("on is required")
@@ -279,6 +287,10 @@ func (s *Server) writeCtlError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusServiceUnavailable, ErrBusy.Error())
 	case errors.Is(err, ErrNoConnection):
 		writeError(w, http.StatusServiceUnavailable, ErrNoConnection.Error())
+	case errors.Is(err, ErrShooting):
+		writeError(w, http.StatusConflict, ErrShooting.Error())
+	case errors.Is(err, ErrNoScreenshots):
+		writeError(w, http.StatusServiceUnavailable, ErrNoScreenshots.Error())
 	default:
 		// A library error out of Play: told by its kind, never by its text,
 		// which can hold the server URL and credentials (as in browse.go).

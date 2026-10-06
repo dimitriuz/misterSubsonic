@@ -133,6 +133,7 @@ func TestCmdValidation(t *testing.T) {
 		{"next", `{"do":"next"}`, 200, &Command{Do: "next"}},
 		{"prev", `{"do":"prev"}`, 200, &Command{Do: "prev"}},
 		{"clear", `{"do":"clear"}`, 200, &Command{Do: "clear"}},
+		{"screenshot", `{"do":"screenshot"}`, 200, &Command{Do: "screenshot"}},
 		{"seek", `{"do":"seek","position_ms":4000}`, 200, &Command{Do: "seek", PositionMS: 4000}},
 		{"seek negative", `{"do":"seek","position_ms":-1}`, 400, nil},
 		{"volume", `{"do":"volume","db":-20}`, 200, &Command{Do: "volume", DB: -20}},
@@ -187,6 +188,8 @@ func TestCmdErrorMapping(t *testing.T) {
 		{ErrStale, 409, ErrStale.Error()},
 		{ErrBusy, 503, ErrBusy.Error()},
 		{ErrNoConnection, 503, ErrNoConnection.Error()},
+		{ErrShooting, 409, "remote: screenshot in progress"},
+		{ErrNoScreenshots, 503, "remote: screenshots are off"},
 		{errors.New("boom http://user:pw@server/rest?t=secret"), 500, "internal error"},
 	} {
 		f := newFake()

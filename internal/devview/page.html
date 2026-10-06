@@ -7,14 +7,14 @@
 </style></head>
 <body>
 <img id="f" alt="waiting for the first frame…">
-<p>Arrows move · Enter = A · Esc/Backspace = B · Tab = X · N = Y · Q = Queue · PgUp/PgDn = L/R · Space = Start · S = Select · media keys · letters type in Search</p>
+<p>Arrows move · Enter = A · Esc/Backspace = B · Tab = X · N = Y · Q = Queue · PgUp/PgDn = L/R · Space = Start · V or S = Select · F12/Scroll Lock = screenshot · media keys · letters type in Search</p>
 <script>
 // Buttons are mapped on e.code, not e.key: Shift/CapsLock change key ("s" vs
 // "S") between keydown and keyup. The typed character (e.key) goes along as
 // t= so text fields can use letters that are also buttons.
 const keys = {ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right",
   Enter:"a", NumpadEnter:"a", Escape:"b", Backspace:"b", Tab:"x", KeyN:"y", KeyQ:"queue", KeyM:"mute",
-  PageUp:"l", PageDown:"r", Space:"start", KeyS:"select",
+  PageUp:"l", PageDown:"r", Space:"start", KeyS:"select", KeyV:"select", F12:"screenshot",
   AudioVolumeUp:"volup", AudioVolumeDown:"voldown", AudioVolumeMute:"mute", MediaPlayPause:"playpause",
   MediaTrackNext:"next", MediaTrackPrevious:"prev", ScrollLock:"screenshot", PrintScreen:"screenshot"};
 const held = new Set();

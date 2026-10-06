@@ -354,7 +354,7 @@ type testApp struct {
 	now  time.Time
 }
 
-func newTestApp(t *testing.T, prof Profile) *testApp {
+func newTestApp(t testing.TB, prof Profile) *testApp {
 	t.Helper()
 	ta := &testApp{disp: gfx.NewHeadless(prof.W, prof.H, ""), lib: sampleLibrary(), pl: newFakePlayer(), now: time.Unix(1_800_000_000, 0)}
 	a, err := New(Options{Display: ta.disp, Profile: prof, Library: ta.lib, Player: ta.pl, Art: newFakeArt(),
@@ -369,7 +369,7 @@ func newTestApp(t *testing.T, prof Profile) *testApp {
 }
 
 // settle runs posted work until no loads are pending, then renders.
-func (ta *testApp) settle(t *testing.T) *gfx.Canvas {
+func (ta *testApp) settle(t testing.TB) *gfx.Canvas {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for ta.loads > 0 || len(ta.post) > 0 {
@@ -388,8 +388,8 @@ func (ta *testApp) settle(t *testing.T) *gfx.Canvas {
 
 // redrawDue reports whether the next frame redraws anything (all of it, or
 // damaged parts); clean forgets both.
-func (ta *testApp) redrawDue() bool { return ta.dirty || len(ta.damage) > 0 }
-func (ta *testApp) clean()          { ta.dirty, ta.damage = false, nil }
+func (ta *testApp) redrawDue() bool { return ta.dirty || len(ta.damage) > 0 || len(ta.viz.dmg) > 0 }
+func (ta *testApp) clean()          { ta.dirty, ta.damage, ta.viz.dmg = false, nil, nil }
 
 func (ta *testApp) press(b input.Button) {
 	ta.onInput(input.Event{Button: b, Kind: input.Press})

@@ -103,3 +103,22 @@ func TestPageNeedsNoInlineCode(t *testing.T) {
 		}
 	}
 }
+
+// The Screenshot button takes its own line above the cover. Pinned over the
+// corner of the page it sat on the cover of a phone's Now Playing.
+func TestScreenshotButtonDoesNotOverlayTheCover(t *testing.T) {
+	b, err := webFS.ReadFile("web/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\.shot\s*\{([^}]*)\}`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("no .shot rule")
+	}
+	if strings.Contains(m[1], "position: absolute") || strings.Contains(m[1], "position:absolute") {
+		t.Fatalf(".shot is positioned over the page: %s", m[1])
+	}
+	if !strings.Contains(m[1], "margin-left: auto") {
+		t.Fatalf(".shot does not sit at the right of its own line: %s", m[1])
+	}
+}

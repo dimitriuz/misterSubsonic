@@ -207,11 +207,16 @@ The loop records the **frame index where each track starts in the ring's output*
 - At track start the player sends `scrobble(id, submission=false)`.
 - When accumulated *listened* time reaches `min(duration/2, 240 s)`, it sends `scrobble(id, submission=true, time=<start epoch ms>)` once. Seeking does not count as listening.
 - Scrobbling can be turned off with `scrobble = false`.
-- A failed submission is appended to a persistent retry queue (`cache/scrobbles.json`, capped at 500 entries). The queue is flushed on the next success and at startup.
+- A failed submission is appended to a persistent retry queue (`cache/scrobbles.json` in the server's folder, `servers/<name>-<id>/`, capped at 500 entries). The queue is flushed on the next success and at startup.
 
 **Resume**
-- On exit, and every 30 s while playing, the player calls `savePlayQueue(ids, current, position)` and also writes the same data locally to `state.json`.
-- At startup, `getPlayQueue` is used when available, with `state.json` as the fallback.
+- On exit, and every 30 s while playing or paused, the player calls `savePlayQueue(ids, current, position)` by form POST (GET if the server refuses; only an HTTP 404, 405, 415 or 501 is remembered, until a GET fails), with a window of at most 500 songs in play order, from at most 50 before the current one. A paused player whose song, index and position haven't changed sends and writes nothing new.
+- Locally it keeps two files per server, in `servers/<name>-<id>/` (`<id>` is 8 hex digits of the name's hash; an upgraded install keeps the legacy `servers/<name>/`):
+  - `state.json`, the whole queue (6,000 songs is about 7 MB), written only when the queue changed (a jump or a natural song change is not a change), marshalled on the player goroutine and written on another, and on exit;
+  - `position.json`, a few bytes: the song id, its index, the position, and `synced`, written at each save when it differs from the last.
+- A queue change is also saved while stopped (the queue ended, or Clear or an edit after it), at the next 30 s tick, so a power-off after it keeps it.
+- `synced` is true when the last server save succeeded for that very song and queue. It is how a device tells "the server's queue is another device's" from "my saves to the server failed".
+- At startup, the local queue is used when its current song is the server's current song (with the server's position if clearly later). When they differ: if the local copy is `synced`, the user played elsewhere: when the server's song is in the local queue, the whole local queue resumes at that song and the server's position, otherwise `getPlayQueue`'s queue is used; if it is not (an old install, whose files lack `position.json` or the field, counts as not synced), the server's queue may be only what an earlier save left there, and the local one is used. With no server queue, the local one.
 - If a saved queue exists, Home shows a "Resume: <title> — <artist>" item.
 
 **Errors**
@@ -304,19 +309,19 @@ Wizard: Server URL → Username → Password → (API key, optional) → Test �
 | Start | play/pause | full-screen visualizer when a song is loaded and not stopped, else play/pause |
 | Select | shuffle-play current list | press: next visualizer style (Off → Bars → Scope → VU → Waterfall; in full screen without Off); hold 1 s: mute |
 
-Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pause; full screen on Now Playing), PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue.
+Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pause; full screen on Now Playing), PgUp/PgDn = L/R, `n` = Now Playing, `q` = Queue, `v` = Select (a text field takes it as the letter).
 
 **Shuffle and repeat** are independent and can be on together; they live in the X menu on Now Playing and in the queue's X menu. **Visualizer:** see the Plan 6 spec (`2026-10-01-mister-subsonic-visualizer-design.md`).
 
-**Mute** is M on a keyboard, the media Mute key, or holding Select on Now Playing for one second (the release after that hold does nothing). Settings → Playback has no Volume or Mute rows; volume is Up/Down on Now Playing and the media keys. **Settings help:** the focused setting's help text (one or two dim lines) shows under a settings list, and Transcode bitrate is listed only while Transcode to is mp3.
+**Mute** is M on a keyboard, the media Mute key, or holding Select (V on a keyboard) on Now Playing for one second (the release after that hold does nothing). Settings → Playback has no Volume or Mute rows; volume is Up/Down on Now Playing and the media keys. **Settings help:** the focused setting's help text (one or two dim lines) shows under a settings list, and Transcode bitrate is listed only while Transcode to is mp3.
 
 **Media keys** (volume up and down, mute, play/pause, next, previous, fast-forward and rewind) work on every screen. The top screen gets each key first, so a text field or a screen with its own meaning for it keeps it; the X menu, the exit prompt and the screensaver let them through (a media key wakes the screensaver and acts on the first press). Next and previous need a queue. Seeking needs a current track, moves ±10 s (held: ±30 s, at most four seeks a second) and stops a second before the end.
 
-**Screenshot key:** Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity.
+**Screenshot key:** F12, Print Screen or Scroll Lock (MiSTer's Alt+Scroll Lock, which the MiSTer Companion remote sends) saves the frame on screen as `YYYYMMDD_HHMMSS.png` to `/media/fat/screenshots/MiSTer_Subsonic`. It is handled before everything else, the screensaver included, and does not count as activity. The web remote has a Screenshot button on Now Playing (`POST /api/cmd {"do":"screenshot"}`: the same save, 409 `remote: screenshot in progress` while one runs).
 
 **Remote (Settings → Remote, Plan 7):** two rows. "Remote" turns the web remote On or Off (`remote.enabled`, saved at once; a failed start, such as a port in use, leaves it off and shows a toast). "Address" is an info row showing the URL to open ("no network" when on without an address, "Off" when off). The port is `remote.port` and needs a restart. The help text says anyone on the network can control playback, over plain http. Details: `2026-10-02-mister-subsonic-web-remote-design.md`.
 
-**Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select has no key, so a keyboard shows no Select hint; the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
+**Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select is V on a keyboard, so the keyboard hint bar shows V for it (and a text field takes V as the letter); the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
 
 Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), or holding B for 2 s on the Home root, with a confirmation.
 
@@ -341,8 +346,10 @@ Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the
 /media/fat/mistersubsonic/mistersubsonic     binary
 /media/fat/mistersubsonic/config.toml        created by wizard or by hand (example shipped as config.example.toml)
 /media/fat/mistersubsonic/fonts/             optional fallback fonts
-/media/fat/mistersubsonic/cache/             cover art LRU, scrobble retry queue
-/media/fat/mistersubsonic/state.json         local resume state
+/media/fat/mistersubsonic/servers/<name>-<id>/            one folder per server: <id> is 8 hex digits of the name's hash (an upgraded install keeps its legacy servers/<name>/)
+/media/fat/mistersubsonic/servers/<name>-<id>/cache/      cover art LRU, scrobble retry queue
+/media/fat/mistersubsonic/servers/<name>-<id>/state.json     local resume: the queue
+/media/fat/mistersubsonic/servers/<name>-<id>/position.json  local resume: where in it, and whether the server has it
 /media/fat/mistersubsonic/log.txt            rotating log (1 MB × 2)
 ```
 

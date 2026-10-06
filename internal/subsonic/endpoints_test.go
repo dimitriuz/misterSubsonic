@@ -1,6 +1,8 @@
 package subsonic
 
 import (
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +194,128 @@ func TestGetSongMissingIsNotFound(t *testing.T) {
 	s.override["getSong"] = `{"subsonic-response":{"status":"ok","version":"1.16.1"}}`
 	if _, err := c.GetSong(ctx, "nope"); Classify(err) != KindNotFound {
 		t.Fatalf("empty reply: err = %v", err)
+	}
+}
+
+func TestSavePlayQueuePostsAForm(t *testing.T) {
+	s, c := connected(t)
+	ids := make([]ID, 700)
+	for i := range ids {
+		ids[i] = ID(fmt.Sprintf("so-%d", i))
+	}
+	if err := c.SavePlayQueue(ctx, ids, "so-9", 61500*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	method, ct, urlq := s.request("savePlayQueue")
+	if method != "POST" || ct != "application/x-www-form-urlencoded" {
+		t.Fatalf("savePlayQueue was %s %q", method, ct)
+	}
+	if urlq != "" {
+		t.Fatalf("the URL carries a query (%d bytes); credentials and ids belong in the body", len(urlq))
+	}
+	q := s.query("savePlayQueue")
+	if len(q["id"]) != 700 || q.Get("current") != "so-9" || q.Get("position") != "61500" || q.Get("t") == "" || q.Get("u") != "alice" {
+		t.Fatalf("form = %d ids, current %q, position %q, t %q", len(q["id"]), q.Get("current"), q.Get("position"), q.Get("t"))
+	}
+}
+
+func TestSavePlayQueueFallsBackToGet(t *testing.T) {
+	for _, status := range []int{http.StatusMethodNotAllowed, http.StatusNotImplemented} {
+		s, c := connected(t)
+		s.postStatus = status
+		if err := c.SavePlayQueue(ctx, []ID{"so-1", "so-2"}, "so-2", time.Second); err != nil {
+			t.Fatalf("status %d: %v", status, err)
+		}
+		method, _, _ := s.request("savePlayQueue")
+		q := s.query("savePlayQueue")
+		if method != "GET" || strings.Join(q["id"], ",") != "so-1,so-2" || q.Get("current") != "so-2" {
+			t.Fatalf("status %d: fallback was %s %v", status, method, q)
+		}
+	}
+}
+
+// A server that refuses POSTs gets one request per save, not two, once the
+// client has learned that.
+func TestSavePlayQueueRemembersThatThePostFellBack(t *testing.T) {
+	s, c := connected(t)
+	s.postStatus = http.StatusMethodNotAllowed
+	for i := 0; i < 3; i++ {
+		if err := c.SavePlayQueue(ctx, []ID{"so-1", "so-2"}, "so-2", time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET GET GET" {
+		t.Fatalf("requests = %q, want one POST and then GETs only", got)
+	}
+}
+
+// The memory is only for a GET that worked: a server that is down does not
+// make the client give up on POST.
+func TestSavePlayQueueDoesNotRememberAFailedFallback(t *testing.T) {
+	s, c := connected(t)
+	s.postStatus = http.StatusMethodNotAllowed
+	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}`
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	s.postStatus = 0
+	delete(s.override, "savePlayQueue")
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET POST" {
+		t.Fatalf("requests = %q", got)
+	}
+}
+
+func TestSavePlayQueueDoesNotRetryAuthErrors(t *testing.T) {
+	s, c := connected(t)
+	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":50,"message":"not allowed"}}}`
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err == nil {
+		t.Fatal("want the error")
+	}
+	if m, _, _ := s.request("savePlayQueue"); m != "POST" {
+		t.Fatalf("an authorization error fell back to %s", m)
+	}
+}
+
+func TestSavePlayQueueFallsBackOnASubsonicError(t *testing.T) {
+	s, c := connected(t)
+	s.override["savePlayQueue"] = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"use GET"}}}`
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	if m, _, _ := s.request("savePlayQueue"); m != "GET" {
+		t.Fatalf("a generic error did not fall back; last method %s", m)
+	}
+}
+
+const subsonicGenericError = `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"use GET"}}}`
+
+// A Subsonic error on the POST is a one-off: the next save tries POST again.
+func TestSavePlayQueueDoesNotStickToGetAfterASubsonicError(t *testing.T) {
+	s, c := connected(t)
+	s.postOverride = map[string]string{"savePlayQueue": subsonicGenericError}
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	_ = c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0)
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET POST GET" {
+		t.Fatalf("requests = %q, want POST tried each time", got)
+	}
+}
+
+// When a GET fails after the client stuck to GET, it goes back to POST.
+func TestSavePlayQueueGoesBackToPostWhenTheStickyGetFails(t *testing.T) {
+	s, c := connected(t)
+	s.postStatus = http.StatusMethodNotAllowed
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	s.override["savePlayQueue"] = subsonicGenericError
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err == nil {
+		t.Fatal("want the error")
+	}
+	s.postStatus = 0
+	delete(s.override, "savePlayQueue")
+	if err := c.SavePlayQueue(ctx, []ID{"so-1"}, "so-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.methodList("savePlayQueue"), " "); got != "POST GET GET POST" {
+		t.Fatalf("requests = %q", got)
 	}
 }

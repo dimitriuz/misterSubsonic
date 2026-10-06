@@ -86,6 +86,13 @@ function makeApi(fetchFn) {
   };
 }
 
+// takeScreenshot asks the app to save its screen and returns the toast text;
+// it rejects with the server's message (a save already running, no folder).
+async function takeScreenshot(api) {
+  await api.post('/api/cmd', { do: 'screenshot' });
+  return 'Screenshot saved';
+}
+
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 
 function addedMessage(how, n) {
@@ -107,7 +114,7 @@ function parseHash(h) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { initial, reduce, position, backoff, retryDelay, bannerText, WATCHDOG_MS, makeWatchdog, splitPath, albumsURL, fmtTime, makeApi, addedMessage, plural, moveTarget, parseHash };
+  module.exports = { initial, reduce, position, backoff, retryDelay, bannerText, WATCHDOG_MS, makeWatchdog, splitPath, albumsURL, fmtTime, makeApi, takeScreenshot, addedMessage, plural, moveTarget, parseHash };
 }
 
 // ---- the page ----
@@ -330,6 +337,7 @@ if (typeof document !== 'undefined') (function () {
     $('b-star').onclick = () => S.state && S.state.song && cmd({ do: 'star', on: !S.state.song.starred });
     $('b-shuffle').onclick = () => S.state && cmd({ do: 'shuffle', on: !S.state.shuffle });
     $('b-repeat').onclick = () => S.state && cmd({ do: 'repeat', mode: { off: 'all', all: 'one', one: 'off' }[S.state.repeat] || 'off' });
+    $('b-shot').onclick = async () => { try { toast(await takeScreenshot(api)); } catch (e) { toast(e.message, true); } };
     $('b-mute').onclick = () => S.state && cmd({ do: 'mute', on: !S.state.muted });
     $('volume').addEventListener('input', (e) => {
       const db = Number(e.target.value);

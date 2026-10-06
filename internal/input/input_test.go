@@ -212,7 +212,7 @@ func TestMediaKeys(t *testing.T) {
 		keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
 		keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
 		keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
-		keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot,
+		keySysRq: BtnScreenshot, keyScrollLock: BtnScreenshot, keyF12: BtnScreenshot,
 	} {
 		got := tr.handle(evKey, code, 1)
 		if len(got) != 1 || got[0].Button != want || got[0].Kind != Press || got[0].Rune != 0 {
@@ -358,5 +358,16 @@ func TestParseMisterAxesSkipsHats(t *testing.T) {
 	axes, _ := ParseMisterAxes(b)
 	if len(axes) != 1 || axes[AxisKey{0, false}] != BtnA {
 		t.Fatalf("axes = %v", axes)
+	}
+}
+
+// V is Select on a keyboard (which has no such key) and still types "v".
+func TestVIsSelectAndTypesV(t *testing.T) {
+	tr := newTranslator(nil, nil)
+	if got := tr.handle(evKey, keyV, 1); len(got) != 1 || got[0] != (Event{Button: BtnSelect, Kind: Press, Rune: 'v'}) {
+		t.Fatalf("V press = %v", got)
+	}
+	if got := tr.handle(evKey, keyV, 0); len(got) != 1 || got[0] != (Event{Button: BtnSelect, Kind: Release, Rune: 'v'}) {
+		t.Fatalf("V release = %v", got)
 	}
 }

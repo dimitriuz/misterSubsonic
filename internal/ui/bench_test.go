@@ -50,7 +50,7 @@ func BenchmarkRepaint(b *testing.B) {
 	}
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
-			t := &testing.T{}
+			t := testing.TB(b)
 			ta := newTestApp(t, c.prof)
 			ta.verify = false
 			ta.o.Display = nullDisplay{c.fbW, c.fbH} // the framebuffer's pack is measured in gfx
@@ -96,9 +96,9 @@ func (d nullDisplay) Close() error              { return nil }
 func BenchmarkScreenshot(b *testing.B) {
 	for _, s := range []struct{ w, h int }{{960, 600}, {1920, 1080}} {
 		b.Run(fmt.Sprintf("%dx%d", s.w, s.h), func(b *testing.B) {
-			ta := newTestApp(&testing.T{}, scaleProfile(ProfileHDMI, s.w, s.h))
+			ta := newTestApp(b, scaleProfile(ProfileHDMI, s.w, s.h))
 			ta.Push(newSidebarRoot())
-			ta.settle(&testing.T{})
+			ta.settle(b)
 			dir := b.TempDir()
 			b.ResetTimer()
 			for i := range b.N {
@@ -153,7 +153,7 @@ func BenchmarkPartial(b *testing.B) {
 	p := PickProfile(1920, 1200, "auto")
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
-			t := &testing.T{}
+			t := testing.TB(b)
 			ta := newTestApp(t, p)
 			ta.verify = false
 			ta.o.Display = nullDisplay{p.W, p.H}

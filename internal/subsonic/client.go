@@ -74,6 +74,8 @@ type Client struct {
 	mu     sync.Mutex
 	method AuthMethod
 	info   *ServerInfo
+
+	getOnly bool // savePlayQueue: the server refused a POST once and took the GET
 }
 
 // NewTokenPair returns a random salt and md5(password+salt), for storing
@@ -242,12 +244,36 @@ func (c *Client) endpointURL(endpoint string, extra url.Values) string {
 }
 
 func (c *Client) call(ctx context.Context, endpoint string, extra url.Values) (*response, error) {
+	return c.do(ctx, http.MethodGet, endpoint, extra)
+}
+
+// callPost sends the parameters as an application/x-www-form-urlencoded body
+// (the OpenSubsonic form-post style), for requests too large for a URL. The
+// auth parameters travel in the body too, so nothing sensitive is in the URL.
+func (c *Client) callPost(ctx context.Context, endpoint string, extra url.Values) (*response, error) {
+	return c.do(ctx, http.MethodPost, endpoint, extra)
+}
+
+func (c *Client) do(ctx context.Context, method, endpoint string, extra url.Values) (*response, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpointURL(endpoint, extra), nil)
+	var req *http.Request
+	var err error
+	if method == http.MethodPost {
+		v := c.params()
+		for k, vs := range extra {
+			v[k] = vs
+		}
+		req, err = http.NewRequestWithContext(ctx, method, c.base+"/rest/"+endpoint+".view", strings.NewReader(v.Encode()))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, c.endpointURL(endpoint, extra), nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("subsonic: %s: %w", endpoint, stripURL(err)) // the URL carries credentials
 	}
@@ -263,7 +289,7 @@ func (c *Client) call(ctx context.Context, endpoint string, extra url.Values) (*
 	r, derr := decodeResponse(body)
 	if derr != nil {
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("subsonic: %s: HTTP %s", endpoint, resp.Status)
+			return nil, &HTTPError{Endpoint: endpoint, Status: resp.StatusCode, Text: resp.Status}
 		}
 		return nil, fmt.Errorf("subsonic: %s: %w", endpoint, derr)
 	}

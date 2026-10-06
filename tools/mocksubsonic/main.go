@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mistersubsonic/internal/audio"
@@ -60,7 +61,8 @@ func main() {
 
 	http.HandleFunc("/rest/", func(w http.ResponseWriter, r *http.Request) {
 		endpoint := strings.TrimSuffix(path.Base(r.URL.Path), ".view")
-		q := r.URL.Query()
+		r.ParseForm() // the URL query, and the body of a form POST (savePlayQueue)
+		q := r.Form
 		log.Printf("%s %s format=%q range=%q query=%q", endpoint, q.Get("id"), q.Get("format"), r.Header.Get("Range"), q.Get("query"))
 		switch endpoint {
 		case "stream":
@@ -84,7 +86,11 @@ func main() {
 			}
 			w.Header().Set("Content-Type", songs[i].ContentType)
 			http.ServeContent(w, r, "", time.Time{}, f)
-		case "ping", "scrobble", "savePlayQueue", "star", "unstar":
+		case "savePlayQueue":
+			sq := recordQueue(r)
+			log.Printf("savePlayQueue: %s with %d ids, current=%q position=%d", r.Method, len(sq.IDs), sq.Current, sq.Position)
+			reply(w, nil)
+		case "ping", "scrobble", "star", "unstar":
 			reply(w, nil)
 		case "getOpenSubsonicExtensions":
 			reply(w, map[string]any{"openSubsonicExtensions": []any{}})
@@ -144,6 +150,30 @@ func main() {
 	})
 	log.Printf("serving %d songs from %s on http://%s", len(songs), *dir, *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+// savedQueue is what the last savePlayQueue request carried.
+type savedQueue struct {
+	Method   string
+	IDs      []string
+	Current  string
+	Position int64
+}
+
+var (
+	savedMu   sync.Mutex
+	lastSaved savedQueue
+)
+
+// recordQueue stores the ids of a savePlayQueue request (a GET or a form
+// POST; r must be parsed) and returns them.
+func recordQueue(r *http.Request) savedQueue {
+	pos, _ := strconv.ParseInt(r.Form.Get("position"), 10, 64)
+	sq := savedQueue{Method: r.Method, IDs: append([]string(nil), r.Form["id"]...), Current: r.Form.Get("current"), Position: pos}
+	savedMu.Lock()
+	lastSaved = sq
+	savedMu.Unlock()
+	return sq
 }
 
 // serveTranscode streams f the way Navidrome sends a live transcode: status

@@ -60,7 +60,7 @@ Four styles: spectrum bars, oscilloscope, VU meters and a spectrogram (waterfall
   - Full screen (Start).
 - The keyboard set gets the same entries where a key exists:
   - Start has a keyboard key: Space.
-  - Select has none, so its hints stay out of the keyboard set.
+  - Select is V on a keyboard, so the keyboard hint bar shows V for it.
 - `TestEveryHintedButtonDoesSomething` covers the new hints, the hold hints included.
 
 ### 2.5 The screensaver
@@ -96,7 +96,9 @@ Four styles: spectrum bars, oscilloscope, VU meters and a spectrogram (waterfall
   - a sweeping spectrogram: a cursor column moves left to right, painting one new spectrum column per frame over the oldest one, like a radar screen;
   - the frequency runs bottom (low) to top (high);
   - the palette runs dark blue → cyan → yellow → white and is precomputed in 256 steps;
-  - the picture never scrolls, because moving the whole area each frame costs too much on the A9 (§5.3).
+  - the picture never scrolls, because moving the whole area each frame costs too much on the A9 (§5.3);
+  - a column blends the two nearest bands in the palette index, so a hot band fades off above and below it instead of showing a block per band;
+  - a strip wider than one column blends from the previous frame's spectrum to this frame's across its width, so the picture doesn't step from frame to frame.
 
 ## 4. Data flow
 
@@ -145,7 +147,8 @@ Pure Go, with no cgo and no allocations per frame after setup.
 
 ### 4.3 Drawing (`internal/ui/viz.go`, `internal/ui/screens_viz.go`)
 - **The styles:** each one draws into a rectangle (`drawViz(c, r, style, state)`). The panel and full screen share them.
-- **Panel damage:** only the panel's rectangle is damaged, through `App.Damage` and the partial redraws, so the rest of Now Playing isn't redrawn.
+- **Panel damage:** the visualizer damages only what changed in the panel (a bar's own small area, the waterfall's new strip), not the whole panel, so the rest of Now Playing isn't redrawn.
+  - Its own small areas are drawn directly, without being merged into one bounding box, and presented as separate rectangles. Damage from anything else (a toast, the hint bar) still goes through `App.Damage` and the merged partial redraws.
 - **Full-screen damage:** full screen damages its visualizer area.
   - The corner line is damaged only when its text changes (each second for the time) or when it moves.
 - **Verify mode** (on in every UI test) must pass with the visualizer running.
@@ -172,8 +175,9 @@ Pure Go, with no cgo and no allocations per frame after setup.
 ### 5.4 The safety valve
 - **Measuring:** the app measures each visualizer frame: analysis, draw and present.
 - **Stepping down:** if the average over 1 s goes over 60% of the frame's budget (for example 20 ms at 30 fps), the rate steps down: 30 → 15 → 10 fps.
-- **Stepping up:** after 10 s comfortably under budget, it steps back up one level.
-- **Log:** every step down is logged.
+- **Stepping up:** after 10 s with the average under 60% of the faster level's budget (what would step it down again), it steps back up one level.
+- **Resizing:** when the picture changes size (the panel to full screen and back), the valve starts again at the top rate with its measurements cleared, because what it learnt in one size isn't true in the other.
+- **Log:** a step down is logged, and so is staying over budget at the lowest rate, each kind at most once a minute, so a valve that cycles doesn't write the SD card's log every few seconds.
 - **Priority:** audio and input always go first.
 
 ### 5.5 Configuration

@@ -33,6 +33,15 @@ type APIError struct {
 
 func (e *APIError) Error() string { return fmt.Sprintf("subsonic: error %d: %s", e.Code, e.Message) }
 
+// HTTPError is a non-200 answer that carries no Subsonic response.
+type HTTPError struct {
+	Endpoint string
+	Status   int
+	Text     string // e.g. "405 Method Not Allowed"
+}
+
+func (e *HTTPError) Error() string { return fmt.Sprintf("subsonic: %s: HTTP %s", e.Endpoint, e.Text) }
+
 // ErrPlaintextRefused: the server only accepts the plain password, and the
 // connection isn't HTTPS, and allow_plaintext_password is off.
 var ErrPlaintextRefused = errors.New("subsonic: server needs the plain password; use https or set allow_plaintext_password")
