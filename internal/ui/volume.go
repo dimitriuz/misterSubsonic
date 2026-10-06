@@ -108,8 +108,9 @@ func fillLine(c *gfx.Canvas, x0, y0, x1, y1, t float64, col gfx.Color) {
 	fillPolygon(c, [][2]float64{{x0 + nx, y0 + ny}, {x1 + nx, y1 + ny}, {x1 - nx, y1 - ny}, {x0 - nx, y0 - ny}}, col)
 }
 
-// shapeBuilds counts the outlines fillRoundRect built (a test reads it).
-var shapeBuilds int
+// shapeBuildHook, when a test sets it, is called for each outline
+// fillRoundRect builds. Nil otherwise.
+var shapeBuildHook func()
 
 // fillRoundRect fills r with corners rounded by rad. Outside the canvas clip
 // it returns before building the outline (28 cos/sin pairs).
@@ -122,7 +123,9 @@ func fillRoundRect(c *gfx.Canvas, r gfx.Rect, rad int, col gfx.Color) {
 		c.Fill(r, col)
 		return
 	}
-	shapeBuilds++
+	if shapeBuildHook != nil {
+		shapeBuildHook()
+	}
 	const n = 6
 	var ptsBuf [4 * (n + 1)][2]float64 // on the stack: drawn every frame
 	pts := ptsBuf[:0]

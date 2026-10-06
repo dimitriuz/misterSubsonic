@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"testing"
 	"time"
+	"unsafe"
 
 	"mistersubsonic/internal/gfx"
 	"mistersubsonic/internal/input"
@@ -36,7 +38,7 @@ func steadyApp(t *testing.T, prof Profile, style VizStyle, full bool) *testApp {
 	(&fakeVisual{}).Window(sig)
 	ta.o.Visual = &cachedVisual{sig}
 	ta.verify = false
-	runFrames(t, ta, 300) // the peak caps hold, then fall to the bars
+	runFrames(t, ta, 150) // the peak caps hold (0.4 s), then fall to the bars (0.5 s), and the VU peaks fall (15 dB/s)
 	ta.verify = true
 	return ta
 }
@@ -97,6 +99,12 @@ func TestVizPresentsItsAreasWithoutOneBoundingBox(t *testing.T) {
 func vizScenario(t *testing.T, prof Profile, style VizStyle, full bool, n int) {
 	t.Helper()
 	ta := vizApp(t, prof, style)
+	fb := newFBSim(ta.P.W, ta.P.H)
+	ta.o.Display = fb
+	ta.dirty = true // the first frame is the whole screen
+	if err := ta.render(); err != nil {
+		t.Fatal(err)
+	}
 	if full {
 		ta.press(input.BtnStart)
 		ta.settle(t)
@@ -128,15 +136,53 @@ func vizScenario(t *testing.T, prof Profile, style VizStyle, full bool, n int) {
 	runFrames(t, ta, n)
 	ta.press(input.BtnB)
 	runFrames(t, ta, n)
+	checkPresented(t, ta, fb)
+}
+
+// checkPresented renders what is pending and fails if the framebuffer
+// differs from the canvas: a pixel that changed was not presented.
+func checkPresented(t *testing.T, ta *testApp, fb *fbSim) {
+	t.Helper()
+	prof, style := ta.P, ta.VizStyle()
+	if ta.redrawDue() {
+		if err := ta.render(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ta.scaler == nil && fb.w == ta.canvas.W && fb.h == ta.canvas.H {
+		want := unsafe.Slice((*byte)(unsafe.Pointer(&ta.canvas.Pix[0])), 4*len(ta.canvas.Pix))
+		if !bytes.Equal(fb.mem, want) {
+			t.Errorf("%s %v: the framebuffer differs from the canvas (%d px): a change was not presented", prof.Name, style, fbDiff(fb.mem, want))
+		}
+	} else {
+		t.Logf("%s: scaled (%dx%d canvas on %dx%d): framebuffer not compared", prof.Name, ta.canvas.W, ta.canvas.H, fb.w, fb.h)
+	}
+}
+
+// fbDiff counts the 4-byte pixels in which a and b differ.
+func fbDiff(a, b []byte) int {
+	n := 0
+	for i := 0; i+4 <= len(a) && i+4 <= len(b); i += 4 {
+		if !bytes.Equal(a[i:i+4], b[i:i+4]) {
+			n++
+		}
+	}
+	return n
 }
 
 // Every style, in the panel and full screen, on the layouts; the biggest
-// screen gets fewer frames (every one is also drawn in full on the side).
+// screen gets fewer frames (every one is also drawn in full on the side), and
+// so does every layout under -race, which makes a frame about five times
+// slower: a step still lasts several frames.
 func TestVizVerifyModeHoldsInPanelAndFullScreen(t *testing.T) {
+	sizes := [3]int{15, 15, 4}
+	if underRace {
+		sizes = [3]int{6, 6, 2}
+	}
 	for _, c := range []struct {
 		prof Profile
 		n    int
-	}{{ProfileHDMI, 15}, {ProfileCRT240, 15}, {PickProfile(1920, 1200, "auto"), 4}} {
+	}{{ProfileHDMI, sizes[0]}, {ProfileCRT240, sizes[1]}, {PickProfile(1920, 1200, "auto"), sizes[2]}} {
 		for style := VizBars; style <= VizWaterfall; style++ {
 			for _, full := range []bool{false, true} {
 				vizScenario(t, c.prof, style, full, c.n)

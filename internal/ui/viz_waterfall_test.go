@@ -105,3 +105,37 @@ func TestWaterfallSweepAllocatesNothing(t *testing.T) {
 		t.Errorf("%v allocations per sweep", n)
 	}
 }
+
+// The waterfall's cursor wraps at the panel's edge: the frames around the
+// wrap are the ones a short run never reaches. Verify mode is on all along.
+func TestWaterfallVerifyHoldsPastAFullSweepOnTheCRT(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		ta := vizApp(t, ProfileCRT240, VizWaterfall)
+		fb := newFBSim(ta.P.W, ta.P.H)
+		ta.o.Display = fb
+		ta.dirty = true
+		if err := ta.render(); err != nil {
+			t.Fatal(err)
+		}
+		if full {
+			ta.press(input.BtnStart)
+			ta.settle(t)
+		}
+		prev, wraps, frames := ta.viz.cursor, 0, 0
+		for after := 0; after < 10 && frames < 20*vizSweep*ta.vizFPS(); frames++ {
+			runFrames(t, ta, 1)
+			if ta.viz.cursor < prev {
+				wraps++
+			}
+			prev = ta.viz.cursor
+			if wraps > 0 {
+				after++ // frames drawn after the first wrap
+			}
+		}
+		if wraps == 0 {
+			t.Fatalf("full=%v: the cursor never wrapped in %d frames", full, frames)
+		}
+		checkPresented(t, ta, fb)
+		t.Logf("full=%v: wrapped after the sweep; %d frames in all", full, frames)
+	}
+}

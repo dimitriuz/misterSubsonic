@@ -107,7 +107,7 @@ func BenchmarkVizRealFrame(b *testing.B) {
 		c{"crt-320x240/bars", 320, 240, true, false, VizBars})
 	for _, cs := range cases {
 		b.Run(cs.name, func(b *testing.B) {
-			t := &testing.T{}
+			t := testing.TB(b)
 			prof := PickProfile(cs.w, cs.h, "auto")
 			if cs.crt {
 				prof = ProfileCRT240

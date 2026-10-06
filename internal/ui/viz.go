@@ -97,13 +97,14 @@ type vizState struct {
 
 	last, next time.Time // the last analysis, the next due (zero: now)
 
-	work    time.Duration // the analysis of the frame awaiting its draw
-	pending bool
-	sum     time.Duration // frame costs since since
-	n       int
-	since   time.Time
-	calm    time.Time // when the cheap spell began (zero: not in one)
-	warned  bool      // the over-budget line was logged in this stay at the floor
+	work                   time.Duration // the analysis of the frame awaiting its draw
+	pending                bool
+	sum                    time.Duration // frame costs since since
+	n                      int
+	since                  time.Time
+	calm                   time.Time // when the cheap spell began (zero: not in one)
+	warned                 bool      // the over-budget line was due in this stay at the floor
+	loggedSlow, loggedOver time.Time // when the valve last wrote each of its log lines
 }
 
 func (a *App) isCRT() bool { return a.P.Name == "crt" }
@@ -281,6 +282,20 @@ func (a *App) sweepWaterfall() stripOf {
 	return stripOf{from, cw, !fresh}
 }
 
+// vizLogEvery is the least time between two log lines of one kind from the
+// valve: a valve that cycles must not write to the SD card's log every few
+// seconds.
+const vizLogEvery = time.Minute
+
+func (a *App) vizLog(last *time.Time, format string, args ...any) {
+	now := a.o.Now()
+	if !last.IsZero() && now.Sub(*last) < vizLogEvery {
+		return
+	}
+	*last = now
+	log.Printf(format, args...)
+}
+
 // vizCost takes in what a visualizer frame cost (analysis, draw, present)
 // and moves the rate: down when the last second averaged over vizSlow of the
 // frame budget, up after vizCalmFor under vizCalm of the faster budget's.
@@ -303,12 +318,12 @@ func (a *App) vizCost(cost time.Duration) {
 	case float64(avg) > vizSlow*float64(budget(v.level)) && v.level < len(v.rates)-1:
 		v.level++
 		v.calm = time.Time{}
-		log.Printf("visualizer: slowing to %d fps", v.rates[v.level])
+		a.vizLog(&v.loggedSlow, "visualizer: slowing to %d fps", v.rates[v.level])
 	case float64(avg) > vizSlow*float64(budget(v.level)): // already at the lowest rate
 		v.calm = time.Time{}
 		if !v.warned {
 			v.warned = true
-			log.Printf("visualizer: over budget at %d fps", v.rates[v.level])
+			a.vizLog(&v.loggedOver, "visualizer: over budget at %d fps", v.rates[v.level])
 		}
 	case v.level > 0 && float64(avg) < vizCalm*float64(budget(v.level-1)):
 		if v.calm.IsZero() {

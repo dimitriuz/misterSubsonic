@@ -43,7 +43,7 @@ func (c *cachedVisual) Window(dst []float32) int {
 }
 
 // vizApp is Now Playing with the visualizer in style, playing, over a fake signal.
-func vizApp(t *testing.T, prof Profile, style VizStyle) *testApp {
+func vizApp(t testing.TB, prof Profile, style VizStyle) *testApp {
 	t.Helper()
 	ta := newTestApp(t, prof)
 	ta.cfg = config.Default()
@@ -57,7 +57,7 @@ func vizApp(t *testing.T, prof Profile, style VizStyle) *testApp {
 }
 
 // runFrames lets the app's own wake loop run for n wakes of the fake clock.
-func runFrames(t *testing.T, ta *testApp, n int) {
+func runFrames(t testing.TB, ta *testApp, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		ta.now = ta.now.Add(ta.untilWake())
@@ -253,6 +253,7 @@ func TestVizSafetyValveStepsDownAndUp(t *testing.T) {
 	}{{ProfileHDMI, []int{30, 15, 10}}, {ProfileCRT240, []int{20, 10}}} {
 		logs.Reset()
 		ta := vizApp(t, c.prof, VizBars)
+		ta.verify = false // the valve is the subject, and the clock runs a minute
 		cost := time.Millisecond
 		ta.o.Display = slowDisplay{ta.disp, ta, &cost}
 		fps := func() int { return ta.vizFPS() }
@@ -271,9 +272,11 @@ func TestVizSafetyValveStepsDownAndUp(t *testing.T) {
 			if fps() != want {
 				t.Fatalf("%s: step %d: %d fps, want %d (log: %s)", c.prof.Name, i+1, fps(), want, logs.String())
 			}
-			if !strings.Contains(logs.String(), "visualizer: slowing to "+strconv.Itoa(want)+" fps") {
-				t.Errorf("%s: no log line for %d fps: %q", c.prof.Name, want, logs.String())
-			}
+		}
+		// One line per minute: the first step is logged, the rest are not.
+		if got := strings.Count(logs.String(), "visualizer: slowing to"); got != 1 ||
+			!strings.Contains(logs.String(), "visualizer: slowing to "+strconv.Itoa(c.rates[1])+" fps") {
+			t.Errorf("%s: slowing lines: %d in %q", c.prof.Name, got, logs.String())
 		}
 		upTo(5 * time.Second)
 		if last := c.rates[len(c.rates)-1]; fps() != last {
@@ -288,7 +291,7 @@ func TestVizSafetyValveStepsDownAndUp(t *testing.T) {
 		if fps() != c.rates[len(c.rates)-2] {
 			t.Fatalf("%s: not one step up after 13 s calm: %d fps", c.prof.Name, fps())
 		}
-		upTo(40 * time.Second)
+		upTo(14 * time.Second) // each step up needs ten seconds of calm
 		if fps() != c.rates[0] {
 			t.Fatalf("%s: never got back to %d fps: %d", c.prof.Name, c.rates[0], fps())
 		}
@@ -316,6 +319,7 @@ func TestVizSafetyValveLogsOnceAtTheFloor(t *testing.T) {
 	for end := ta.now.Add(20 * time.Second); ta.now.Before(end); {
 		runFrames(t, ta, 1)
 	}
+	ta.now = ta.now.Add(vizLogEvery) // a stay within a minute of the last line is not logged again
 	cost = 100 * time.Millisecond
 	for end := ta.now.Add(10 * time.Second); ta.now.Before(end); {
 		runFrames(t, ta, 1)
@@ -367,7 +371,7 @@ func BenchmarkVizFrame(b *testing.B) {
 					name += "-full"
 				}
 				b.Run(name+"/"+style.String(), func(b *testing.B) {
-					t := &testing.T{}
+					t := testing.TB(b)
 					ta := vizApp(t, l.prof, style)
 					if full {
 						ta.press(input.BtnStart)
