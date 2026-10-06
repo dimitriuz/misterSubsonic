@@ -824,6 +824,37 @@ func TestRemoteScreenshot(t *testing.T) {
 	}
 }
 
+// A phone that taps the button over and over would write a PNG per tap to
+// the SD card: the remote's screenshots keep a second apart. A saved one is
+// answered as one still being saved.
+func TestRemoteScreenshotsKeepASecondApart(t *testing.T) {
+	ta, ctl, _ := remoteApp(t)
+	ta.o.ScreenshotDir = t.TempDir()
+	if err := ta.do(t, ctl, remote.Command{Do: "screenshot"}); err != nil {
+		t.Fatal(err)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	ta.now = ta.now.Add(900 * time.Millisecond)
+	if err := ta.do(t, ctl, remote.Command{Do: "screenshot"}); !errors.Is(err, remote.ErrShooting) {
+		t.Fatalf("a second screenshot inside the interval: %v, want ErrShooting", err)
+	}
+	if ta.shooting {
+		t.Fatal("a refused screenshot started saving")
+	}
+	ta.now = ta.now.Add(200 * time.Millisecond)
+	if err := ta.do(t, ctl, remote.Command{Do: "screenshot"}); err != nil {
+		t.Fatalf("a screenshot after the interval: %v", err)
+	}
+	for ta.shooting {
+		(<-ta.post)()
+	}
+	if entries, _ := os.ReadDir(ta.o.ScreenshotDir); len(entries) != 2 {
+		t.Fatalf("screenshots folder holds %d files, want 2", len(entries))
+	}
+}
+
 func TestRemoteScreenshotNeedsAFolder(t *testing.T) {
 	ta, ctl, _ := remoteApp(t)
 	ta.o.ScreenshotDir = ""

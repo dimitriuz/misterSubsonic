@@ -239,6 +239,7 @@ type App struct {
 	muted       bool      // the sound is off (not saved: the app starts with sound)
 	volumeUntil time.Time // the volume panel shows until then (zero: hidden)
 	shooting    bool      // a screenshot is being saved
+	remoteShot  time.Time // when the remote last took one
 	pad         bool      // the last press came from a gamepad (the hint bar follows it)
 
 	damage       []gfx.Rect                 // changed areas for the next frame (dirty means the whole frame)

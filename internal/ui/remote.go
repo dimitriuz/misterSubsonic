@@ -58,6 +58,9 @@ type liveRefs struct {
 
 // publishLive makes the current library, player and art visible to the
 // remote. Call on the UI goroutine after changing them.
+// minRemoteShotGap is the least time between two screenshots taken from the remote.
+const minRemoteShotGap = time.Second
+
 func (a *App) publishLive() {
 	a.live.Store(&liveRefs{lib: a.o.Library, pl: a.o.Player, art: a.o.Art})
 }
@@ -289,7 +292,17 @@ func (a *App) remoteDo(c remote.Command) error {
 			pl.Clear()
 		}
 	case "screenshot": // as the button; nothing on screen or in the state changes
-		return a.screenshot()
+		// A phone that taps again and again would write a PNG per tap to
+		// the SD card: one a second at most, answered as "in progress".
+		now := a.o.Now()
+		if !a.remoteShot.IsZero() && now.Sub(a.remoteShot) < minRemoteShotGap {
+			return remote.ErrShooting
+		}
+		if err := a.screenshot(); err != nil {
+			return err
+		}
+		a.remoteShot = now
+		return nil
 	default:
 		return errors.New("remote: unknown command " + c.Do)
 	}
