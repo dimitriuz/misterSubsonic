@@ -37,8 +37,8 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
    shows buffering, then plays on when the network is back, or shows a clear
    error.
 9. **Mute.** Press M on a keyboard, and hold Select (V on a keyboard) on Now Playing for a second (a short
-   Select press still cycles shuffle/repeat, and the release after the hold does
-   nothing). The volume keys bring the sound back. Settings → Playback has no
+   Select press changes the visualizer style on Now Playing, because shuffle
+   and repeat are in the X menu; the release after the hold does nothing). The volume keys bring the sound back. Settings → Playback has no
    Volume or Mute rows.
 10. **Exit.** Use Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), and holding B for 2 s on the home screen.
     Both return to the Scripts menu with the text readable and "MiSTer
@@ -112,7 +112,7 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 27. **MP3 seeking.** In a long MP3 album, seek a little forward and back with Left and Right on Now Playing. In the last 20 s of a track (when the next one is queued), tap Left once: it plays on from there and the next track starts without a gap. A VBR MP3 lands near the time shown.
 28. **Config comments.** Add a comment line to `config.toml`, change a setting in the app, and exit: the comment is still there.
 29. **Launcher signals.** Start the launcher in one ssh session with `/media/fat/Scripts/MiSTer_Subsonic.sh; echo $?`. From a second ssh session, run `kill -TERM $(ps | grep '[S]cripts/MiSTer_Subsonic.sh' | awk '{print $1}')`. Expected: the app exits, the screen and menu come back, and the first session prints "MiSTer Subsonic closed." and `0`.
-30. **Visualizer benchmarks.** On the MiSTer, in the folder `deploy-dev` copied to, run `./ui.test -test.run '^$' -test.bench VizFrame -test.benchtime 30x` and `./viz.test -test.run '^$' -test.bench AnalyzerUpdate`. Record the numbers in `docs/spikes.md` ("Plan 6 on the MiSTer"). No sound or picture is involved.
+30. **Visualizer benchmarks.** On the MiSTer, in the folder `deploy-dev` copied to, run `./ui.test -test.run '^$' -test.bench VizFrame -test.benchtime 30x`, `./ui.test -test.run '^$' -test.bench VizRealFrame -test.benchtime 50x` and `./viz.test -test.run '^$' -test.bench AnalyzerUpdate`. Record the numbers in `docs/spikes.md` ("Plan 6 on the MiSTer"). No sound or picture is involved.
 31. **Visualizer listening check.** Ask the user before playing anything, and keep the volume low. Play a FLAC album for a few minutes with each style (Bars, Scope, VU, Waterfall) in full screen (Start on Now Playing). There are no dropouts, and `log.txt` has no "visualizer: slowing to" line. If it does, set the frame-rate defaults so that each frame fits in 60% of its budget.
 32. **Visualizer on the TV.** Ask the user before showing anything. The panel under the track info is in a sensible place on HDMI and on a CRT (inside the title-safe area, and on a CRT the text block moves up about 10 px when the visualizer is on, by design). The motion is in time with the sound: bass hits land with the beat, and after a seek or a skip the picture follows within a moment.
 33. **Full screen and the corner line.** After a minute in full screen the title and time line moves to the next corner (top left, top right, bottom right, bottom left). The info line is the part that moves; VU (the L/R glyphs and the segment grid) and Scope (its midline) have a fixed frame by design. The hint bar shows after a press and hides after 3 s. Select (V on a keyboard) in full screen cycles the styles without Off, and Start or B leaves.
@@ -121,7 +121,15 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
 36. **Remote queue editing.** Ask the user before playing anything. While music plays, from the phone: tap a queue row to play from it, move a song up and down (the current song keeps playing, and the TV queue matches), remove one, and clear the queue. Do the same on the TV at the same time: a stale tap on the phone shows "The queue changed" and reloads.
 37. **Remote search and play.** Ask the user before playing anything. On the phone, search for an artist, an album and a song, then play an album, play a song next and add one to the end. Covers show. The Queue tab and the TV agree. Pull the network cable or turn off the phone's wifi for a moment: the page shows "Reconnecting…" and recovers by itself.
 38. **Remote CPU.** Ask the user before playing anything. With a phone connected (Now Playing open) and music playing, run `top` over ssh for a minute. The phone adds less than 5% of one core to the app's CPU compared with the same playback before it connected (record both numbers in `docs/spikes.md`, "Plan 7 on the MiSTer").
-39. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+39. **Plan 7b checks.** Ask the user before playing anything, and keep the volume low.
+    - With a long queue playing (thousands of songs), `servers/<name>-<id>/state.json`'s mtime stays put for minutes (`ls -l --time-style=full-iso`), while `position.json` updates every 30 s.
+    - `log.txt` has no "savePlayQueue" error line.
+    - Restart the app and accept the Resume card: the whole local queue is back, not the server's 500-song window.
+    - The visualizer in full screen at 1920×1200 holds its rate, and `log.txt` has no "visualizer: slowing to" line.
+    - The waterfall looks smooth: no vertical bands, and no steps between one frame and the next.
+    - V cycles the visualizer style on a keyboard (and a text field takes V as a letter), and F12 saves a screenshot.
+    - The web remote's Screenshot button saves a PNG too ("Screenshot saved" on the phone and the TV). Tapping it again within a second shows "screenshot in progress".
+40. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks

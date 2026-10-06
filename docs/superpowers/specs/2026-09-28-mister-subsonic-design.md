@@ -210,8 +210,13 @@ The loop records the **frame index where each track starts in the ring's output*
 - A failed submission is appended to a persistent retry queue (`cache/scrobbles.json`, capped at 500 entries). The queue is flushed on the next success and at startup.
 
 **Resume**
-- On exit, and every 30 s while playing, the player calls `savePlayQueue(ids, current, position)` by form POST (GET if the server refuses), with a window of at most 500 songs in play order, from at most 50 before the current one. Locally it writes `position.json` (song, index, position) every time, and the queue file `state.json` only when the queue changed.
-- At startup, the local queue is used when its current song is the server's current song (with the server's position if clearly later); otherwise `getPlayQueue`'s queue is used, or `state.json` if the server has none.
+- On exit, and every 30 s while playing or paused, the player calls `savePlayQueue(ids, current, position)` by form POST (GET if the server refuses, remembered for the session), with a window of at most 500 songs in play order, from at most 50 before the current one. A paused player whose song, index and position haven't changed sends and writes nothing new.
+- Locally it keeps two files per server, in `servers/<name>-<id>/`:
+  - `state.json`, the whole queue (6,000 songs is about 7 MB), written only when the queue changed (a jump or a natural song change is not a change), marshalled on the player goroutine and written on another, and on exit;
+  - `position.json`, a few bytes: the song id, its index, the position, and `synced`, written at each save when it differs from the last.
+- A queue change is also saved while stopped (the queue ended, or Clear or an edit after it), at the next 30 s tick, so a power-off after it keeps it.
+- `synced` is true when the last server save succeeded for that very song and queue. It is how a device tells "the server's queue is another device's" from "my saves to the server failed".
+- At startup, the local queue is used when its current song is the server's current song (with the server's position if clearly later). When they differ: if the local copy is `synced`, the user played elsewhere and `getPlayQueue`'s queue is used; if it is not (an old install, whose files lack `position.json` or the field, counts as not synced), the server's queue may be only what an earlier save left there, and the local one is used. With no server queue, the local one.
 - If a saved queue exists, Home shows a "Resume: <title> — <artist>" item.
 
 **Errors**
@@ -316,7 +321,7 @@ Keyboard: arrows, Enter = A, Esc/Backspace = B, Tab = X, Space = Start (play/pau
 
 **Remote (Settings → Remote, Plan 7):** two rows. "Remote" turns the web remote On or Off (`remote.enabled`, saved at once; a failed start, such as a port in use, leaves it off and shows a toast). "Address" is an info row showing the URL to open ("no network" when on without an address, "Off" when off). The port is `remote.port` and needs a restart. The help text says anyone on the network can control playback, over plain http. Details: `2026-10-02-mister-subsonic-web-remote-design.md`.
 
-**Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select has no key, so a keyboard shows no Select hint; the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
+**Hint bar:** a line along the bottom of every screen shows the buttons that matter there (the screen's own list, plus Back and Now Playing where the app handles B and Y), drawn as gamepad buttons or keyboard keys after the last press of either kind. Every hinted button does something on its screen. Exceptions: the X menu shows only Choose and Close; Now Playing isn't hinted while typing on a keyboard (N types there); Select is V on a keyboard, so the keyboard hint bar shows V for it (and a text field takes V as the letter); the screensaver hides the bar; a screen that failed to load hints Retry (A), and one that is loading or empty hints nothing of its own. Settings → Display → Hints turns it off (`display.hints`).
 
 Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the home list's last item on CRT), or holding B for 2 s on the Home root, with a confirmation.
 
@@ -342,7 +347,8 @@ Quitting the app is Exit in the main menu (the sidebar's last entry on HDMI, the
 /media/fat/mistersubsonic/config.toml        created by wizard or by hand (example shipped as config.example.toml)
 /media/fat/mistersubsonic/fonts/             optional fallback fonts
 /media/fat/mistersubsonic/cache/             cover art LRU, scrobble retry queue
-/media/fat/mistersubsonic/state.json         local resume state
+/media/fat/mistersubsonic/servers/<name>-<id>/state.json     local resume: the queue
+/media/fat/mistersubsonic/servers/<name>-<id>/position.json  local resume: where in it, and whether the server has it
 /media/fat/mistersubsonic/log.txt            rotating log (1 MB × 2)
 ```
 
