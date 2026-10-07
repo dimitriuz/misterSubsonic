@@ -130,6 +130,7 @@ func TestClearWritesAnEmptyQueueOnExit(t *testing.T) {
 	h.p.PlayNow(songs(3, 3000), 0)
 	a := h.playAndStart(1)
 	h.tickAt(a.ID, time.Second)
+	h.settle() // else the empty queue's write drops the first one, which is right but not counted
 	h.p.Clear()
 	h.cancel()
 	<-h.done

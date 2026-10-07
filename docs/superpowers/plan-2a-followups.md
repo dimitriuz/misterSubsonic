@@ -526,3 +526,11 @@ Still open:
   - the hint-bar overlay sends rects through `drawFrame` for 3 s after a press;
   - bar damage reaches one step low (negligible).
 - **Remote:** the "Screenshot saved" toast shows on acceptance, so a later write failure shows only on the TV and in the log.
+
+## Plan 7c minors (deferred)
+
+- **Tests:** no App-level test drives an `Insetter`-wrapped display, which is used for displays without their own inset. The wrapper is tested on its own.
+- **`copyIn`** doesn't check that the source fits the inner rect. Callers always size it from that rect.
+- **README:**
+  - the CRT wording "a whole number of lines" could say "an integer scale factor";
+  - the note that a margin change refetches covers overstates it for CRT, where the cover size often stays the same.

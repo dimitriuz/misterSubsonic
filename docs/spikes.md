@@ -246,7 +246,7 @@ The analysis alone takes 1.25 ms on HDMI settings and 0.57 ms on CRT settings.
 
 ## Plan 7 on the MiSTer
 
-**Remote CPU:** pending. Ask the user before playing anything. Play a FLAC album with the visualizer off, and over ssh run:
+**Remote CPU (measured 2026-10-06).** Ask the user before playing anything. Play a FLAC album with the visualizer off, and over ssh run:
 
 ```
 top -b -n 12 -d 5 | grep mistersubsonic
