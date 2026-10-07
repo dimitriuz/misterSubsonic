@@ -56,7 +56,16 @@ type Display struct {
 	FullResolution     bool   `toml:"full_resolution"`
 	Hints              bool   `toml:"hints"`
 	Visualizer         string `toml:"visualizer"` // off, bars, scope, vu or waterfall
+	// Overscan margins, whole percents 0..MaxOverscan: the picture is drawn
+	// inside them, for TVs that cut the edges. Left and right are of the
+	// width; Y is of the height, for the top and the bottom each.
+	OverscanLeft  int `toml:"overscan_left"`
+	OverscanRight int `toml:"overscan_right"`
+	OverscanY     int `toml:"overscan_y"`
 }
+
+// MaxOverscan is the largest overscan margin, in percent.
+const MaxOverscan = 10
 
 type Cache struct {
 	CoverArtMB int `toml:"cover_art_mb"`
@@ -104,6 +113,15 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 	default: // a typo must not stop the app: show nothing and say so
 		warnings = append(warnings, fmt.Sprintf("display.visualizer: unknown value %q, using off", cfg.Display.Visualizer))
 		cfg.Display.Visualizer = "off"
+	}
+	for _, o := range []struct {
+		key string
+		v   *int
+	}{{"overscan_left", &cfg.Display.OverscanLeft}, {"overscan_right", &cfg.Display.OverscanRight}, {"overscan_y", &cfg.Display.OverscanY}} {
+		if c := min(max(*o.v, 0), MaxOverscan); c != *o.v { // as above: carry on with the nearest value
+			warnings = append(warnings, fmt.Sprintf("display.%s: %d is not 0..%d, using %d", o.key, *o.v, MaxOverscan, c))
+			*o.v = c
+		}
 	}
 	if cfg.Remote.Port < 1 || cfg.Remote.Port > 65535 { // as a typo above: carry on with the default
 		warnings = append(warnings, fmt.Sprintf("remote.port: %d is not 1..65535, using 8080", cfg.Remote.Port))
@@ -184,6 +202,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Display.ScreensaverMinutes < 0 {
 		errs = append(errs, errors.New("display.screensaver_minutes must be >= 0"))
+	}
+	for k, v := range map[string]int{"overscan_left": c.Display.OverscanLeft, "overscan_right": c.Display.OverscanRight, "overscan_y": c.Display.OverscanY} {
+		if v < 0 || v > MaxOverscan {
+			errs = append(errs, fmt.Errorf("display.%s must be 0..%d (got %d)", k, MaxOverscan, v))
+		}
 	}
 	if c.Cache.CoverArtMB < 0 {
 		errs = append(errs, errors.New("cache.cover_art_mb must be >= 0"))
