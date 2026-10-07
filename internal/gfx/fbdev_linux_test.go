@@ -176,3 +176,96 @@ func TestScreenSliceBounds(t *testing.T) {
 		}
 	}
 }
+
+func newTestFB(w, h int) *FB {
+	mem := make([]byte, w*h*4)
+	for i := range mem {
+		mem[i] = 0xEE
+	}
+	return &FB{mapping: mem, mem: mem, fmt: fbFormat{w, h, w * 4, 32}}
+}
+
+func solid(w, h int, col uint32) *Canvas {
+	c := NewCanvas(w, h)
+	for i := range c.Pix {
+		c.Pix[i] = col
+	}
+	return c
+}
+
+func TestFBPresentsAnInsetCanvasAtItsOffsetWithABlackBorder(t *testing.T) {
+	b := newTestFB(16, 10)
+	in := Rect{3, 2, 10, 6}
+	b.SetInset(in)
+	if err := b.Present(solid(10, 6, 0xFF0000)); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 16; x++ {
+			want := uint32(0)
+			if in.Contains(x, y) {
+				want = 0xFF0000
+			}
+			if got := b.fmt.read(b.mem, x, y); got != want {
+				t.Fatalf("(%d,%d) = %06x, want %06x", x, y, got, want)
+			}
+		}
+	}
+	if err := b.Present(solid(16, 10, 0)); err == nil {
+		t.Fatal("a canvas of the screen's size was accepted with an inset")
+	}
+}
+
+func TestFBPartialPresentWritesOnlyTheOffsetRects(t *testing.T) {
+	b := newTestFB(16, 10)
+	in := Rect{3, 2, 10, 6}
+	b.SetInset(in)
+	c := solid(10, 6, 0xFF0000)
+	b.Present(c)
+	before := append([]byte(nil), b.mem...)
+	c.Pix[1*10+2] = 0x00FF00 // (2,1) of the canvas
+	c.Pix[5*10+9] = 0x0000FF // (9,5): not in the rect below
+	if err := b.PresentRects(c, []Rect{{2, 1, 1, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	changed := 0
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 16; x++ {
+			o := y*b.fmt.stride + x*4
+			if string(before[o:o+4]) != string(b.mem[o:o+4]) {
+				changed++
+				if x != 5 || y != 3 {
+					t.Fatalf("pixel (%d,%d) changed", x, y)
+				}
+			}
+		}
+	}
+	if changed != 1 || b.fmt.read(b.mem, 5, 3) != 0x00FF00 {
+		t.Fatalf("%d pixels changed, (5,3) = %06x", changed, b.fmt.read(b.mem, 5, 3))
+	}
+}
+
+func TestFBFullPresentRestoresTheBorderAndIntactWatchesIt(t *testing.T) {
+	b := newTestFB(16, 10)
+	b.SetInset(Rect{3, 2, 10, 6})
+	c := solid(10, 6, 0x336699)
+	b.Present(c)
+	if !b.Intact() {
+		t.Fatal("a fresh frame is not intact")
+	}
+	for i := 0; i < 4*16; i++ { // something drew over the top line
+		b.mem[i] = 0xFF
+	}
+	if b.Intact() {
+		t.Fatal("the border drawn over still counts as intact")
+	}
+	b.Present(c) // the full repaint the watchdog asks for
+	if !b.Intact() || b.fmt.read(b.mem, 0, 0) != 0 {
+		t.Fatal("a full present did not black the border again")
+	}
+	// Back to no inset: the whole screen is the canvas.
+	b.SetInset(Rect{})
+	if err := b.Present(solid(16, 10, 0x112233)); err != nil || b.fmt.read(b.mem, 0, 0) != 0x112233 {
+		t.Fatalf("no inset: %v", err)
+	}
+}

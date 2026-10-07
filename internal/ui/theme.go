@@ -7,6 +7,7 @@ package ui
 import (
 	"math"
 
+	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 )
 
@@ -55,6 +56,62 @@ func PickProfile(fbW, fbH int, override string) Profile {
 		p.H = 288
 	}
 	return p
+}
+
+// PickProfileIn is PickProfile for a picture drawn inside the overscan
+// margins: the HDMI layout is scaled to the inner iw×ih rather than the
+// whole framebuffer, so nothing is stretched. A CRT layout shrinks its
+// logical canvas by the same share (in logical pixels, kept even), so the
+// scaler keeps the whole number of lines and columns per logical pixel it
+// has without margins: no row is dropped.
+func PickProfileIn(fbW, fbH, iw, ih int, override string) Profile {
+	p := PickProfile(fbW, fbH, override)
+	if p.Name == ProfileHDMI.Name {
+		return scaleProfile(ProfileHDMI, iw, ih)
+	}
+	even := func(n int) int { return max(n&^1, 2) }
+	p.W = even(int(float64(iw) * float64(p.W) / float64(fbW)))
+	p.H = even(int(float64(ih) * float64(p.H) / float64(fbH)))
+	return p
+}
+
+// crtArea is where a CRT picture of p's logical size lies inside in: when the
+// framebuffer is a whole number of lines or columns per logical pixel
+// (base is the layout without margins), the area is exactly that many per
+// logical pixel, centred in in; else in itself.
+func crtArea(in gfx.Rect, p, base Profile, fbW, fbH int) gfx.Rect {
+	if p.Name != base.Name {
+		return in
+	}
+	if fbW%base.W == 0 {
+		w := p.W * (fbW / base.W)
+		in.X, in.W = in.X+(in.W-w)/2, w
+	}
+	if fbH%base.H == 0 {
+		h := p.H * (fbH / base.H)
+		in.Y, in.H = in.Y+(in.H-h)/2, h
+	}
+	return in
+}
+
+// overscanRect is the inner area of a pw×ph framebuffer inside the margins
+// of d: percents of the width (left, right) and of the height (top and
+// bottom each), rounded to whole pixels. The inner size is kept even: an odd
+// width takes the extra pixel from the right margin, an odd height from the
+// bottom one.
+func overscanRect(pw, ph int, d config.Display) gfx.Rect {
+	px := func(n, pct int) int {
+		return int(math.Round(float64(n) * float64(min(max(pct, 0), config.MaxOverscan)) / 100))
+	}
+	l, r, y := px(pw, d.OverscanLeft), px(pw, d.OverscanRight), px(ph, d.OverscanY)
+	w, h := pw-l-r, ph-2*y
+	if w%2 != 0 {
+		w--
+	}
+	if h%2 != 0 {
+		h--
+	}
+	return gfx.R(l, y, w, h)
 }
 
 // Smallest font sizes a scaled layout uses, so a small HDMI framebuffer

@@ -420,7 +420,7 @@ func run(f flags) (err error) {
 		loaded = cfg
 	}
 	app, err := ui.New(ui.Options{
-		Display: disp, Profile: prof, Inputs: inputs,
+		Display: disp, Profile: prof, ProfileName: profileName, Inputs: inputs,
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
 		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),

@@ -267,3 +267,91 @@ func TestOpaqueTextIsExactColour(t *testing.T) {
 	}
 	t.Fatal("no pixel reached exact white")
 }
+
+func TestScalerInStaysInsideItsArea(t *testing.T) {
+	src := NewCanvas(4, 2)
+	for i := range src.Pix {
+		src.Pix[i] = 0x00FFFFFF
+	}
+	for _, c := range []struct {
+		pw, ph int
+		in     Rect
+		want   Rect
+	}{
+		{640, 240, Rect{26, 12, 588, 216}, Rect{26, 12, 588, 216}},    // a CRT mode fills its area
+		{1280, 720, Rect{40, 10, 1200, 700}, Rect{40, 60, 1200, 600}}, // uniform scale, centred in the area
+	} {
+		s := NewScalerIn(4, 2, c.pw, c.ph, c.in)
+		if s.Area() != c.want {
+			t.Errorf("%dx%d in %v: area %v, want %v", c.pw, c.ph, c.in, s.Area(), c.want)
+		}
+		d := s.Scale(src)
+		for y := 0; y < c.ph; y++ {
+			for x := 0; x < c.pw; x++ {
+				if lit := d.Pix[y*c.pw+x] != 0; lit != c.want.Contains(x, y) {
+					t.Fatalf("%dx%d: pixel (%d,%d) lit=%v, area %v", c.pw, c.ph, x, y, lit, c.want)
+				}
+			}
+		}
+	}
+	a, b := NewScaler(4, 2, 640, 240), NewScalerIn(4, 2, 640, 240, Rect{0, 0, 640, 240})
+	if a.Area() != b.Area() {
+		t.Fatal("NewScaler is not NewScalerIn of the whole framebuffer")
+	}
+}
+
+// recorder is a Display that keeps the frames and rectangles it is given.
+type recorder struct {
+	w, h  int
+	fulls []*Canvas
+	rects [][]Rect
+	last  *Canvas
+}
+
+func (r *recorder) Size() (int, int) { return r.w, r.h }
+func (r *recorder) Close() error     { return nil }
+func (r *recorder) Present(c *Canvas) error {
+	r.fulls, r.last = append(r.fulls, c), c
+	return nil
+}
+func (r *recorder) PresentRects(c *Canvas, rs []Rect) error {
+	r.rects, r.last = append(r.rects, append([]Rect(nil), rs...)), c
+	return nil
+}
+
+func TestInsetterCentresACanvasOnABlackFrame(t *testing.T) {
+	rec := &recorder{w: 12, h: 8}
+	d := NewInsetter(rec)
+	in := Rect{2, 1, 8, 6}
+	d.SetInset(in)
+	c := NewCanvas(8, 6)
+	for i := range c.Pix {
+		c.Pix[i] = 0xFFFFFF
+	}
+	if err := d.Present(c); err != nil {
+		t.Fatal(err)
+	}
+	f := rec.last
+	if f.W != 12 || f.H != 8 {
+		t.Fatalf("frame %dx%d", f.W, f.H)
+	}
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 12; x++ {
+			if lit := f.Pix[y*12+x] != 0; lit != in.Contains(x, y) {
+				t.Fatalf("(%d,%d) lit=%v", x, y, lit)
+			}
+		}
+	}
+	c.Pix[0] = 0x00FF00
+	if err := d.PresentRects(c, []Rect{{0, 0, 1, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.rects) != 1 || rec.rects[0][0] != (Rect{2, 1, 1, 1}) || rec.last.Pix[1*12+2] != 0x00FF00 {
+		t.Fatalf("partial present %v", rec.rects)
+	}
+	d.SetInset(Rect{})
+	full := NewCanvas(12, 8)
+	if d.Present(full); rec.last != full {
+		t.Fatal("with no inset a canvas goes through as it is")
+	}
+}

@@ -60,3 +60,81 @@ func TestFBStructSizes(t *testing.T) {
 		t.Fatalf("fb_fix_screeninfo = %d bytes, want %d", s, want)
 	}
 }
+
+// A canvas shown at an offset: only its own pixels are written, the padding
+// and everything around stay as they were.
+func TestPackRectAtOffsetsTheCanvasIntoTheFramebuffer(t *testing.T) {
+	for _, bpp := range []int{32, 16} {
+		f := fbFormat{width: 6, height: 5, stride: 6*bpp/8 + 4, bpp: bpp}
+		c := NewCanvas(3, 2)
+		for i := range c.Pix {
+			c.Pix[i] = 0xFF0000 // red
+		}
+		mem := make([]byte, f.stride*f.height)
+		for i := range mem {
+			mem[i] = 0xEE
+		}
+		in := Rect{2, 1, 3, 2}
+		f.packRectAt(mem, c, Rect{0, 0, 3, 2}, in.X, in.Y)
+		for y := 0; y < f.height; y++ {
+			for x := 0; x < f.width; x++ {
+				o := y*f.stride + x*bpp/8
+				red := f.read(mem, x, y) == f.encode(0xFF0000)
+				if red != in.Contains(x, y) {
+					t.Fatalf("%d bpp: pixel (%d,%d) red=%v, inset %v", bpp, x, y, red, in)
+				}
+				if !in.Contains(x, y) && mem[o] != 0xEE {
+					t.Fatalf("%d bpp: pixel (%d,%d) outside the inset was written", bpp, x, y)
+				}
+			}
+		}
+	}
+	// A rectangle of the canvas lands at its place plus the offset.
+	f := fbFormat{width: 6, height: 5, stride: 24, bpp: 32}
+	c := NewCanvas(3, 2)
+	c.Pix[4] = 0x00FF00 // (1,1)
+	mem := make([]byte, f.stride*f.height)
+	f.packRectAt(mem, c, Rect{1, 1, 1, 1}, 2, 1)
+	if f.read(mem, 3, 2) != 0x00FF00 {
+		t.Fatal("the rectangle (1,1) did not land at (3,2)")
+	}
+}
+
+func TestClearBorderBlacksOnlyOutsideTheInset(t *testing.T) {
+	for _, bpp := range []int{32, 16} {
+		f := fbFormat{width: 6, height: 5, stride: 6*bpp/8 + 4, bpp: bpp}
+		mem := make([]byte, f.stride*f.height)
+		for i := range mem {
+			mem[i] = 0xEE
+		}
+		in := Rect{2, 1, 3, 2}
+		f.clearBorder(mem, in)
+		for y := 0; y < f.height; y++ {
+			for x := 0; x < f.width; x++ {
+				o := y*f.stride + x*bpp/8
+				if black := mem[o] == 0 && mem[o+bpp/8-1] == 0; black == in.Contains(x, y) {
+					t.Fatalf("%d bpp: pixel (%d,%d) black=%v, inset %v", bpp, x, y, black, in)
+				}
+			}
+		}
+	}
+}
+
+func TestMatchesInExpectsBlackAroundTheCanvas(t *testing.T) {
+	f := fbFormat{width: 64, height: 48, stride: 256, bpp: 32}
+	in := Rect{4, 3, 56, 42}
+	c := NewCanvas(in.W, in.H)
+	for i := range c.Pix {
+		c.Pix[i] = 0x336699
+	}
+	mem := make([]byte, f.stride*f.height)
+	f.clearBorder(mem, in)
+	f.packRectAt(mem, c, Rect{0, 0, in.W, in.H}, in.X, in.Y)
+	if !f.matchesIn(mem, c, in) {
+		t.Fatal("the frame as presented does not match")
+	}
+	mem[0] = 0xFF // a corner of the border drawn over
+	if f.matchesIn(mem, c, in) {
+		t.Fatal("a drawn-over border still matches")
+	}
+}

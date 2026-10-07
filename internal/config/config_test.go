@@ -269,3 +269,51 @@ func TestBadRemotePortLoadsAs8080WithAWarning(t *testing.T) {
 		}
 	}
 }
+
+func TestOverscanDefaultsToZeroAndLoads(t *testing.T) {
+	d := Default().Display
+	if d.OverscanLeft != 0 || d.OverscanRight != 0 || d.OverscanY != 0 {
+		t.Fatalf("default overscan = %+v", d)
+	}
+	cfg, warns, err := Load(write(t, minimal+"\n[display]\noverscan_left = 3\noverscan_right = 10\noverscan_y = 2\n"))
+	if err != nil || len(warns) != 0 {
+		t.Fatalf("%v %v", warns, err)
+	}
+	if d := cfg.Display; d.OverscanLeft != 3 || d.OverscanRight != 10 || d.OverscanY != 2 {
+		t.Fatalf("loaded %+v", d)
+	}
+}
+
+func TestOverscanOutOfRangeClampsWithAWarning(t *testing.T) {
+	cfg, warns, err := Load(write(t, minimal+"\n[display]\noverscan_left = -4\noverscan_right = 11\noverscan_y = 99\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := cfg.Display; d.OverscanLeft != 0 || d.OverscanRight != 10 || d.OverscanY != 10 {
+		t.Fatalf("clamped to %+v", d)
+	}
+	if len(warns) != 3 {
+		t.Fatalf("warnings = %v", warns)
+	}
+	for i, key := range []string{"display.overscan_left", "display.overscan_right", "display.overscan_y"} {
+		if !strings.Contains(warns[i], key) {
+			t.Errorf("warning %d = %q, want it to name %s", i, warns[i], key)
+		}
+	}
+}
+
+func TestValidateReportsOverscanInOrder(t *testing.T) {
+	c := Default()
+	c.Display.OverscanLeft, c.Display.OverscanRight, c.Display.OverscanY = 11, -1, 99
+	for range 20 {
+		err := c.Validate()
+		if err == nil {
+			t.Fatal("out-of-range margins accepted")
+		}
+		msg := err.Error()
+		l, r, y := strings.Index(msg, "overscan_left"), strings.Index(msg, "overscan_right"), strings.Index(msg, "overscan_y")
+		if l < 0 || !(l < r && r < y) {
+			t.Fatalf("errors out of order:\n%s", msg)
+		}
+	}
+}

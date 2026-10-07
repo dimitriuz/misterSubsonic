@@ -50,6 +50,7 @@ type FB struct {
 	mem     []byte // the visible screen inside it
 	fmt     fbFormat
 	last    *Canvas // the frame last presented, for Intact
+	inset   Rect    // where canvases are shown (empty: the whole screen)
 }
 
 func ioctl(fd uintptr, req uintptr, arg unsafe.Pointer) error {
@@ -174,9 +175,24 @@ func pageAlign(phys uintptr, page int) (base uintptr, delta int) {
 
 func (b *FB) Size() (int, int) { return b.fmt.width, b.fmt.height }
 
+// SetInset makes the framebuffer show canvases of the size of in at in's
+// corner, with a black border around them (the overscan margins); an empty
+// in is the whole screen again. The next Present is the full one that
+// draws the border.
+func (b *FB) SetInset(in Rect) { b.inset, b.last = in, nil }
+
 func (b *FB) Present(c *Canvas) error {
 	if b.mem == nil {
 		return errors.New("gfx: framebuffer closed")
+	}
+	if !b.inset.Empty() {
+		if c.W != b.inset.W || c.H != b.inset.H {
+			return fmt.Errorf("gfx: frame %dx%d != inset %dx%d", c.W, c.H, b.inset.W, b.inset.H)
+		}
+		b.fmt.clearBorder(b.mem, b.inset) // a full present is the repaint: the border is drawn here, not per partial frame
+		b.fmt.packRectAt(b.mem, c, c.Bounds(), b.inset.X, b.inset.Y)
+		b.last = c
+		return nil
 	}
 	if c.W != b.fmt.width || c.H != b.fmt.height {
 		return fmt.Errorf("gfx: frame %dx%d != framebuffer %dx%d", c.W, c.H, b.fmt.width, b.fmt.height)
@@ -191,6 +207,16 @@ func (b *FB) Present(c *Canvas) error {
 func (b *FB) PresentRects(c *Canvas, rs []Rect) error {
 	if b.mem == nil {
 		return errors.New("gfx: framebuffer closed")
+	}
+	if !b.inset.Empty() { // rs are in the canvas's coordinates
+		if c.W != b.inset.W || c.H != b.inset.H {
+			return fmt.Errorf("gfx: frame %dx%d != inset %dx%d", c.W, c.H, b.inset.W, b.inset.H)
+		}
+		for _, r := range rs {
+			b.fmt.packRectAt(b.mem, c, r, b.inset.X, b.inset.Y)
+		}
+		b.last = c
+		return nil
 	}
 	if c.W != b.fmt.width || c.H != b.fmt.height {
 		return fmt.Errorf("gfx: frame %dx%d != framebuffer %dx%d", c.W, c.H, b.fmt.width, b.fmt.height)
@@ -208,6 +234,9 @@ func (b *FB) PresentRects(c *Canvas, rs []Rect) error {
 func (b *FB) Intact() bool {
 	if b.mem == nil || b.last == nil {
 		return true
+	}
+	if !b.inset.Empty() {
+		return b.fmt.matchesIn(b.mem, b.last, b.inset)
 	}
 	return b.fmt.matches(b.mem, b.last)
 }

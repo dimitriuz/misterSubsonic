@@ -17,6 +17,76 @@ type PartialPresenter interface {
 	PresentRects(c *Canvas, rs []Rect) error
 }
 
+// InsetPresenter is a Display that can show canvases smaller than itself,
+// inset in the screen with a black border around them (the overscan margins).
+// After SetInset(in), Present and PresentRects take canvases of in's size
+// (rectangles in the canvas's coordinates); the full Present draws the border.
+// An empty in is the whole screen again.
+type InsetPresenter interface {
+	SetInset(in Rect)
+}
+
+// Insetter gives any Display the inset: a canvas is copied into a black
+// frame of the display's size, at the inset. It is for displays that don't
+// do it themselves (the dev viewer, tests); the framebuffer does.
+type Insetter struct {
+	Display
+	in    Rect
+	frame *Canvas
+}
+
+func NewInsetter(d Display) *Insetter { return &Insetter{Display: d} }
+
+func (s *Insetter) SetInset(in Rect) {
+	s.in, s.frame = in, nil
+	if !in.Empty() {
+		w, h := s.Display.Size()
+		s.frame = NewCanvas(w, h)
+	}
+}
+
+func (s *Insetter) copyIn(c *Canvas, r Rect) {
+	r = r.Intersect(c.Bounds())
+	for y := r.Y; y < r.Bottom(); y++ {
+		copy(s.frame.Pix[(s.in.Y+y)*s.frame.W+s.in.X+r.X:][:r.W], c.Pix[y*c.W+r.X:][:r.W])
+	}
+}
+
+func (s *Insetter) Present(c *Canvas) error {
+	if s.frame == nil {
+		return s.Display.Present(c)
+	}
+	s.copyIn(c, c.Bounds())
+	return s.Display.Present(s.frame)
+}
+
+// PresentRects presents only those areas when the display can, else the frame.
+func (s *Insetter) PresentRects(c *Canvas, rs []Rect) error {
+	pp, ok := s.Display.(PartialPresenter)
+	if !ok {
+		return s.Present(c)
+	}
+	if s.frame == nil {
+		return pp.PresentRects(c, rs)
+	}
+	shifted := make([]Rect, 0, len(rs))
+	for _, r := range rs {
+		if r = r.Intersect(c.Bounds()); !r.Empty() {
+			s.copyIn(c, r)
+			shifted = append(shifted, Rect{r.X + s.in.X, r.Y + s.in.Y, r.W, r.H})
+		}
+	}
+	return pp.PresentRects(s.frame, shifted)
+}
+
+// Intact asks the display under it; one that can't tell is intact.
+func (s *Insetter) Intact() bool {
+	if ck, ok := s.Display.(Checker); ok {
+		return ck.Intact()
+	}
+	return true
+}
+
 // Checker is a Display that can tell whether something else drew over its
 // last frame (the MiSTer framebuffer: Main_MiSTer or the console).
 type Checker interface {
@@ -38,13 +108,20 @@ type Scaler struct {
 const CRTMaxLines = 288
 
 func NewScaler(lw, lh, pw, ph int) *Scaler {
+	return NewScalerIn(lw, lh, pw, ph, Rect{0, 0, pw, ph})
+}
+
+// NewScalerIn is NewScaler for a picture that must stay inside in, a part of
+// the pw×ph framebuffer (the overscan margins leave the rest black). Whether
+// it is a CRT mode is still the framebuffer's height.
+func NewScalerIn(lw, lh, pw, ph int, in Rect) *Scaler {
 	s := &Scaler{dst: NewCanvas(pw, ph)}
-	w, h := pw, ph
+	w, h := in.W, in.H
 	if ph > CRTMaxLines {
-		scale := min(float64(pw)/float64(lw), float64(ph)/float64(lh))
+		scale := min(float64(in.W)/float64(lw), float64(in.H)/float64(lh))
 		w, h = max(int(float64(lw)*scale), 1), max(int(float64(lh)*scale), 1)
 	}
-	s.area = Rect{(pw - w) / 2, (ph - h) / 2, w, h}
+	s.area = Rect{in.X + (in.W-w)/2, in.Y + (in.H-h)/2, w, h}
 	s.xmap = make([]int, w)
 	for i := range s.xmap {
 		s.xmap[i] = i * lw / w

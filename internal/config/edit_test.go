@@ -287,3 +287,16 @@ func TestEditSetsTheRemoteInPlace(t *testing.T) {
 		t.Fatal(cfg.Remote)
 	}
 }
+
+func TestEditSetsTheOverscanInPlace(t *testing.T) {
+	got, cfg := saveEdited(t, commented, func(c *Config) { c.Display.OverscanLeft = 3; c.Display.OverscanY = 2 })
+	wantAll(t, got, "overscan_left = 3", "overscan_y = 2", "# My own notes on this file.")
+	again, cfg2 := saveEdited(t, got, func(c *Config) { c.Display.OverscanLeft = 4; c.Display.OverscanRight = 1 })
+	wantAll(t, again, "overscan_left = 4", "overscan_right = 1", "overscan_y = 2")
+	if strings.Count(again, "overscan_left") != 1 {
+		t.Fatalf("overscan_left written twice:\n%s", again)
+	}
+	if cfg.Display.OverscanLeft != 3 || cfg2.Display.OverscanLeft != 4 || cfg2.Display.OverscanRight != 1 {
+		t.Fatal(cfg.Display, cfg2.Display)
+	}
+}

@@ -330,7 +330,28 @@ func displaySettings(a *App) []setting {
 				a.SetVizStyle(VizStyle((int(a.VizStyle()) + dir + len(vizNames)) % len(vizNames)))
 			},
 			help: "A moving picture of the music on Now Playing. Select there changes it too.", toggle: false},
+		overscanRow("Overscan: left", "Shrinks the picture from the left edge, for TVs that cut it off.",
+			func(d *config.Display) *int { return &d.OverscanLeft }, d),
+		overscanRow("Overscan: right", "Shrinks the picture from the right edge, for TVs that cut it off.",
+			func(d *config.Display) *int { return &d.OverscanRight }, d),
+		overscanRow("Overscan: top & bottom", "Shrinks the picture from the top and bottom edges, for TVs that cut it off.",
+			func(d *config.Display) *int { return &d.OverscanY }, d),
 	}
+}
+
+var overscanChoices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+
+// overscanRow is a margin row: 0 to 10 percent, a step at a time, wrapping
+// at the ends. The picture takes the new margin at once.
+func overscanRow(label, help string, field func(*config.Display) *int, d func() config.Display) setting {
+	return setting{label: label,
+		value: func(a *App) string { cur := d(); return fmt.Sprintf("%d%%", *field(&cur)) },
+		change: func(a *App, dir int) {
+			cur := d()
+			n := cycleNear(overscanChoices, *field(&cur), dir)
+			a.UpdateConfig(func(c *config.Config) { *field(&c.Display) = n }, false)
+		},
+		help: help}
 }
 
 // remoteNote is the safety note shown with the remote's settings (spec §2).

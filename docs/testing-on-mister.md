@@ -130,7 +130,13 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     - The waterfall looks smooth: no vertical bands, and no steps between one frame and the next.
     - V cycles the visualizer style on a keyboard (and a text field takes V as a letter), and F12 saves a screenshot.
     - The web remote's Screenshot button saves a PNG too ("Screenshot saved" on the phone and the TV). Tapping it again within a second shows "screenshot in progress".
-40. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+40. **Overscan.** On a TV that cuts the edge (the user's LCD on its component input, `video_mode=0` with `vga_scaler=1`):
+    - Settings → Display has "Overscan: left", "Overscan: right" and "Overscan: top & bottom", each with a help line.
+    - Right on "Overscan: left" moves the picture in from the left at once, with a black border; the sidebar's first letters show. Hold Right: it steps and wraps from 10% to 0%.
+    - Settings, the hint bar, a toast, the volume panel, Now Playing with the visualizer in full screen and the screensaver all stay inside the margins, and the border stays black (no flicker at the edges).
+    - Restart the app: the margins are kept, and `config.toml` has `overscan_left`, `overscan_right` and `overscan_y` under `[display]`. Run once with `-verify-redraw` and some margins: `log.txt` has no "partial redraw differs" line.
+    - F12 saves a PNG of the inner picture (without the border).
+41. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks
