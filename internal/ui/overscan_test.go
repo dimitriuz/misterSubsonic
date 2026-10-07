@@ -60,16 +60,25 @@ func TestProfileForTheInnerArea(t *testing.T) {
 	if p := PickProfileIn(1280, 720, 1280, 720, "auto"); p != PickProfile(1280, 720, "auto") {
 		t.Fatalf("no margins: %+v", p)
 	}
-	// A CRT keeps its logical size; the scaler fits it into the inner area.
+	// A CRT shrinks its logical canvas by the share of the margins, in whole
+	// even logical pixels, so the scaler keeps its integer factors.
 	in = overscanRect(320, 240, margins(4, 4, 5))
-	if p := PickProfileIn(320, 240, in.W, in.H, "auto"); p.Name != "crt" || p.W != 320 || p.H != 240 {
-		t.Fatalf("crt inner: %+v", p)
+	if p := PickProfileIn(320, 240, in.W, in.H, "auto"); p.Name != "crt" || p.W != 294 || p.H != 216 {
+		t.Fatalf("crt 320x240 inner: %+v", p)
+	}
+	in = overscanRect(640, 240, margins(3, 3, 5)) // 19+19 px of 640: 602 wide, 216 high
+	if p := PickProfileIn(640, 240, in.W, in.H, "auto"); p.Name != "crt" || p.W != 300 || p.H != 216 {
+		t.Fatalf("crt 640x240 inner %v: %+v", in, p)
+	}
+	in = overscanRect(720, 576, margins(2, 2, 3)) // a 576-line CRT mode with the layout forced
+	if p := PickProfileIn(720, 576, in.W, in.H, "crt"); p.W != 306 || p.H != 270 {
+		t.Fatalf("crt 720x576 inner %v: %+v", in, p)
 	}
 }
 
 // overscanApp is an app on a w×h display with margins, over a framebuffer
 // simulation that starts full of white, so a border never drawn shows.
-func overscanApp(t *testing.T, w, h int, d config.Display) (*testApp, *fbSim) {
+func overscanApp(t testing.TB, w, h int, d config.Display) (*testApp, *fbSim) {
 	t.Helper()
 	fb := newFBSim(w, h)
 	for i := range fb.mem {
@@ -159,7 +168,7 @@ func TestOverscanWithTheScalerKeepsTheBorderBlack(t *testing.T) {
 	ta, fb := overscanApp(t, 640, 240, margins(4, 4, 5)) // a CRT mode
 	ta.Push(NewHomeScreen())
 	ta.settle(t)
-	if ta.scaler == nil || ta.canvas.W != 320 || ta.canvas.H != 240 {
+	if ta.scaler == nil || ta.canvas.W != 294 || ta.canvas.H != 216 {
 		t.Fatalf("crt canvas %dx%d, scaler %v", ta.canvas.W, ta.canvas.H, ta.scaler != nil)
 	}
 	in := ta.inset
@@ -325,8 +334,8 @@ func TestOverscanSettingsRowsCycleSaveAndRelayoutLive(t *testing.T) {
 	// Back to no margins: the canvas is the display's again, without a copy.
 	ta.cfg.Display.OverscanLeft, ta.cfg.Display.OverscanRight, ta.cfg.Display.OverscanY = 0, 0, 0
 	ta.relayout()
-	if ta.canvas.W != 1280 || ta.canvas.H != 720 || ta.frame != nil {
-		t.Fatalf("no margins: canvas %dx%d, frame %v", ta.canvas.W, ta.canvas.H, ta.frame != nil)
+	if ta.canvas.W != 1280 || ta.canvas.H != 720 {
+		t.Fatalf("no margins: canvas %dx%d", ta.canvas.W, ta.canvas.H)
 	}
 }
 
@@ -360,4 +369,142 @@ func fbCanvas(fb *fbSim) *gfx.Canvas {
 		c.Pix[i] = uint32(fb.mem[4*i]) | uint32(fb.mem[4*i+1])<<8 | uint32(fb.mem[4*i+2])<<16 | uint32(fb.mem[4*i+3])<<24
 	}
 	return c
+}
+
+// stripes is a canvas whose row y is the colour y+1 (and whose columns are alike).
+func stripes(w, h int) *gfx.Canvas {
+	c := gfx.NewCanvas(w, h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c.Pix[y*w+x] = uint32(y + 1)
+		}
+	}
+	return c
+}
+
+// With margins a CRT's rows still land on whole output lines: every logical
+// row is drawn on the same number of lines (none dropped, none doubled).
+func TestOverscanCRTKeepsWholeLinesPerLogicalRow(t *testing.T) {
+	for _, c := range []struct {
+		w, h             int
+		d                config.Display
+		wantW, wantH, ky int
+	}{
+		{640, 240, margins(4, 4, 5), 294, 216, 1},
+		{640, 240, margins(3, 3, 2), 300, 230, 1},
+		{640, 288, margins(10, 10, 10), 256, 230, 1},
+	} {
+		ta, _ := overscanApp(t, c.w, c.h, c.d)
+		if ta.scaler == nil || ta.canvas.W != c.wantW || ta.canvas.H != c.wantH {
+			t.Fatalf("%dx%d %v: canvas %dx%d, want %dx%d", c.w, c.h, c.d, ta.canvas.W, ta.canvas.H, c.wantW, c.wantH)
+		}
+		area := ta.scaler.Area()
+		if area.H != c.wantH*c.ky || area.W%c.wantW != 0 || area.Intersect(ta.inset) != area {
+			t.Fatalf("%dx%d: scaler area %v for the inset %v", c.w, c.h, area, ta.inset)
+		}
+		out := ta.scaler.Scale(stripes(ta.canvas.W, ta.canvas.H))
+		lines := map[uint32]int{}
+		for y := area.Y; y < area.Bottom(); y++ {
+			lines[out.Pix[y*out.W+area.X+area.W/2]]++
+		}
+		for row := 1; row <= c.wantH; row++ {
+			if lines[uint32(row)] != c.ky {
+				t.Fatalf("%dx%d: logical row %d is on %d lines, want %d", c.w, c.h, row, lines[uint32(row)], c.ky)
+			}
+		}
+	}
+}
+
+func TestGoldenOverscanCRT(t *testing.T) {
+	ta, fb := overscanApp(t, 640, 240, margins(4, 4, 5))
+	ta.Push(NewHomeScreen())
+	ta.settle(t)
+	golden(t, "home-crt-overscan", fbCanvas(fb))
+}
+
+// A margin step with no change of size allocates no new canvas.
+func TestRelayoutKeepsWhatDidNotChange(t *testing.T) {
+	ta, _ := overscanApp(t, 1000, 720, margins(3, 3, 2))
+	canvas, fonts := ta.canvas, ta.F
+	ta.cfg.Display.OverscanLeft, ta.cfg.Display.OverscanRight = 2, 4 // the same inner width
+	ta.relayout()
+	if ta.canvas != canvas || ta.F != fonts {
+		t.Fatal("a re-layout to the same size made a new canvas or new fonts")
+	}
+	ta.cfg.Display.OverscanY = 3
+	ta.relayout()
+	if ta.canvas == canvas || ta.canvas.H != 720-2*22 {
+		t.Fatalf("a new height kept the old canvas: %dx%d", ta.canvas.W, ta.canvas.H)
+	}
+}
+
+func TestOverscanPartialPresentWritesOnlyTheOffsetDamagedPixels(t *testing.T) {
+	ta, fb := overscanApp(t, 1280, 720, margins(3, 2, 2))
+	s := &boxScreen{box: gfx.R(100, 200, 40, 30), col: gfx.RGB(200, 0, 0)}
+	ta.Push(s)
+	ta.settle(t)
+	fb.rects, fb.px, fb.fullPresents, fb.partials = 0, 0, 0, 0
+	s.col = gfx.RGB(0, 200, 0)
+	ta.Damage(s.box)
+	ta.settle(t)
+	if fb.fullPresents != 0 || fb.partials != 1 || fb.px != 40*30 {
+		t.Fatalf("presented %d full, %d partial, %d px; want one partial of 1200 px", fb.fullPresents, fb.partials, fb.px)
+	}
+	if want := gfx.R(100+ta.inset.X, 200+ta.inset.Y, 40, 30); len(fb.last) != 1 || fb.last[0] != want {
+		t.Fatalf("landed at %v, want %v", fb.last, want)
+	}
+	if got := fb.mem[(215+ta.inset.Y)*fb.stride+(120+ta.inset.X)*4+1]; got != 200 {
+		t.Fatalf("the green at the offset is %d", got)
+	}
+	borderBlack(t, ta, fb, "after a partial present")
+}
+
+// checkedFB is a framebuffer that can be told something drew over it.
+type checkedFB struct {
+	*fbSim
+	intact bool
+}
+
+func (d *checkedFB) Intact() bool { return d.intact }
+
+func TestOverscanWatchdogRepaintRestoresTheBorder(t *testing.T) {
+	ta, fb := overscanApp(t, 1280, 720, margins(3, 2, 2))
+	ck := &checkedFB{fbSim: fb, intact: true}
+	ta.o.Display = ck
+	ta.checkAt = ta.now
+	ta.Push(NewHomeScreen())
+	ta.settle(t)
+	for i := range fb.mem[:4*1280*10] { // the console drew over the top lines, border and all
+		fb.mem[i] = 0xFF
+	}
+	ck.intact = false
+	ta.now = ta.now.Add(watchdogEvery)
+	ta.onWake()
+	if !ta.dirty {
+		t.Fatal("the watchdog did not ask for a repaint")
+	}
+	ck.intact = true
+	ta.settle(t)
+	borderBlack(t, ta, fb, "after the watchdog's repaint")
+}
+
+func TestOverscanBorderStaysBlackOverTheScreensaverAndTheVolumePanel(t *testing.T) {
+	ta, fb := overscanApp(t, 1280, 720, margins(3, 2, 2))
+	playingState(ta)
+	ta.Push(NewHomeScreen())
+	ta.Push(NewNowPlayingScreen())
+	ta.settle(t)
+	ta.press(input.BtnUp) // a volume step: the panel
+	runFrames(t, ta, 10)
+	borderBlack(t, ta, fb, "the volume panel")
+	ta.now = ta.now.Add(10 * time.Minute) // idle: the screensaver
+	for i := 0; i < 5 && !ta.saver; i++ {
+		ta.onWake()
+		runFrames(t, ta, 3)
+	}
+	if !ta.saver {
+		t.Fatal("the screensaver did not start")
+	}
+	runFrames(t, ta, 30)
+	borderBlack(t, ta, fb, "the screensaver")
 }

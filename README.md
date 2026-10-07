@@ -123,7 +123,9 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
   moves in at once, so you can tune it while looking. They are `overscan_left`, `overscan_right`
   (percent of the width) and `overscan_y` (percent of the height, for the top and the bottom each)
   under `[display]` in `config.toml`. The layout is made for the smaller area, so nothing is
-  stretched, and the border is black. Screenshots show the picture without the border.
+  stretched (on a CRT too: the picture keeps a whole number of lines per row), and the border is
+  black. Screenshots show the picture without the border. Changing a margin makes the covers be
+  fetched again at the new size, once.
 - **A TV on a component input:** the MiSTer's analog output needs `vga_scaler=1` and a
   `video_mode` in a `[Menu]` section. One setup that works: `video_mode=0` (720p) with "Wide" set
   on the TV.

@@ -301,3 +301,19 @@ func TestOverscanOutOfRangeClampsWithAWarning(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateReportsOverscanInOrder(t *testing.T) {
+	c := Default()
+	c.Display.OverscanLeft, c.Display.OverscanRight, c.Display.OverscanY = 11, -1, 99
+	for range 20 {
+		err := c.Validate()
+		if err == nil {
+			t.Fatal("out-of-range margins accepted")
+		}
+		msg := err.Error()
+		l, r, y := strings.Index(msg, "overscan_left"), strings.Index(msg, "overscan_right"), strings.Index(msg, "overscan_y")
+		if l < 0 || !(l < r && r < y) {
+			t.Fatalf("errors out of order:\n%s", msg)
+		}
+	}
+}

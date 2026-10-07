@@ -203,9 +203,12 @@ func (c *Config) Validate() error {
 	if c.Display.ScreensaverMinutes < 0 {
 		errs = append(errs, errors.New("display.screensaver_minutes must be >= 0"))
 	}
-	for k, v := range map[string]int{"overscan_left": c.Display.OverscanLeft, "overscan_right": c.Display.OverscanRight, "overscan_y": c.Display.OverscanY} {
-		if v < 0 || v > MaxOverscan {
-			errs = append(errs, fmt.Errorf("display.%s must be 0..%d (got %d)", k, MaxOverscan, v))
+	for _, o := range []struct {
+		key string
+		v   int
+	}{{"overscan_left", c.Display.OverscanLeft}, {"overscan_right", c.Display.OverscanRight}, {"overscan_y", c.Display.OverscanY}} {
+		if o.v < 0 || o.v > MaxOverscan {
+			errs = append(errs, fmt.Errorf("display.%s must be 0..%d (got %d)", o.key, MaxOverscan, o.v))
 		}
 	}
 	if c.Cache.CoverArtMB < 0 {

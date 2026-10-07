@@ -202,13 +202,12 @@ type App struct {
 	F             Fonts
 	canvas        *gfx.Canvas
 	scaler        *gfx.Scaler
-	// The overscan margins: the canvas is the inset of the display (the
-	// whole display with no margins). frame is the full-size picture that
-	// holds the canvas at the inset, black around it (nil when the canvas is
-	// presented as it is, or the scaler draws it there).
+	// The overscan margins: the picture lies inside inset, a part of the
+	// display (all of it with no margins). The display shows the canvas
+	// there (gfx.InsetPresenter), or the scaler draws it there.
 	inset   gfx.Rect
-	frame   *gfx.Canvas
 	laidOut [3]int // the margins the layout was made for
+	scalerK scalerKey
 	fonts   [2]*gfx.Typeface
 	stack   []screenEntry
 	toasts  []toast
@@ -269,7 +268,6 @@ type App struct {
 	overwritten  bool      // the last check found the screen drawn over
 	viz          vizState
 	mergeBuf     []gfx.Rect // renderDamage's merged rectangles, reused
-	shiftBuf     []gfx.Rect // presentRects' rectangles at the inset, reused
 	presentBuf   []gfx.Rect // ...with the visualizer's own areas, reused
 	ownBuf       []gfx.Rect // the visualizer's areas drawn by drawViz alone, reused
 	viaBuf       []gfx.Rect // ...and those drawn by drawFrame
@@ -317,10 +315,18 @@ func New(o Options) (*App, error) {
 	return a, nil
 }
 
+// scalerKey is what a scaler was made for.
+type scalerKey struct {
+	lw, lh, pw, ph int
+	area           gfx.Rect
+}
+
 // layout makes everything that depends on the picture's size: the profile
 // (picked for the inner area when the config has overscan margins), the
 // fonts, the canvas and how it reaches the display. The next frame is
-// drawn in full and presented whole, which also blacks the border.
+// drawn in full and presented whole, which also blacks the border. What
+// the new layout leaves as it was (the canvas size, the font sizes, the
+// scaler) is kept, so stepping a margin allocates little.
 func (a *App) layout() error {
 	pw, ph := a.o.Display.Size()
 	d := config.Default().Display
@@ -328,29 +334,52 @@ func (a *App) layout() error {
 		d = a.cfg.Display
 	}
 	a.laidOut = [3]int{d.OverscanLeft, d.OverscanRight, d.OverscanY}
+	whole := gfx.R(0, 0, pw, ph)
 	a.inset = overscanRect(pw, ph, d)
 	prof := a.o.Profile
-	if a.inset != gfx.R(0, 0, pw, ph) {
+	if a.inset != whole {
 		prof = PickProfileIn(pw, ph, a.inset.W, a.inset.H, a.o.ProfileName)
 	}
-	var f Fonts
-	var err error
-	if f.Title, err = a.fonts[1].Face(prof.Title); err != nil {
-		return err
+	if a.canvas == nil || a.F.Title == nil || a.P.Title != prof.Title || a.P.Body != prof.Body || a.P.Small != prof.Small {
+		var f Fonts
+		var err error
+		if f.Title, err = a.fonts[1].Face(prof.Title); err != nil {
+			return err
+		}
+		if f.Body, err = a.fonts[0].Face(prof.Body); err != nil {
+			return err
+		}
+		if f.Small, err = a.fonts[0].Face(prof.Small); err != nil {
+			return err
+		}
+		a.F = f
 	}
-	if f.Body, err = a.fonts[0].Face(prof.Body); err != nil {
-		return err
+	a.P = prof
+	if a.canvas == nil || a.canvas.W != prof.W || a.canvas.H != prof.H {
+		a.canvas, a.verifyCanvas = gfx.NewCanvas(prof.W, prof.H), nil
 	}
-	if f.Small, err = a.fonts[0].Face(prof.Small); err != nil {
-		return err
+	area := a.inset
+	if prof.W != a.inset.W || prof.H != a.inset.H { // drawn at another size: scaled into the inner area
+		if a.inset != whole {
+			area = crtArea(a.inset, prof, PickProfile(pw, ph, a.o.ProfileName), pw, ph)
+		}
+		if k := (scalerKey{prof.W, prof.H, pw, ph, area}); a.scaler == nil || a.scalerK != k {
+			a.scaler, a.scalerK = gfx.NewScalerIn(prof.W, prof.H, pw, ph, area), k
+		}
+	} else {
+		a.scaler = nil
 	}
-	a.P, a.F = prof, f
-	a.canvas, a.verifyCanvas, a.scaler, a.frame = gfx.NewCanvas(prof.W, prof.H), nil, nil, nil
-	switch {
-	case prof.W != a.inset.W || prof.H != a.inset.H: // drawn at another size: scaled into the inner area
-		a.scaler = gfx.NewScalerIn(prof.W, prof.H, pw, ph, a.inset)
-	case a.inset != gfx.R(0, 0, pw, ph):
-		a.frame = gfx.NewCanvas(pw, ph) // black until the canvas is copied into it
+	// A canvas the size of the inset is shown inside the display; the
+	// scaler's picture is already the display's size, black around it.
+	if ip, ok := a.o.Display.(gfx.InsetPresenter); ok {
+		ip.SetInset(gfx.Rect{})
+		if a.scaler == nil && a.inset != whole {
+			ip.SetInset(a.inset)
+		}
+	} else if a.scaler == nil && a.inset != whole {
+		w := gfx.NewInsetter(a.o.Display) // a display that can't (the viewer): a frame is composed for it
+		w.SetInset(a.inset)
+		a.o.Display = w
 	}
 	a.dirty, a.damage, a.viz.dmg = true, a.damage[:0], a.viz.dmg[:0]
 	return nil
@@ -840,22 +869,10 @@ func (a *App) hasCurrent() bool {
 // present shows the logical canvas c on the display, scaled when their
 // sizes differ.
 func (a *App) present(c *gfx.Canvas) error {
-	switch {
-	case a.scaler != nil:
-		return a.o.Display.Present(a.scaler.Scale(c))
-	case a.frame != nil:
-		a.copyIn(c, c.Bounds())
-		return a.o.Display.Present(a.frame)
+	if a.scaler == nil {
+		return a.o.Display.Present(c)
 	}
-	return a.o.Display.Present(c)
-}
-
-// copyIn copies the part r of the canvas c into the frame, at the inset.
-func (a *App) copyIn(c *gfx.Canvas, r gfx.Rect) {
-	r = r.Intersect(c.Bounds())
-	for y := r.Y; y < r.Bottom(); y++ {
-		copy(a.frame.Pix[(a.inset.Y+y)*a.frame.W+a.inset.X+r.X:][:r.W], c.Pix[y*c.W+r.X:][:r.W])
-	}
+	return a.o.Display.Present(a.scaler.Scale(c))
 }
 
 // render draws the next frame: only the damaged areas when nothing else
