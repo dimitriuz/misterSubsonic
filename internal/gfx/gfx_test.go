@@ -267,3 +267,35 @@ func TestOpaqueTextIsExactColour(t *testing.T) {
 	}
 	t.Fatal("no pixel reached exact white")
 }
+
+func TestScalerInStaysInsideItsArea(t *testing.T) {
+	src := NewCanvas(4, 2)
+	for i := range src.Pix {
+		src.Pix[i] = 0x00FFFFFF
+	}
+	for _, c := range []struct {
+		pw, ph int
+		in     Rect
+		want   Rect
+	}{
+		{640, 240, Rect{26, 12, 588, 216}, Rect{26, 12, 588, 216}},    // a CRT mode fills its area
+		{1280, 720, Rect{40, 10, 1200, 700}, Rect{40, 60, 1200, 600}}, // uniform scale, centred in the area
+	} {
+		s := NewScalerIn(4, 2, c.pw, c.ph, c.in)
+		if s.Area() != c.want {
+			t.Errorf("%dx%d in %v: area %v, want %v", c.pw, c.ph, c.in, s.Area(), c.want)
+		}
+		d := s.Scale(src)
+		for y := 0; y < c.ph; y++ {
+			for x := 0; x < c.pw; x++ {
+				if lit := d.Pix[y*c.pw+x] != 0; lit != c.want.Contains(x, y) {
+					t.Fatalf("%dx%d: pixel (%d,%d) lit=%v, area %v", c.pw, c.ph, x, y, lit, c.want)
+				}
+			}
+		}
+	}
+	a, b := NewScaler(4, 2, 640, 240), NewScalerIn(4, 2, 640, 240, Rect{0, 0, 640, 240})
+	if a.Area() != b.Area() {
+		t.Fatal("NewScaler is not NewScalerIn of the whole framebuffer")
+	}
+}

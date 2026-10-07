@@ -116,6 +116,18 @@ app never changes the video mode or `MiSTer.ini` itself. Keep `fb_size=0` (autom
 - **Interlaced CRT modes:** a 480i/576i mode looks like HDMI 480p/576p to the app, so set
   `profile = "crt"` under `[display]` in `config.toml`.
 
+- **TVs that cut the edges (overscan):** first try the TV's own picture setting, "Wide" or "Just
+  Scan" (the name varies). If the TV still hides a little of the edge (the first letter of the
+  sidebar, say), keep the picture away from the edges: Settings → Display has "Overscan: left",
+  "Overscan: right" and "Overscan: top & bottom", in whole percents from 0 to 10, and the picture
+  moves in at once, so you can tune it while looking. They are `overscan_left`, `overscan_right`
+  (percent of the width) and `overscan_y` (percent of the height, for the top and the bottom each)
+  under `[display]` in `config.toml`. The layout is made for the smaller area, so nothing is
+  stretched, and the border is black. Screenshots show the picture without the border.
+- **A TV on a component input:** the MiSTer's analog output needs `vga_scaler=1` and a
+  `video_mode` in a `[Menu]` section. One setup that works: `video_mode=0` (720p) with "Wide" set
+  on the TV.
+
 ## Controls
 
 | Button | Browsing | Now Playing |

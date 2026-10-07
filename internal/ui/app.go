@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,8 +95,12 @@ type owner interface {
 }
 
 type Options struct {
-	Display       gfx.Display
-	Profile       Profile
+	Display gfx.Display
+	Profile Profile
+	// ProfileName is the layout override ("auto", "hdmi" or "crt"; "" is
+	// auto) the profile was picked with: the overscan margins pick it again
+	// for the inner area.
+	ProfileName   string
 	Library       Library
 	Player        Player
 	Art           ArtSource
@@ -197,11 +202,19 @@ type App struct {
 	F             Fonts
 	canvas        *gfx.Canvas
 	scaler        *gfx.Scaler
-	stack         []screenEntry
-	toasts        []toast
-	timers        []timer
-	mq            marquee
-	animate       bool // something on screen moves (marquee): redraw soon
+	// The overscan margins: the canvas is the inset of the display (the
+	// whole display with no margins). frame is the full-size picture that
+	// holds the canvas at the inset, black around it (nil when the canvas is
+	// presented as it is, or the scaler draws it there).
+	inset   gfx.Rect
+	frame   *gfx.Canvas
+	laidOut [3]int // the margins the layout was made for
+	fonts   [2]*gfx.Typeface
+	stack   []screenEntry
+	toasts  []toast
+	timers  []timer
+	mq      marquee
+	animate bool // something on screen moves (marquee): redraw soon
 	// mqWake is when a focused long title starts to scroll (zero if none
 	// waits): the one wake needed during the pre-scroll delay.
 	mqWake time.Time
@@ -256,6 +269,7 @@ type App struct {
 	overwritten  bool      // the last check found the screen drawn over
 	viz          vizState
 	mergeBuf     []gfx.Rect // renderDamage's merged rectangles, reused
+	shiftBuf     []gfx.Rect // presentRects' rectangles at the inset, reused
 	presentBuf   []gfx.Rect // ...with the visualizer's own areas, reused
 	ownBuf       []gfx.Rect // the visualizer's areas drawn by drawViz alone, reused
 	viaBuf       []gfx.Rect // ...and those drawn by drawFrame
@@ -285,19 +299,9 @@ func New(o Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	if a.F.Title, err = bold.Face(a.P.Title); err != nil {
+	a.fonts = [2]*gfx.Typeface{regular, bold}
+	if err := a.layout(); err != nil {
 		return nil, err
-	}
-	if a.F.Body, err = regular.Face(a.P.Body); err != nil {
-		return nil, err
-	}
-	if a.F.Small, err = regular.Face(a.P.Small); err != nil {
-		return nil, err
-	}
-	a.canvas = gfx.NewCanvas(a.P.W, a.P.H)
-	pw, ph := o.Display.Size()
-	if pw != a.P.W || ph != a.P.H { // drawn at the display's size: nothing to scale
-		a.scaler = gfx.NewScaler(a.P.W, a.P.H, pw, ph)
 	}
 	a.verify, a.pad = o.VerifyRedraw, o.PadAtStart
 	if _, ok := o.Display.(gfx.Checker); ok || o.WatchDisplay != nil {
@@ -311,6 +315,52 @@ func New(o Options) (*App, error) {
 		}(ch)
 	}
 	return a, nil
+}
+
+// layout makes everything that depends on the picture's size: the profile
+// (picked for the inner area when the config has overscan margins), the
+// fonts, the canvas and how it reaches the display. The next frame is
+// drawn in full and presented whole, which also blacks the border.
+func (a *App) layout() error {
+	pw, ph := a.o.Display.Size()
+	d := config.Default().Display
+	if a.cfg != nil {
+		d = a.cfg.Display
+	}
+	a.laidOut = [3]int{d.OverscanLeft, d.OverscanRight, d.OverscanY}
+	a.inset = overscanRect(pw, ph, d)
+	prof := a.o.Profile
+	if a.inset != gfx.R(0, 0, pw, ph) {
+		prof = PickProfileIn(pw, ph, a.inset.W, a.inset.H, a.o.ProfileName)
+	}
+	var f Fonts
+	var err error
+	if f.Title, err = a.fonts[1].Face(prof.Title); err != nil {
+		return err
+	}
+	if f.Body, err = a.fonts[0].Face(prof.Body); err != nil {
+		return err
+	}
+	if f.Small, err = a.fonts[0].Face(prof.Small); err != nil {
+		return err
+	}
+	a.P, a.F = prof, f
+	a.canvas, a.verifyCanvas, a.scaler, a.frame = gfx.NewCanvas(prof.W, prof.H), nil, nil, nil
+	switch {
+	case prof.W != a.inset.W || prof.H != a.inset.H: // drawn at another size: scaled into the inner area
+		a.scaler = gfx.NewScalerIn(prof.W, prof.H, pw, ph, a.inset)
+	case a.inset != gfx.R(0, 0, pw, ph):
+		a.frame = gfx.NewCanvas(pw, ph) // black until the canvas is copied into it
+	}
+	a.dirty, a.damage, a.viz.dmg = true, a.damage[:0], a.viz.dmg[:0]
+	return nil
+}
+
+// relayout applies changed overscan margins at once (Settings → Display).
+func (a *App) relayout() {
+	if err := a.layout(); err != nil { // the fonts are loaded already: not expected
+		log.Printf("layout: %v", err)
+	}
 }
 
 // Attach sets the library, player and art source once the server connection
@@ -790,10 +840,22 @@ func (a *App) hasCurrent() bool {
 // present shows the logical canvas c on the display, scaled when their
 // sizes differ.
 func (a *App) present(c *gfx.Canvas) error {
-	if a.scaler == nil {
-		return a.o.Display.Present(c)
+	switch {
+	case a.scaler != nil:
+		return a.o.Display.Present(a.scaler.Scale(c))
+	case a.frame != nil:
+		a.copyIn(c, c.Bounds())
+		return a.o.Display.Present(a.frame)
 	}
-	return a.o.Display.Present(a.scaler.Scale(c))
+	return a.o.Display.Present(c)
+}
+
+// copyIn copies the part r of the canvas c into the frame, at the inset.
+func (a *App) copyIn(c *gfx.Canvas, r gfx.Rect) {
+	r = r.Intersect(c.Bounds())
+	for y := r.Y; y < r.Bottom(); y++ {
+		copy(a.frame.Pix[(a.inset.Y+y)*a.frame.W+a.inset.X+r.X:][:r.W], c.Pix[y*c.W+r.X:][:r.W])
+	}
 }
 
 // render draws the next frame: only the damaged areas when nothing else

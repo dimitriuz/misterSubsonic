@@ -38,13 +38,20 @@ type Scaler struct {
 const CRTMaxLines = 288
 
 func NewScaler(lw, lh, pw, ph int) *Scaler {
+	return NewScalerIn(lw, lh, pw, ph, Rect{0, 0, pw, ph})
+}
+
+// NewScalerIn is NewScaler for a picture that must stay inside in, a part of
+// the pw×ph framebuffer (the overscan margins leave the rest black). Whether
+// it is a CRT mode is still the framebuffer's height.
+func NewScalerIn(lw, lh, pw, ph int, in Rect) *Scaler {
 	s := &Scaler{dst: NewCanvas(pw, ph)}
-	w, h := pw, ph
+	w, h := in.W, in.H
 	if ph > CRTMaxLines {
-		scale := min(float64(pw)/float64(lw), float64(ph)/float64(lh))
+		scale := min(float64(in.W)/float64(lw), float64(in.H)/float64(lh))
 		w, h = max(int(float64(lw)*scale), 1), max(int(float64(lh)*scale), 1)
 	}
-	s.area = Rect{(pw - w) / 2, (ph - h) / 2, w, h}
+	s.area = Rect{in.X + (in.W-w)/2, in.Y + (in.H-h)/2, w, h}
 	s.xmap = make([]int, w)
 	for i := range s.xmap {
 		s.xmap[i] = i * lw / w

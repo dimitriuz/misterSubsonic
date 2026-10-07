@@ -249,7 +249,19 @@ func (a *App) checkPartial() error {
 // display can take them, otherwise the whole frame (scaled on CRT).
 func (a *App) presentRects(c *gfx.Canvas, rs []gfx.Rect) error {
 	if pp, ok := a.o.Display.(gfx.PartialPresenter); ok && a.scaler == nil {
-		return pp.PresentRects(c, rs)
+		if a.frame == nil {
+			return pp.PresentRects(c, rs)
+		}
+		// With margins: those areas go into the full frame, and are
+		// presented where they land in it.
+		a.shiftBuf = a.shiftBuf[:0]
+		for _, r := range rs {
+			if r = r.Intersect(c.Bounds()); !r.Empty() {
+				a.copyIn(c, r)
+				a.shiftBuf = append(a.shiftBuf, gfx.R(r.X+a.inset.X, r.Y+a.inset.Y, r.W, r.H))
+			}
+		}
+		return pp.PresentRects(a.frame, a.shiftBuf)
 	}
 	return a.present(c)
 }

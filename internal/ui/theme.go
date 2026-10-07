@@ -7,6 +7,7 @@ package ui
 import (
 	"math"
 
+	"mistersubsonic/internal/config"
 	"mistersubsonic/internal/gfx"
 )
 
@@ -55,6 +56,38 @@ func PickProfile(fbW, fbH int, override string) Profile {
 		p.H = 288
 	}
 	return p
+}
+
+// PickProfileIn is PickProfile for a picture drawn inside the overscan
+// margins: the HDMI layout is scaled to the inner iw×ih rather than the
+// whole framebuffer, so nothing is stretched. A CRT layout keeps its logical
+// size (the scaler fits it into the inner area).
+func PickProfileIn(fbW, fbH, iw, ih int, override string) Profile {
+	p := PickProfile(fbW, fbH, override)
+	if p.Name == ProfileHDMI.Name {
+		return scaleProfile(ProfileHDMI, iw, ih)
+	}
+	return p
+}
+
+// overscanRect is the inner area of a pw×ph framebuffer inside the margins
+// of d: percents of the width (left, right) and of the height (top and
+// bottom each), rounded to whole pixels. The inner size is kept even: an odd
+// width takes the extra pixel from the right margin, an odd height from the
+// bottom one.
+func overscanRect(pw, ph int, d config.Display) gfx.Rect {
+	px := func(n, pct int) int {
+		return int(math.Round(float64(n) * float64(min(max(pct, 0), config.MaxOverscan)) / 100))
+	}
+	l, r, y := px(pw, d.OverscanLeft), px(pw, d.OverscanRight), px(ph, d.OverscanY)
+	w, h := pw-l-r, ph-2*y
+	if w%2 != 0 {
+		w--
+	}
+	if h%2 != 0 {
+		h--
+	}
+	return gfx.R(l, y, w, h)
 }
 
 // Smallest font sizes a scaled layout uses, so a small HDMI framebuffer

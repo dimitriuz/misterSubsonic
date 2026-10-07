@@ -137,6 +137,9 @@ func (a *App) UpdateConfig(change func(c *config.Config), soon bool) {
 		a.cfg = config.Default()
 	}
 	change(a.cfg)
+	if d := a.cfg.Display; a.laidOut != [3]int{d.OverscanLeft, d.OverscanRight, d.OverscanY} {
+		a.relayout() // live: the picture moves in from the edges at once
+	}
 	if soon {
 		a.saveAt = a.o.Now().Add(saveDelay)
 		return
