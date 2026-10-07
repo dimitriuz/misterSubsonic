@@ -193,7 +193,12 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
 - JPEG covers are always opaque, so their averages use plain 32-bit sums. The output is bit-identical to before, and the tests check that exactly.
 - What remains is Go's standard JPEG decoder, about 0.77 s for this size.
 
-**On the TV:** pending. Run `docs/testing-on-mister.md` items 26–29 and record them here.
+**On the TV (2026-10-06):** all four checks pass.
+- **Item 26:** holding Right flips Scrobbling once, and a Select press that wakes the screensaver does nothing else.
+- **Item 28:** a comment added to `config.toml` survives a save.
+- **Item 29:** a TERM to the launcher closes the app within 3 s. The framebuffer is back at 960×600 with no state left, and the menu returns.
+- **Item 27:** MP3 seeking also works.
+- **The ENHANCE_YOUR_CALM failures** in the log came from saving a 6,400-song queue (see Plan 7b).
 
 ## Plan 6 on the MiSTer
 
@@ -208,21 +213,36 @@ Measured with the test binaries only (`ui.test -test.bench 'Partial|Repaint'`, `
 
 The analysis alone (`internal/viz`, `BenchmarkAnalyzerUpdate`): 49 µs on HDMI settings, 18 µs on CRT settings. The cost on the A9 will be mostly the present of up to 1920×1200 per frame, which these numbers leave out.
 
-**On the MiSTer:** pending. After `make deploy-dev MISTER=<ip>`, on the device:
-
-```
-./ui.test -test.run '^$' -test.bench VizFrame -test.benchtime 30x
-./viz.test -test.run '^$' -test.bench AnalyzerUpdate
-```
+**On the MiSTer (2026-10-06): the drawing only.** Analysis plus drawing, without the present (`VizFrame`, 0 allocs/op):
 
 | Case | Bars | Scope | VU | Waterfall |
 |---|---|---|---|---|
-| Panel 1920×1200 | pending | pending | pending | pending |
-| Panel 320×240 | pending | pending | pending | pending |
-| Full screen 1920×1200 | pending | pending | pending | pending |
-| Full screen 320×240 | pending | pending | pending | pending |
+| Panel 1920×1200 | 2.6 ms | 3.1 ms | 3.4 ms | 4.9 ms |
+| Panel 320×240 | 0.68 ms | 0.71 ms | 0.69 ms | 0.70 ms |
+| Full screen 1920×1200 | 14.8 ms | 15.7 ms | 30.7 ms | 49.9 ms |
+| Full screen 320×240 | 1.1 ms | 1.1 ms | 2.0 ms | 2.2 ms |
 
-Then run `docs/testing-on-mister.md` items 31–34 and record them here, with the frame-rate defaults that fit 60% of each budget.
+The analysis alone takes 1.25 ms on HDMI settings and 0.57 ms on CRT settings.
+
+**On the TV (2026-10-06): too slow at first.**
+- **What happened:** the safety valve logged "slowing to 10 fps" and "over budget at 10 fps", in the panel and in full screen.
+- **Real frame cost:** a real frame, with the present (`VizRealFrame`, a throwaway benchmark at the time), took 16–18 ms for the panel and 79–121 ms for full screen at 1920×1200.
+- **Where the time went** (a device CPU profile of full screen): `memmove` of the 2.3 Mpx present took 53%, and `Canvas.Fill` 30%.
+- **The waterfall** looked like blocks: 32 px strips, 64 bands.
+- **The fix is Plan 7b:** own damage per style, culling, a valve reset, and a smooth waterfall. `BenchmarkVizRealFrame` is now in the repo.
+
+**After Plan 7b (2026-10-07),** `./ui.test -test.run '^$' -test.bench VizRealFrame -test.benchtime 50x`:
+
+| Case | Bars | Scope | VU | Waterfall |
+|---|---|---|---|---|
+| Panel 1920×1200 | 3.3 ms | 6.6 ms | 2.6 ms | 3.2 ms |
+| Full screen 1920×1200 | 6.6 ms | 36 ms | 1.7 ms | 5.3 ms |
+| Panel 1280×720 | 2.2 ms | | | |
+| CRT 320×240 | 1.1 ms | | | |
+
+**On the TV (2026-10-07):** the user reports the visualizer works well, in the panel and in full screen.
+- Every style fits 30 fps except the full-screen scope with busy music, which should settle at about 15 fps.
+- The defaults stay at 30 fps (HDMI) and 20 fps (CRT).
 
 ## Plan 7 on the MiSTer
 
@@ -236,8 +256,22 @@ Run it once with no phone connected and once with the remote page open on Now Pl
 
 | Case | CPU |
 |---|---|
-| Playing, no phone | pending |
-| Playing, phone on Now Playing | pending |
-| Playing, phone browsing and searching | pending |
+| Playing, no phone | 13–23% of the total CPU (busybox `top`; visualizer on) |
+| Playing, phone on Now Playing | 13–20% |
+| Playing, phone browsing and searching | not separately measured |
 
-Then run `docs/testing-on-mister.md` items 35–38 and record them here.
+**On the TV (2026-10-06):** items 35–37 pass.
+- Playback control works with the TV on and off.
+- Queue editing and search-and-play work.
+- The phone adds no measurable CPU.
+
+## Plan 7b and the component output (2026-10-07)
+
+- **Queue saving.** The user's queue held about 6,400 songs, and `state.json` was 7.4 MB.
+  - **Before:** it was rewritten every 30 s, about 890 MB an hour. The server save sent every id in the URL, and the server refused it with HTTP/2 GOAWAY ENHANCE_YOUR_CALM.
+  - **Fixed in Plan 7b:** the queue file is written only on a change. A small `position.json` is written every 30 s. The server gets a 500-song window by POST.
+  - **On the TV:** resume after a restart brings back the full queue.
+- **The component (YPbPr) output on an LCD TV.**
+  - **With `vga_scaler=0`,** the framebuffer is not on the analog output at all: the app runs but nothing shows. The fix is a `[Menu]` section with `vga_scaler=1` and a `video_mode`.
+  - **The picture was badly cropped at first,** but the cause was the TV's Wide mode set to 4:3 on that input. With Wide and overscan +1, both 720p (`video_mode=0`) and 480p fit.
+  - **What's left** is a small cut on the left edge, which Plan 7c's Overscan settings cover.
