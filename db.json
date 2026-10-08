@@ -1,0 +1,36 @@
+{
+  "v": 1,
+  "db_id": "mistersubsonic",
+  "timestamp": 1791452494,
+  "files": {
+    "Scripts/MiSTer_Subsonic.sh": {
+      "hash": "1b1cddef33e3cc21a0c868d02928dcb6",
+      "size": 3734,
+      "url": "https://github.com/dimitriuz/misterSubsonic/releases/download/v0.9.0/MiSTer_Subsonic.sh"
+    },
+    "mistersubsonic/LICENSE": {
+      "hash": "1ebbd3e34237af26da5dc08a4e440464",
+      "size": 35149,
+      "url": "https://github.com/dimitriuz/misterSubsonic/releases/download/v0.9.0/LICENSE"
+    },
+    "mistersubsonic/THIRD_PARTY.txt": {
+      "hash": "126c4063e0c106e75996650ba5a737e8",
+      "size": 9203,
+      "url": "https://github.com/dimitriuz/misterSubsonic/releases/download/v0.9.0/THIRD_PARTY.txt"
+    },
+    "mistersubsonic/config.example.toml": {
+      "hash": "cdb25be58c0ec5d57992f422aaf767d8",
+      "size": 3064,
+      "url": "https://github.com/dimitriuz/misterSubsonic/releases/download/v0.9.0/config.example.toml"
+    },
+    "mistersubsonic/mistersubsonic": {
+      "hash": "f6bc77f6a3e9929b1d0e452e1df0f9db",
+      "size": 13947900,
+      "url": "https://github.com/dimitriuz/misterSubsonic/releases/download/v0.9.0/mistersubsonic"
+    }
+  },
+  "folders": {
+    "Scripts": {},
+    "mistersubsonic": {}
+  }
+}
