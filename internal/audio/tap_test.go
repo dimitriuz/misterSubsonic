@@ -47,7 +47,7 @@ func TestTapKeepsOnlyTheFramesTheDeviceTook(t *testing.T) {
 	}
 	out.consume(10)
 	dst := make([]float32, 2*64)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	got := lefts(dst[:2*n])
 	if len(got) != 10 || got[0] != 1 || got[9] != 10 {
 		t.Fatalf("window = %v, want 1..10", got)
@@ -59,7 +59,7 @@ func TestTapWindowEndsAtConsumed(t *testing.T) {
 	tp.Write(stereo(1, 50))
 	out.consume(30)
 	dst := make([]float32, 2*8)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	got := lefts(dst[:2*n])
 	if n != 8 || got[0] != 23 || got[7] != 30 {
 		t.Fatalf("window = %v, want 23..30", got)
@@ -76,14 +76,14 @@ func TestTapRingWraps(t *testing.T) {
 	}
 	out.consume(35)
 	dst := make([]float32, 2*10)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	got := lefts(dst[:2*n])
 	if n != 10 || got[0] != 26 || got[9] != 35 {
 		t.Fatalf("window = %v, want 26..35", got)
 	}
 	// Asking for more than the ring holds gives the ring.
 	big := make([]float32, 2*40)
-	if n = tp.Window(big); n != 16 || lefts(big[:2*n])[0] != 20 {
+	if n, _ = tp.Window(big); n != 16 || lefts(big[:2*n])[0] != 20 {
 		t.Fatalf("big window n=%d first=%d, want 16 from 20", n, lefts(big[:2*n])[0])
 	}
 }
@@ -94,7 +94,7 @@ func TestTapUnplayedFramesAreSkipped(t *testing.T) {
 	out.consume(40)
 	tp.Write(stereo(41, 10)) // sit in the device ring, not heard yet
 	dst := make([]float32, 2*4)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	if got := lefts(dst[:2*n]); n != 4 || got[3] != 40 {
 		t.Fatalf("window = %v, want 37..40", got)
 	}
@@ -116,7 +116,7 @@ func TestTapPauseKeepsTheWindow(t *testing.T) {
 	tp.SetPaused(false)
 	out.consume(20)
 	dst := make([]float32, 2*16)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	if got := lefts(dst[:2*n]); n != 16 || got[0] != 45 || got[15] != 60 {
 		t.Fatalf("window = %v, want 45..60", got)
 	}
@@ -124,7 +124,7 @@ func TestTapPauseKeepsTheWindow(t *testing.T) {
 	clk.t = clk.t.Add(100 * time.Millisecond)
 	tp.Write(stereo(141, 20))
 	out.consume(20)
-	n = tp.Window(dst)
+	n, _ = tp.Window(dst)
 	if got := lefts(dst[:2*n]); n != 16 || got[0] != 65 || got[15] != 80 {
 		t.Fatalf("after refill window = %v, want 65..80", got)
 	}
@@ -135,7 +135,7 @@ func TestTapShortRingReturnsFewer(t *testing.T) {
 	tp.Write(stereo(1, 5))
 	out.consume(5)
 	dst := make([]float32, 2*32)
-	if n := tp.Window(dst); n != 5 {
+	if n, _ := tp.Window(dst); n != 5 {
 		t.Fatalf("n = %d, want 5", n)
 	}
 }
@@ -149,12 +149,12 @@ func TestTapFlushClears(t *testing.T) {
 		t.Fatal("Flush not passed through")
 	}
 	dst := make([]float32, 2*8)
-	if n := tp.Window(dst); n != 0 {
+	if n, _ := tp.Window(dst); n != 0 {
 		t.Fatalf("after Flush n = %d, want 0", n)
 	}
 	tp.Write(stereo(100, 3))
 	out.consume(3)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	if got := lefts(dst[:2*n]); n != 3 || got[0] != 100 {
 		t.Fatalf("after new writes window = %v, want 100..102", got)
 	}
@@ -165,18 +165,18 @@ func TestTapIdleSkipsTheCopyAndResumes(t *testing.T) {
 	dst := make([]float32, 2*8)
 	tp.Write(stereo(1, 10))
 	out.consume(10)
-	if n := tp.Window(dst); n != 8 { // reads at t0
+	if n, _ := tp.Window(dst); n != 8 { // reads at t0
 		t.Fatalf("n = %d, want 8", n)
 	}
 	clk.t = clk.t.Add(1500 * time.Millisecond) // nobody reads for over 1 s
 	tp.Write(stereo(11, 10))
 	out.consume(10)
-	if n := tp.Window(dst); n != 0 { // this read wakes it; nothing was copied
+	if n, _ := tp.Window(dst); n != 0 { // this read wakes it; nothing was copied
 		t.Fatalf("idle window n = %d, want 0", n)
 	}
 	tp.Write(stereo(21, 10))
 	out.consume(10)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	if got := lefts(dst[:2*n]); n != 8 || got[0] != 23 || got[7] != 30 {
 		t.Fatalf("resumed window = %v, want 23..30", got)
 	}
@@ -184,7 +184,7 @@ func TestTapIdleSkipsTheCopyAndResumes(t *testing.T) {
 	clk.t = clk.t.Add(900 * time.Millisecond)
 	tp.Write(stereo(31, 4))
 	out.consume(4)
-	if n = tp.Window(dst); n != 8 || lefts(dst[:2*n])[7] != 34 {
+	if n, _ = tp.Window(dst); n != 8 || lefts(dst[:2*n])[7] != 34 {
 		t.Fatalf("window after a short gap n = %d", n)
 	}
 }
@@ -227,7 +227,7 @@ func TestTapConcurrentWriteAndWindow(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				n := tp.Window(dst)
+				n, _ := tp.Window(dst)
 				for i := 1; i < n; i++ { // frames are consecutive
 					if dst[2*i] != dst[2*i-2]+1 {
 						t.Errorf("window not consecutive at %d", i)
@@ -249,9 +249,61 @@ func TestTapOversizeWriteReturnsDeviceCount(t *testing.T) {
 	}
 	out.consume(40)
 	dst := make([]float32, 2*16)
-	n := tp.Window(dst)
+	n, _ := tp.Window(dst)
 	got := lefts(dst[:2*n])
 	if n != 16 || got[0] != 25 || got[15] != 40 {
 		t.Fatalf("window = %v, want 25..40", got)
+	}
+}
+
+func TestDecimation(t *testing.T) {
+	for rate, want := range map[int]int{
+		44100: 1, 48000: 1, 88200: 2, 96000: 2, 176400: 4, 192000: 4, 352800: 8, 384000: 8, 768000: 16,
+	} {
+		if got := Decimation(rate); got != want {
+			t.Errorf("Decimation(%d) = %d, want %d", rate, got, want)
+		}
+	}
+}
+
+func TestTapAveragesFramesAbove48k(t *testing.T) {
+	out := newNativeOutput(1000, 48000, 96000)
+	clk := &tapClock{t: time.Unix(1000, 0)}
+	tp := NewTap(out, 64)
+	tp.now = clk.now
+	if err := tp.Reopen("hw:CARD=DAC,DEV=0", 96000); err != nil {
+		t.Fatal(err)
+	}
+	tp.Window(make([]float32, 2)) // mark it read
+	tp.Write(stereo(1, 40))
+	out.consume(40)
+	dst := make([]float32, 2*8)
+	n, rate := tp.Window(dst)
+	if n != 8 || rate != 48000 {
+		t.Fatalf("window of %d frames at %d Hz, want 8 at 48000", n, rate)
+	}
+	// The last 16 device frames, 25..40, in pairs: (25+26)/2 = 25.5 ...
+	if dst[0] != 25.5 || dst[1] != -25.5 || dst[14] != 39.5 {
+		t.Fatalf("window = %v, want the means of pairs from 25.5 to 39.5", dst)
+	}
+}
+
+func TestTapReopenSizesTheRingForTheRate(t *testing.T) {
+	out := newNativeOutput(100000, 48000, 192000)
+	tp := NewTap(out, 100)
+	if tp.size != 100 {
+		t.Fatalf("size %d at 48 kHz, want 100", tp.size)
+	}
+	tp.Window(make([]float32, 2))
+	tp.Write(stereo(1, 50))
+	out.consume(50)
+	if err := tp.Reopen("hw:CARD=DAC,DEV=0", 192000); err != nil {
+		t.Fatal(err)
+	}
+	if tp.size != 400 {
+		t.Fatalf("size %d at 192 kHz, want 400 (the same time)", tp.size)
+	}
+	if n, _ := tp.Window(make([]float32, 2*8)); n != 0 {
+		t.Fatalf("window of %d frames right after a reopen, want 0: the old rate's frames are gone", n)
 	}
 }

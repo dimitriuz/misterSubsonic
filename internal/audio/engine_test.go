@@ -1441,7 +1441,7 @@ func TestEngineThroughTapFillsWindow(t *testing.T) {
 	dst := make([]float32, 2*512)
 	deadline := time.After(3 * time.Second)
 	for {
-		if n := tp.Window(dst); n == 512 {
+		if n, _ := tp.Window(dst); n == 512 {
 			return
 		}
 		select {

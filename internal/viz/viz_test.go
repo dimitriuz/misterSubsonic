@@ -442,3 +442,29 @@ func BenchmarkAnalyzerUpdate(b *testing.B) {
 		})
 	}
 }
+
+func TestSetRatePutsASineInItsBand(t *testing.T) {
+	const f, rate = 12000.0, 44100
+	s := make([]float32, 2*2048)
+	for i := 0; i < 2048; i++ {
+		v := float32(math.Sin(2 * math.Pi * f * float64(i) / rate))
+		s[2*i], s[2*i+1] = v, v
+	}
+	want := bandOf(f, 64)
+
+	stale := New(HDMI()) // tables for 48 kHz: 12 kHz at 44.1 kHz reads high
+	settle(stale, s, 2048, 33*time.Millisecond, 10)
+	if got := argmax(stale.Column()); got == want {
+		t.Fatalf("the test can't tell: band %d either way", got)
+	}
+
+	a := New(HDMI())
+	a.SetRate(rate)
+	settle(a, s, 2048, 33*time.Millisecond, 10)
+	if got := argmax(a.Column()); got != want {
+		t.Fatalf("waterfall peak in band %d, want %d", got, want)
+	}
+	if allocs := testing.AllocsPerRun(10, func() { a.SetRate(rate) }); allocs != 0 {
+		t.Errorf("SetRate at the same rate allocates %v times", allocs)
+	}
+}

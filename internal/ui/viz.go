@@ -181,7 +181,9 @@ func (a *App) vizTick(now time.Time) {
 	}
 	n := 0
 	if a.state().Status == player.Playing { // a paused device stops consuming: let the levels fall
-		n = a.o.Visual.Window(v.win)
+		var rate int
+		n, rate = a.o.Visual.Window(v.win)
+		v.an.SetRate(rate)
 	}
 	v.an.Update(v.win, n, dt)
 	strip := stripOf{}

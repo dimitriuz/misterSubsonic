@@ -13,7 +13,7 @@ type Config struct {
 	FFTSize        int // power of two: 2048 on HDMI, 1024 on CRT
 	Bars           int // spectrum bars: 32 on HDMI, 16 on CRT
 	WaterfallBands int // waterfall rows: 64 on HDMI, 32 on CRT
-	SampleRate     int // 48000
+	SampleRate     int // 48000 at the start; see SetRate
 }
 
 func HDMI() Config { return Config{FFTSize: 2048, Bars: 32, WaterfallBands: 64, SampleRate: 48000} }
@@ -141,6 +141,18 @@ func New(cfg Config) *Analyzer {
 	a.win2 = float32(16 / (float64(n) * float64(n)))
 	a.vuPeakDB = [2]float32{vuMinDB, vuMinDB}
 	return a
+}
+
+// SetRate tells the analyzer the sample rate of the windows that follow.
+// A new rate rebuilds the band tables (they map FFT bins to frequencies),
+// which allocates; the same rate does nothing.
+func (a *Analyzer) SetRate(rate int) {
+	if rate <= 0 || rate == a.cfg.SampleRate {
+		return
+	}
+	a.cfg.SampleRate = rate
+	a.bars = newBandSet(a.cfg.Bars, a.cfg.FFTSize, rate, true)
+	a.wfall = newBandSet(a.cfg.WaterfallBands, a.cfg.FFTSize, rate, false)
 }
 
 // Update analyses the latest window: stereo is interleaved L,R float32, n

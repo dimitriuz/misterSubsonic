@@ -144,9 +144,10 @@ type Options struct {
 
 // Visual gives the visualizer the audio that is playing: Window fills dst
 // (interleaved stereo float32) with the latest frames ending at the playback
-// position and returns how many frames it filled. *audio.Tap implements it.
+// position and returns how many frames it filled and their sample rate.
+// *audio.Tap implements it.
 type Visual interface {
-	Window(dst []float32) int
+	Window(dst []float32) (n, rate int)
 }
 
 // Visual returns Options.Visual.
