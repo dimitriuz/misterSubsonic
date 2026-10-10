@@ -46,6 +46,8 @@ int mss_device_reopen(const char* device_name, int null_backend, uint32_t rate, 
 void mss_device_close(void);
 uint32_t mss_device_rate(void);
 int mss_device_format_bits(void);
+/* Float samples to bits (16, 24 packed, 32) of integer, or bits 0: float. */
+void mss_convert_samples(void* dst, int bits, const float* src, uint32_t count);
 /* 1 once the device stopped without being asked (unplugged, say). */
 int mss_device_lost(void);
 uint32_t mss_device_write(const float* frames, uint32_t frame_count);

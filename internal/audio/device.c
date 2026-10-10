@@ -75,6 +75,37 @@ static void fill(float* dst, ma_uint32 frames) {
 
 #define CONVERT_FRAMES 512
 
+/* Float samples to the device's format, scaled by 2^(bits-1) and clamped:
+   exact for samples that came from that many bits. bits 0: float, copied.
+   s24 is packed, 3 bytes little-endian. */
+void mss_convert_samples(void* dst, int bits, const float* src, uint32_t count) {
+    unsigned char* d = (unsigned char*)dst;
+    if (bits == 0) {
+        memcpy(dst, src, (size_t)count * sizeof(float));
+        return;
+    }
+    double scale = (double)(1u << (bits - 1));
+    if (bits == 32) {
+        scale = 2147483648.0;
+    }
+    double hi = scale - 1.0;
+    for (uint32_t i = 0; i < count; i++) {
+        double v = (double)src[i] * scale;
+        v = v < -scale ? -scale : (v > hi ? hi : v);
+        int32_t s = (int32_t)v;
+        if (bits == 32) {
+            memcpy(d + (size_t)i * 4, &s, 4);
+        } else if (bits == 24) {
+            d[i * 3] = (unsigned char)(s & 0xff);
+            d[i * 3 + 1] = (unsigned char)((s >> 8) & 0xff);
+            d[i * 3 + 2] = (unsigned char)((s >> 16) & 0xff);
+        } else {
+            int16_t h = (int16_t)s;
+            memcpy(d + (size_t)i * 2, &h, 2);
+        }
+    }
+}
+
 static void data_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames) {
     (void)dev;
     (void)in;
@@ -82,15 +113,16 @@ static void data_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames)
         fill((float*)out, frames);
         return;
     }
-    /* A native device: fill floats, then convert to its format. Scaling by a
-       power of two keeps 16- and 24-bit samples exact. */
+    /* A native device: fill floats, then convert to its format with our own
+       conversion: scaling by a power of two (not miniaudio's 2^n-1) keeps 16-
+       and 24-bit samples exact. */
     static float buf[CONVERT_FRAMES * 2];
     ma_uint32 bps = ma_get_bytes_per_sample(g_format) * 2;
     unsigned char* dst = (unsigned char*)out;
     while (frames > 0) {
         ma_uint32 n = frames < CONVERT_FRAMES ? frames : CONVERT_FRAMES;
         fill(buf, n);
-        ma_pcm_convert(dst, g_format, buf, ma_format_f32, (ma_uint64)n * 2, ma_dither_mode_none);
+        mss_convert_samples(dst, g_format == ma_format_s32 ? 32 : g_format == ma_format_s24 ? 24 : g_format == ma_format_s16 ? 16 : 0, buf, (uint32_t)n * 2);
         dst += n * bps;
         frames -= n;
     }

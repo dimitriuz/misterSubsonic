@@ -24,6 +24,10 @@ import (
 const OutputRate = 48000
 
 // Output is where the engine writes interleaved stereo float32 at Rate().
+//
+// Threading: Write, Flush and Reopen must be called from one goroutine (the
+// engine's run goroutine is the only caller). Consumed, SetPaused, SetVolume,
+// Rate, Supports and Lost may be called from any goroutine.
 type Output interface {
 	// Write copies as many frames as fit and returns how many were taken.
 	Write(frames []float32) int
@@ -44,11 +48,11 @@ type Output interface {
 	// the others.
 	Supports(rate int) bool
 	// Reopen closes the device, once what it holds has played, and opens
-	// name at rate. Pause and volume carry over. On error the output is
-	// closed: Lost reports true until a Reopen succeeds.
+	// name at rate. Pause and volume carry over. On error the device is
+	// closed and the error is the caller's signal (Lost is not set by it).
 	Reopen(name string, rate int) error
 	// Lost reports that the device stopped without being asked to (it was
-	// unplugged, say) or that a Reopen failed.
+	// unplugged, say) or, for a native device, that its card is gone.
 	Lost() bool
 }
 
@@ -232,3 +236,17 @@ func (d *device) Close() error {
 // stopDeviceForTest is a test hook: it stops the device callback, as a
 // failed or unplugged device would, without closing the device.
 func stopDeviceForTest() { C.mss_device_stop_for_test() }
+
+// convertSamples converts float samples to bits (16, 24 packed or 32) of
+// integer, or copies them for bits 0; the device's conversion, for tests.
+func convertSamples(src []float32, bits int) []byte {
+	per := bits / 8
+	if bits == 0 {
+		per = 4
+	}
+	dst := make([]byte, len(src)*per)
+	if len(src) > 0 {
+		C.mss_convert_samples(unsafe.Pointer(&dst[0]), C.int(bits), (*C.float)(unsafe.Pointer(&src[0])), C.uint32_t(len(src)))
+	}
+	return dst
+}

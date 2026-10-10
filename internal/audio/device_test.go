@@ -201,3 +201,48 @@ func TestNativeDeviceIsLostWhenItsCardGoes(t *testing.T) {
 		t.Fatalf("checked a non-native device: %q", asked)
 	}
 }
+
+func TestConvertSamplesIsExactAndClamps(t *testing.T) {
+	rd32 := func(b []byte) int32 {
+		return int32(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
+	}
+	rd24 := func(b []byte) int32 { return (int32(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16) << 8) >> 8 }
+	rd16 := func(b []byte) int32 { return int32(int16(uint16(b[0]) | uint16(b[1])<<8)) }
+
+	for _, n := range []int32{0, 1, -1, 12345, -12345, 32767, -32768} {
+		if got := rd32(convertSamples([]float32{float32(n) / 32768}, 32)); got != n<<16 {
+			t.Errorf("16-bit %d as s32 = %d, want %d", n, got, n<<16)
+		}
+		if got := rd16(convertSamples([]float32{float32(n) / 32768}, 16)); got != n {
+			t.Errorf("s16 round trip %d = %d", n, got)
+		}
+	}
+	for _, m := range []int32{0, 1, -1, 1234567, -1234567, 8388607, -8388608} {
+		f := float32(m) / 8388608
+		if got := rd32(convertSamples([]float32{f}, 32)); got != m<<8 {
+			t.Errorf("24-bit %d as s32 = %d, want %d", m, got, m<<8)
+		}
+		if got := rd24(convertSamples([]float32{f}, 24)); got != m {
+			t.Errorf("s24 round trip %d = %d", m, got)
+		}
+	}
+	ends := []struct {
+		bits     int
+		min, max int32
+		read     func([]byte) int32
+	}{
+		{16, -32768, 32767, rd16},
+		{24, -8388608, 8388607, rd24},
+		{32, -2147483648, 2147483647, rd32},
+	}
+	for _, e := range ends {
+		per := e.bits / 8
+		b := convertSamples([]float32{1, -1, 1.5, -3}, e.bits)
+		want := []int32{e.max, e.min, e.max, e.min}
+		for i, w := range want {
+			if got := e.read(b[i*per:]); got != w {
+				t.Errorf("%d-bit sample %d = %d, want %d", e.bits, i, got, w)
+			}
+		}
+	}
+}
