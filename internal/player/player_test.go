@@ -931,3 +931,21 @@ func TestAnEmptyServerQueueIsNotAResume(t *testing.T) {
 		t.Fatalf("resumable = %+v, %v; want the local file's", r, err)
 	}
 }
+
+func TestDeviceLostIsPassedOn(t *testing.T) {
+	h := newHarness(t, nil)
+	h.p.PlayNow(songs(2, 100), 0)
+	h.playAndStart(1)
+	for len(h.p.Events()) > 0 {
+		<-h.p.Events()
+	}
+	boom := errors.New("unplugged")
+	h.eng.events <- audio.Event{Kind: audio.EventDeviceLost, Err: boom}
+	h.waitFor("the event", func() bool { return len(h.p.Events()) > 0 })
+	if ev := <-h.p.Events(); ev.Kind != DeviceLost || !errors.Is(ev.Err, boom) {
+		t.Fatalf("event %+v, want DeviceLost with the engine's error", ev)
+	}
+	if st := h.p.State().Status; st == Stopped {
+		t.Fatal("a lost device stopped the player; the song must carry on after a switch")
+	}
+}

@@ -98,6 +98,9 @@ const (
 	StatusChanged
 	QueueChanged
 	Error
+	// DeviceLost: the sound device stopped (unplugged, say). Nothing is
+	// heard until the app switches the output; the song carries on then.
+	DeviceLost
 )
 
 type Event struct {
@@ -1049,6 +1052,8 @@ func (p *Player) onEngine(ev audio.Event) {
 		}
 		p.seekRetry = true
 		p.reopenAt(p.seekTarget) // I2: reopen preserves listen state and pause
+	case audio.EventDeviceLost:
+		p.emit(Event{Kind: DeviceLost, Err: ev.Err})
 	case audio.EventError:
 		switch ev.TrackID {
 		case p.nextID:

@@ -397,13 +397,19 @@ func run(f flags) (err error) {
 	}
 	var eng *audio.Engine
 	var visual ui.Visual // the tap on what is playing (nil without a device)
-	out, audioErr := openDevice(audio.DeviceOptions{Name: dev, Null: f.null})
+	var output ui.AudioOutput
+	out, opened, audioNotice, audioErr := openOutput(dev, f.null)
 	if audioErr == nil {
 		defer out.Close()
 		tap := audio.NewTap(out, audio.TapFrames)
 		visual = tap
-		eng = audio.NewEngine(audio.EngineOptions{Output: tap})
+		eng = audio.NewEngine(audio.EngineOptions{Output: tap, OutputName: opened})
 		defer eng.Close()
+		cards := audio.Cards
+		if f.null {
+			cards = func() []audio.Card { return nil } // silent runs stay silent
+		}
+		output = &outputSwitcher{eng: eng, cards: cards, active: opened}
 	}
 
 	// Sessions (client, player, art) are built off the UI goroutine and
@@ -423,6 +429,7 @@ func run(f flags) (err error) {
 		Display: disp, Profile: prof, ProfileName: profileName, Inputs: inputs,
 		FallbackFonts: filepath.Join(dataDir, "fonts"),
 		ConfigPath:    f.config, Config: loaded, ConfigErr: cfgErr, AudioErr: audioErr, Version: version,
+		AudioNotice: audioNotice, AudioOutput: output,
 		ScreenshotDir: screenshotDir(f.screenshots, f.display, dataDir),
 		VerifyRedraw:  f.verifyRedraw,
 		WatchDisplay:  watchDisplay,
