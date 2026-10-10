@@ -141,7 +141,7 @@ func run(cfgPath string, null, quitAtEnd bool, volume float64, args []string) er
 		return err
 	}
 	defer out.Close()
-	eng := audio.NewEngine(audio.EngineOptions{Output: out})
+	eng := audio.NewEngine(audio.EngineOptions{Output: out, OutputName: dev})
 	defer eng.Close()
 
 	p := player.New(player.Options{

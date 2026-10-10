@@ -3,6 +3,7 @@ package audio
 import (
 	"errors"
 	"io"
+	"math"
 	"sync"
 	"time"
 )
@@ -35,6 +36,10 @@ const (
 	// if the track wasn't the one being decoded). Playback carries on from
 	// wherever the decoder is; the caller decides whether to reopen.
 	EventSeekFailed
+	// EventDeviceLost: the output device stopped by itself (it was
+	// unplugged, say) or could not be reopened for a new sample rate.
+	// TrackID is 0. Nothing more is heard until SwitchOutput succeeds.
+	EventDeviceLost
 )
 
 type Event struct {
@@ -46,12 +51,18 @@ type Event struct {
 // ErrNotCurrent is the EventSeekFailed error when the track is not the one being decoded.
 var ErrNotCurrent = errors.New("audio: track is not the one being decoded")
 
+// ErrEngineClosed: the engine closed before the call could run.
+var ErrEngineClosed = errors.New("audio: engine closed")
+
 // ErrOpenTimeout is the EventError for a queued track that was still opening
 // when it was needed, openWait after the previous track finished decoding.
 var ErrOpenTimeout = errors.New("audio: next track took too long to open")
 
 type EngineOptions struct {
-	Output          Output
+	Output Output
+	// OutputName is the device Output was opened as: a sample rate change
+	// reopens it under this name (see Native).
+	OutputName      string
 	OpenDecoder     OpenDecoderFunc // default OpenDecoder
 	ResampleQuality int             // default DefaultResampleQuality
 	ChunkFrames     int             // default 2048
@@ -69,11 +80,12 @@ type voice struct {
 }
 
 // segment marks where, in the device's frame count, a stretch of one track
-// begins. id 0 means silence.
+// begins. id 0 means silence. rate is the device's rate for the stretch.
 type segment struct {
 	start uint64
 	id    uint64
 	base  time.Duration
+	rate  int
 }
 
 type openResult struct {
@@ -133,6 +145,9 @@ type Engine struct {
 	chainIn    uint64
 	written    uint64
 	finishedID uint64    // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
+	outName    string    // the device's name, for reopening it
+	held       *voice    // a track to start once the device is back (a reopen failed)
+	lostSent   bool      // EventDeviceLost went out for the current loss (monitor goroutine)
 	pending    []float32 // resampled output not yet taken by the device
 	pendBuf    []float32 // pending's backing array, reused so decoding doesn't allocate
 	scratch    []float32
@@ -170,7 +185,8 @@ func newEngine(o EngineOptions) *Engine {
 		quit:    make(chan struct{}),
 		closing: make(chan struct{}),
 		done:    make(chan struct{}),
-		segs:    []segment{{start: 0, id: 0}},
+		segs:    []segment{{start: 0, id: 0, rate: OutputRate}},
+		outName: o.OutputName,
 		scratch: make([]float32, o.ChunkFrames*2),
 	}
 	return e
@@ -323,7 +339,7 @@ func (e *Engine) Position() (id uint64, pos time.Duration, ok bool) {
 			if s.id == 0 {
 				return 0, 0, false
 			}
-			return s.id, s.base + time.Duration(c-s.start)*time.Second/OutputRate, true
+			return s.id, s.base + time.Duration(c-s.start)*time.Second/time.Duration(s.rate), true
 		}
 	}
 	return 0, 0, false
@@ -525,6 +541,7 @@ func (e *Engine) monitor() {
 			return
 		}
 		e.checkBoundaries()
+		e.checkLost()
 		e.mu.Lock()
 		evs := e.evq
 		e.evq = nil
@@ -557,6 +574,15 @@ func (e *Engine) checkBoundaries() {
 	}
 	e.segs = e.segs[i:]
 	e.mu.Unlock()
+}
+
+// checkLost reports a lost device once per loss (monitor goroutine).
+func (e *Engine) checkLost() {
+	lost := e.o.Output.Lost()
+	if lost && !e.lostSent {
+		e.queueEvent(Event{Kind: EventDeviceLost})
+	}
+	e.lostSent = lost
 }
 
 func (e *Engine) addSegment(s segment) {
@@ -698,7 +724,7 @@ func (e *Engine) startSuccessorOrEnd() {
 		return
 	}
 	e.breakChain()
-	e.addSegment(segment{start: e.written + uint64(len(e.pending)/2), id: 0})
+	e.addSegment(segment{start: e.written + uint64(len(e.pending)/2), id: 0, rate: e.o.Output.Rate()})
 	e.ended = true
 }
 
@@ -714,20 +740,39 @@ func (e *Engine) breakChain() {
 	}
 }
 
+// targetRate is the device rate for music at rate: rate itself when the
+// device takes it (a native device), else OutputRate when it takes that,
+// else whatever it runs at.
+func (e *Engine) targetRate(rate int) int {
+	out := e.o.Output
+	switch {
+	case out.Supports(rate):
+		return rate
+	case out.Supports(OutputRate):
+		return OutputRate
+	}
+	return out.Rate()
+}
+
 func (e *Engine) startVoice(v *voice, gapless bool) {
 	rate := v.dec.SampleRate()
+	e.ended = false // a successor opening while we drain must wait its turn, not start
+	if e.targetRate(rate) != e.o.Output.Rate() && !e.changeRate(v, rate) {
+		return
+	}
+	devRate := e.o.Output.Rate()
 	var start uint64
 	if gapless && e.rs != nil && e.rs.InRate() == rate {
-		start = e.chainOut + e.chainIn*OutputRate/uint64(rate)
+		start = e.chainOut + e.chainIn*uint64(devRate)/uint64(rate)
 	} else {
 		e.breakChain()
 		start = e.written + uint64(len(e.pending)/2)
-		if rate != OutputRate {
-			rs, err := NewResampler(rate, OutputRate, e.o.ResampleQuality)
+		if rate != devRate {
+			rs, err := NewResampler(rate, devRate, e.o.ResampleQuality)
 			if err != nil {
 				e.queueEvent(Event{Kind: EventError, TrackID: v.t.ID, Err: err})
 				closeVoice(v)
-				e.addSegment(segment{start: start, id: 0})
+				e.addSegment(segment{start: start, id: 0, rate: devRate})
 				return
 			}
 			e.rs, e.chainOut, e.chainIn = rs, start, 0
@@ -737,7 +782,136 @@ func (e *Engine) startVoice(v *voice, gapless bool) {
 	e.finishedID = 0
 	e.ended = false
 	e.setBusy(v.t.Source, v.t.ID)
-	e.addSegment(segment{start: start, id: v.t.ID, base: v.t.Offset})
+	e.addSegment(segment{start: start, id: v.t.ID, base: v.t.Offset, rate: devRate})
+}
+
+// changeRate gets the device ready for v, music at rate: it lets everything
+// buffered play out, then reopens the device at the target rate. It reports
+// false, having closed v, when v must not start: a Stop or Play came while
+// it waited, the engine is closing, or the device was lost.
+func (e *Engine) changeRate(v *voice, rate int) bool {
+	e.breakChain()
+	stops := e.stops
+	for len(e.pending) > 0 || e.o.Output.Consumed() < e.written {
+		e.writePending()
+		if !e.wait(e.o.Poll) || e.stops != stops || e.cur != nil {
+			closeVoice(v)
+			return false
+		}
+	}
+	target := e.targetRate(rate)
+	if target == e.o.Output.Rate() {
+		return true // a SwitchOutput while we waited got there already
+	}
+	if err := e.reopen(e.outName, target); err != nil {
+		// Nothing can play: hold v until SwitchOutput brings a device back.
+		e.held = v
+		e.queueEvent(Event{Kind: EventDeviceLost, Err: err})
+		e.addSegment(segment{start: e.written, id: 0, rate: e.o.Output.Rate()})
+		return false
+	}
+	return true
+}
+
+// reopen reopens the device as name at rate, or at OutputRate when it
+// turns out not to take rate.
+func (e *Engine) reopen(name string, rate int) error {
+	err := e.o.Output.Reopen(name, rate)
+	if errors.Is(err, ErrRateUnsupported) && rate != OutputRate {
+		err = e.o.Output.Reopen(name, OutputRate) // Supports now says no to rate
+	}
+	return err
+}
+
+// SwitchOutput moves playback to the device name (see Native): the song
+// carries on from where it is heard. If name can't be opened, the previous
+// device is reopened and the error comes back.
+func (e *Engine) SwitchOutput(name string) error {
+	res := make(chan error, 1)
+	if !e.send(func() { res <- e.doSwitch(name) }, nil) {
+		return ErrEngineClosed
+	}
+	select {
+	case err := <-res:
+		return err
+	case <-e.done:
+		select {
+		case err := <-res:
+			return err
+		default:
+			return ErrEngineClosed
+		}
+	}
+}
+
+func (e *Engine) doSwitch(name string) error {
+	id, pos, audible := e.Position()
+	prevName, prevRate := e.outName, e.o.Output.Rate()
+	e.o.Output.Flush()
+	e.pending = e.pending[:0]
+	if e.rs != nil {
+		e.rs.Close()
+		e.rs = nil
+	}
+	rate := OutputRate
+	switch {
+	case e.cur != nil:
+		rate = e.cur.dec.SampleRate()
+	case e.held != nil:
+		rate = e.held.dec.SampleRate()
+	}
+	target := OutputRate
+	if Native(name) {
+		target = rate
+	}
+	err := e.reopen(name, target)
+	if err == nil {
+		e.outName = name
+	} else if e.reopen(prevName, prevRate) != nil {
+		// Neither opens: what plays waits for the next switch.
+		if e.cur != nil {
+			e.held, e.cur = e.cur, nil
+			e.setBusy(nil, 0)
+		}
+		e.resetSegments(segment{start: e.written, id: 0, rate: e.o.Output.Rate()})
+		return err
+	}
+	e.resume(id, pos, audible)
+	return err
+}
+
+// resume carries on after the device was reopened and flushed: the current
+// track from pos (what was heard), or the held one from its start.
+func (e *Engine) resume(id uint64, pos time.Duration, audible bool) {
+	devRate := e.o.Output.Rate()
+	if v := e.held; v != nil && e.cur == nil {
+		e.held = nil
+		e.startVoice(v, false)
+		return
+	}
+	v := e.cur
+	if v == nil {
+		e.resetSegments(segment{start: e.written, id: 0, rate: devRate})
+		return
+	}
+	if rate := v.dec.SampleRate(); rate != devRate {
+		rs, err := NewResampler(rate, devRate, e.o.ResampleQuality)
+		if err != nil {
+			e.queueEvent(Event{Kind: EventError, TrackID: v.t.ID, Err: err})
+			e.stopCurrent()
+			return
+		}
+		e.rs, e.chainOut, e.chainIn = rs, e.written, 0
+	}
+	if audible && id == v.t.ID && e.doSeek(id, pos) == nil {
+		return
+	}
+	// The decoder carries on from where it was: what the flush dropped is
+	// skipped (at most the ring, half a second).
+	if !audible || id != v.t.ID {
+		pos = v.t.Offset
+	}
+	e.resetSegments(segment{start: e.written, id: v.t.ID, base: pos, rate: devRate})
 }
 
 func (e *Engine) openVoice(t Track) (*voice, error) {
@@ -838,6 +1012,8 @@ func (e *Engine) stopCurrent() {
 	e.stops++
 	closeVoice(e.cur)
 	e.cur = nil
+	closeVoice(e.held)
+	e.held = nil
 	e.finishedID = 0
 	e.ended = false
 	e.setBusy(nil, 0)
@@ -845,7 +1021,7 @@ func (e *Engine) stopCurrent() {
 		e.rs.Close()
 		e.rs = nil
 	}
-	e.resetSegments(segment{start: e.written, id: 0})
+	e.resetSegments(segment{start: e.written, id: 0, rate: e.o.Output.Rate()})
 	e.o.Output.Flush()
 	e.pending = e.pending[:0]
 }
@@ -922,7 +1098,9 @@ func (e *Engine) doSeek(id uint64, pos time.Duration) error {
 		rel = 0
 	}
 	rate := v.dec.SampleRate()
-	if err := v.dec.SeekFrame(uint64(rel.Seconds() * float64(rate))); err != nil {
+	// Rounded: a position read from the device's frame count must come back
+	// to the same frame.
+	if err := v.dec.SeekFrame(uint64(math.Round(rel.Seconds() * float64(rate)))); err != nil {
 		return err
 	}
 	e.mu.Lock()
@@ -935,14 +1113,14 @@ func (e *Engine) doSeek(id uint64, pos time.Duration) error {
 		}
 		e.evq = append(e.evq, Event{Kind: EventStarted, TrackID: id})
 	}
-	e.segs = []segment{{start: e.written, id: id, base: pos}}
+	e.segs = []segment{{start: e.written, id: id, base: pos, rate: e.o.Output.Rate()}}
 	e.mu.Unlock()
 	e.o.Output.Flush()
 	e.pending = e.pending[:0]
 	if e.rs != nil {
 		e.rs.Close()
 		e.rs = nil
-		rs, err := NewResampler(rate, OutputRate, e.o.ResampleQuality)
+		rs, err := NewResampler(rate, e.o.Output.Rate(), e.o.ResampleQuality)
 		if err != nil {
 			return err
 		}
