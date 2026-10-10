@@ -542,6 +542,7 @@ Still open:
 - **SetGain for the song waiting in a rate-change drain** isn't applied to it (it is neither current nor queued then); its old gain plays.
 - **The web remote** shows no output setting.
 - **A replug while the app holds a dead device** (only possible with a build before the card check) left the E30's USB stream short until a reboot. The README tells users to reboot if a replugged DAC clicks.
+- **`TestEngineSetGainReachesTheSuccessor` is flaky** (3 in 60 runs with `-race`, on main too): with 100 frames, the successor can be decoded and written before `SetGain` arrives.
 - **From the reviews (deferred):**
   - A volume press during a rate change or an output switch can freeze the UI for up to ~0.6 s: `SetVolume` waits on the device mutex the reopen holds. Do the mixer work under its own lock, or record the level and let the open apply it.
   - A USB re-enumeration between two 200 ms card checks can hide a loss (the card id is back, the PCM is dead). Remember the card's number at open and treat a change as lost.

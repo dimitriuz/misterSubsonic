@@ -243,13 +243,17 @@ static int open_device(const char* name, int null_backend, uint32_t rate, uint32
 
 /* close_device stops and frees the device. tail: first let ALSA's buffer
    play out, so the last frames handed over are heard. What is left in the
-   ring counts as consumed. */
+   ring counts as consumed.
+   It stops the device before freeing it: ma_device_uninit only joins the
+   audio thread, and an ALSA device whose card was unplugged keeps that
+   thread polling (POLLERR, never POLLOUT) until ma_device_stop wakes it. */
 static void close_device(int tail) {
     if (tail && g_rate > 0 && !__atomic_load_n(&g_lost, __ATOMIC_SEQ_CST)) {
         sleep_ms((long)g_buffer_frames * 1000 / g_rate + 20);
     }
     __atomic_store_n(&g_stopping, 1, __ATOMIC_SEQ_CST);
     __atomic_store_n(&g_open, 0, __ATOMIC_SEQ_CST);
+    ma_device_stop(&g_device);
     ma_device_uninit(&g_device);
     drain_ring();
     ma_pcm_rb_uninit(&g_ring);
