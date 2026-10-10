@@ -87,3 +87,117 @@ func TestDeviceCallsAfterCloseAreSafe(t *testing.T) {
 	again.SetVolume(1)
 	again.Close()
 }
+
+func waitConsumed(t *testing.T, out Output, atLeast uint64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for out.Consumed() < atLeast {
+		if time.Now().After(deadline) {
+			t.Fatalf("Consumed = %d, never reached %d", out.Consumed(), atLeast)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestDeviceReopenKeepsCountingAndPause(t *testing.T) {
+	out, err := OpenDevice(DeviceOptions{Null: true, RingFrames: 4800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	out.Write(make([]float32, 2000*2))
+	waitConsumed(t, out, 2000)
+	out.Write(make([]float32, 1000*2)) // still in the ring at the reopen: it counts as consumed
+	if err := out.Reopen("", OutputRate); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Consumed(); got != 3000 {
+		t.Fatalf("Consumed = %d after the reopen, want 3000 (everything written)", got)
+	}
+	out.Write(make([]float32, 500*2))
+	waitConsumed(t, out, 3500)
+
+	out.SetPaused(true)
+	if err := out.Reopen("", OutputRate); err != nil {
+		t.Fatal(err)
+	}
+	out.Write(make([]float32, 100*2))
+	time.Sleep(60 * time.Millisecond)
+	if got := out.Consumed(); got != 3500 {
+		t.Fatalf("a paused device consumed after a reopen: %d", got)
+	}
+	out.SetPaused(false)
+	waitConsumed(t, out, 3600)
+}
+
+func TestDeviceStoppedByItselfIsLostUntilReopened(t *testing.T) {
+	out, err := OpenDevice(DeviceOptions{Null: true, RingFrames: 4800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if out.Lost() {
+		t.Fatal("a fresh device reports lost")
+	}
+	stopDeviceForTest() // as an unplugged DAC would
+	deadline := time.Now().Add(time.Second)
+	for !out.Lost() {
+		if time.Now().After(deadline) {
+			t.Fatal("a stopped device never reported lost")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := out.Reopen("", OutputRate); err != nil {
+		t.Fatal(err)
+	}
+	if out.Lost() {
+		t.Fatal("still lost after a reopen")
+	}
+	out.Close()
+	if out.Lost() {
+		t.Fatal("closing the device counts as losing it")
+	}
+}
+
+func TestFixedDeviceRunsAt48k(t *testing.T) {
+	out, err := OpenDevice(DeviceOptions{Null: true, Rate: 96000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if out.Rate() != OutputRate || !out.Supports(OutputRate) || out.Supports(44100) {
+		t.Fatalf("rate %d, supports 48k %v, 44.1k %v: a fixed device runs at 48 kHz only",
+			out.Rate(), out.Supports(OutputRate), out.Supports(44100))
+	}
+	if err := out.Reopen("", 44100); err != nil || out.Rate() != OutputRate {
+		t.Fatalf("reopen at 44.1 kHz: %v, rate %d; a fixed device stays at 48 kHz", err, out.Rate())
+	}
+}
+
+func TestNativeDeviceIsLostWhenItsCardGoes(t *testing.T) {
+	present := true
+	var asked []string
+	old := cardPresent
+	cardPresent = func(device string) bool { asked = append(asked, device); return present }
+	defer func() { cardPresent = old }()
+
+	d := &device{name: "hw:CARD=E30,DEV=0"} // the card check only: no C device behind it
+	if d.Lost() {
+		t.Fatal("lost with the card there")
+	}
+	present = false
+	if d.Lost() {
+		t.Fatal("checked again within cardCheckEvery")
+	}
+	d.checked = time.Now().Add(-cardCheckEvery)
+	if !d.Lost() {
+		t.Fatal("not lost with the card gone")
+	}
+	if len(asked) != 2 || asked[0] != "hw:CARD=E30,DEV=0" {
+		t.Fatalf("checked %q", asked)
+	}
+	(&device{name: "default"}).Lost() // not native: no check
+	if len(asked) != 2 {
+		t.Fatalf("checked a non-native device: %q", asked)
+	}
+}

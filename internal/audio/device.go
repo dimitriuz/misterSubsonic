@@ -7,20 +7,29 @@ package audio
 import "C"
 
 import (
+	"errors"
 	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 	"unsafe"
 )
 
 // OutputRate is the fixed device rate. MiSTer's ALSA default device
-// resamples to 48 kHz linearly (and crackles), so we always hand it 48 kHz.
+// resamples to 48 kHz linearly (and crackles), so a fixed device always gets
+// 48 kHz. A native device runs at the music's rate instead (see Native).
 const OutputRate = 48000
 
-// Output is where the engine writes interleaved stereo float32 at OutputRate.
+// Output is where the engine writes interleaved stereo float32 at Rate().
 type Output interface {
 	// Write copies as many frames as fit and returns how many were taken.
 	Write(frames []float32) int
 	// Consumed is the running total of frames taken out of the ring by the
-	// device, including frames discarded by Flush.
+	// device, including frames discarded by Flush. It keeps counting across
+	// Reopen.
 	Consumed() uint64
 	SetPaused(paused bool)
 	SetVolume(linear float32)
@@ -28,50 +37,182 @@ type Output interface {
 	// the total number of frames ever written.
 	Flush()
 	Close() error
+	// Rate is the rate the device runs at now.
+	Rate() int
+	// Supports reports whether the device may run at rate: always for a
+	// native device until a Reopen found it doesn't, only OutputRate for
+	// the others.
+	Supports(rate int) bool
+	// Reopen closes the device, once what it holds has played, and opens
+	// name at rate. Pause and volume carry over. On error the output is
+	// closed: Lost reports true until a Reopen succeeds.
+	Reopen(name string, rate int) error
+	// Lost reports that the device stopped without being asked to (it was
+	// unplugged, say) or that a Reopen failed.
+	Lost() bool
 }
+
+// ErrRateUnsupported: a native device can't run at the rate asked for.
+var ErrRateUnsupported = errors.New("audio: the device does not take this sample rate")
+
+// Native reports whether name is a native device: an ALSA hw: name, opened as
+// is, run at the music's own rate.
+func Native(name string) bool { return strings.HasPrefix(name, "hw:") }
 
 type DeviceOptions struct {
 	// Name selects a playback device by name or ALSA id; "" means default.
+	// A hw: name (see Native) is opened as is.
 	Name string
 	// Null uses miniaudio's null backend (for tests and headless runs).
 	Null bool
-	// RingFrames is the ring size; 0 means 500 ms.
+	// Rate is the starting rate of a native device; 0 means OutputRate.
+	// Other devices always run at OutputRate.
+	Rate int
+	// RingFrames is the ring size; 0 means 500 ms at the device's rate.
 	RingFrames int
 }
 
-type device struct{}
+// device is the single global playback device. Its methods may be called
+// from several goroutines; mu orders Reopen against the rest.
+type device struct {
+	mu   sync.Mutex
+	null bool
+	ring int // RingFrames as asked; 0: half a second at each rate
+
+	name    string
+	refused map[string]map[int]bool // per device name, the rates it didn't take
+	checked time.Time               // when Lost last looked for the card
+	gone    bool                    // the card wasn't there then
+}
 
 // OpenDevice opens the single global playback device.
 func OpenDevice(o DeviceOptions) (Output, error) {
-	ring := o.RingFrames
-	if ring == 0 {
-		ring = OutputRate / 2
+	d := &device{null: o.Null, ring: o.RingFrames, refused: map[string]map[int]bool{}}
+	rate := deviceRate(o.Name, o.Rate)
+	if err := d.open(o.Name, rate, false); err != nil {
+		return nil, err
 	}
-	var name *C.char
-	if o.Name != "" {
-		name = C.CString(o.Name)
-		defer C.free(unsafe.Pointer(name))
-	}
-	null := 0
-	if o.Null {
-		null = 1
-	}
-	if rc := C.mss_device_open(name, C.int(null), C.uint32_t(ring)); rc != 0 {
-		return nil, fmt.Errorf("audio: open device: miniaudio result %d", int(rc))
-	}
-	return device{}, nil
+	return d, nil
 }
 
-func (device) Write(frames []float32) int {
+func deviceRate(name string, rate int) int {
+	if !Native(name) || rate <= 0 {
+		return OutputRate
+	}
+	return rate
+}
+
+func (d *device) ringFrames(rate int) int {
+	if d.ring > 0 {
+		return d.ring
+	}
+	return rate / 2
+}
+
+// open opens name at rate; reopen: close the open device first.
+func (d *device) open(name string, rate int, reopen bool) error {
+	var cname *C.char
+	if name != "" {
+		cname = C.CString(name)
+		defer C.free(unsafe.Pointer(cname))
+	}
+	null, native := 0, 0
+	if d.null {
+		null = 1
+	}
+	if Native(name) && !d.null {
+		native = 1
+	}
+	var rc C.int
+	start := time.Now()
+	if reopen {
+		rc = C.mss_device_reopen(cname, C.int(null), C.uint32_t(rate), C.uint32_t(d.ringFrames(rate)), C.int(native), 1)
+	} else {
+		rc = C.mss_device_open(cname, C.int(null), C.uint32_t(rate), C.uint32_t(d.ringFrames(rate)), C.int(native))
+	}
+	switch {
+	case rc == C.MSS_RATE_UNSUPPORTED:
+		if d.refused[name] == nil {
+			d.refused[name] = map[int]bool{}
+		}
+		d.refused[name][rate] = true
+		return fmt.Errorf("%w: %d Hz", ErrRateUnsupported, rate)
+	case rc != 0:
+		return fmt.Errorf("audio: open device: miniaudio result %d", int(rc))
+	}
+	d.name, d.gone, d.checked = name, false, time.Time{}
+	if native == 1 {
+		log.Printf("audio: %s at %d Hz, %d-bit (opened in %d ms)", name, rate, int(C.mss_device_format_bits()), time.Since(start).Milliseconds())
+	}
+	return nil
+}
+
+func (d *device) Reopen(name string, rate int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.open(name, deviceRate(name, rate), true)
+}
+
+func (d *device) Rate() int { return int(C.mss_device_rate()) }
+
+func (d *device) Supports(rate int) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !Native(d.name) || d.null {
+		return rate == OutputRate
+	}
+	return !d.refused[d.name][rate]
+}
+
+// FormatBits is the sample size the device takes: 32 for float or S32.
+func (d *device) FormatBits() int { return int(C.mss_device_format_bits()) }
+
+// cardCheckEvery spaces the checks that a native device's card is still
+// there.
+const cardCheckEvery = 200 * time.Millisecond
+
+// Lost reports a device that stopped by itself, or a native device whose
+// card went away. miniaudio doesn't stop an ALSA device whose card is
+// unplugged (its wait loop spins on the error, and no stop notification
+// comes), and asking ALSA for the state from here would race with the
+// audio thread, so it looks for the card in /proc/asound instead.
+func (d *device) Lost() bool {
+	if C.mss_device_lost() != 0 {
+		return true
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !Native(d.name) || d.null {
+		return false
+	}
+	if now := time.Now(); now.Sub(d.checked) >= cardCheckEvery {
+		d.checked = now
+		d.gone = !cardPresent(d.name)
+	}
+	return d.gone
+}
+
+// cardPresent reports whether a native device's card is in /proc/asound:
+// "/proc/asound/E30" for hw:CARD=E30, "/proc/asound/card1" for hw:1.
+var cardPresent = func(device string) bool {
+	id := CardID(device)
+	if _, err := strconv.Atoi(id); err == nil {
+		id = "card" + id
+	}
+	_, err := os.Stat("/proc/asound/" + id)
+	return err == nil
+}
+
+func (d *device) Write(frames []float32) int {
 	if len(frames) < 2 {
 		return 0
 	}
 	return int(C.mss_device_write((*C.float)(unsafe.Pointer(&frames[0])), C.uint32_t(len(frames)/2)))
 }
 
-func (device) Consumed() uint64 { return uint64(C.mss_device_consumed()) }
+func (d *device) Consumed() uint64 { return uint64(C.mss_device_consumed()) }
 
-func (device) SetPaused(p bool) {
+func (d *device) SetPaused(p bool) {
 	v := 0
 	if p {
 		v = 1
@@ -79,9 +220,14 @@ func (device) SetPaused(p bool) {
 	C.mss_device_set_paused(C.int(v))
 }
 
-func (device) SetVolume(v float32) { C.mss_device_set_volume(C.float(v)) }
-func (device) Flush()              { C.mss_device_flush() }
-func (device) Close() error        { C.mss_device_close(); return nil }
+func (d *device) SetVolume(v float32) { C.mss_device_set_volume(C.float(v)) }
+func (d *device) Flush()              { C.mss_device_flush() }
+func (d *device) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	C.mss_device_close()
+	return nil
+}
 
 // stopDeviceForTest is a test hook: it stops the device callback, as a
 // failed or unplugged device would, without closing the device.

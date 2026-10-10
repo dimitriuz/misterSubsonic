@@ -33,10 +33,21 @@ int mss_resampler_process(mss_resampler* r, const float* in, uint32_t* in_frames
 uint32_t mss_resampler_input_latency(mss_resampler* r);
 void mss_resampler_free(mss_resampler* r);
 
-/* Output device: one global 48 kHz stereo float32 device fed from a
-   single-producer ring. The device callback never blocks. */
-int mss_device_open(const char* device_name, int null_backend, uint32_t ring_frames);
+/* Output device: one global stereo device fed from a single-producer ring
+   of float32. The device callback never blocks. A native device (an ALSA
+   name used as is) runs at the rate asked for, in its most precise format;
+   other devices run at the rate asked for through miniaudio's conversion. */
+#define MSS_RATE_UNSUPPORTED (-1000)
+
+int mss_device_open(const char* device_name, int null_backend, uint32_t rate, uint32_t ring_frames, int native);
+/* Closes the open device (letting ALSA's buffer play out when tail) and
+   opens another; the consumed count, pause and volume carry over. */
+int mss_device_reopen(const char* device_name, int null_backend, uint32_t rate, uint32_t ring_frames, int native, int tail);
 void mss_device_close(void);
+uint32_t mss_device_rate(void);
+int mss_device_format_bits(void);
+/* 1 once the device stopped without being asked (unplugged, say). */
+int mss_device_lost(void);
 uint32_t mss_device_write(const float* frames, uint32_t frame_count);
 uint32_t mss_device_space(void);
 uint64_t mss_device_consumed(void);

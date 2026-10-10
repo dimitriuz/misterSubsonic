@@ -2,7 +2,9 @@ package audio
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,9 +19,75 @@ type fakeOutput struct {
 	consumed uint64
 	flushes  int
 	onFlush  func() // optional callback called after Flush completes (outside mu)
+
+	name      string // the device open now (see Native)
+	rate      int    // 0: OutputRate
+	rates     []int  // the rates a native fake takes; nil: a fixed device
+	reopens   []reopenCall
+	reopenErr error // the next Reopen fails with it
+	refuse    []int // rates Reopen turns down with ErrRateUnsupported, though rates lists them
+	lost      bool
+}
+
+// reopenCall records a Reopen and the state of the ring when it came.
+type reopenCall struct {
+	name     string
+	rate     int
+	written  uint64 // frames written so far
+	consumed uint64 // frames consumed so far
 }
 
 func newFakeOutput(ringFrames int) *fakeOutput { return &fakeOutput{ring: ringFrames} }
+
+// newNativeOutput is a fake native device that takes rates.
+func newNativeOutput(ringFrames int, rates ...int) *fakeOutput {
+	return &fakeOutput{ring: ringFrames, rates: rates, name: "hw:CARD=DAC,DEV=0"}
+}
+
+func (f *fakeOutput) Rate() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rate == 0 {
+		return OutputRate
+	}
+	return f.rate
+}
+
+func (f *fakeOutput) Supports(rate int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !Native(f.name) {
+		return rate == OutputRate
+	}
+	return slices.Contains(f.rates, rate)
+}
+
+func (f *fakeOutput) Reopen(name string, rate int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reopens = append(f.reopens, reopenCall{name: name, rate: rate, written: uint64(len(f.data) / 2), consumed: f.consumed})
+	f.consumed = uint64(len(f.data) / 2) // a reopen drops what the ring held
+	if err := f.reopenErr; err != nil {  // the device stays closed; the caller has the error
+		f.reopenErr = nil
+		return err
+	}
+	if slices.Contains(f.refuse, rate) {
+		f.rates = slices.DeleteFunc(f.rates, func(r int) bool { return r == rate })
+		return fmt.Errorf("%w: %d Hz", ErrRateUnsupported, rate)
+	}
+	f.name, f.rate, f.lost = name, rate, false
+	return nil
+}
+
+func (f *fakeOutput) Lost() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.lost }
+
+func (f *fakeOutput) setLost() { f.mu.Lock(); f.lost = true; f.mu.Unlock() }
+
+func (f *fakeOutput) reopenCalls() []reopenCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]reopenCall(nil), f.reopens...)
+}
 
 func (f *fakeOutput) Write(frames []float32) int {
 	f.mu.Lock()

@@ -89,6 +89,9 @@ func (t *Tap) Window(dst []float32) int {
 }
 
 func (t *Tap) Consumed() uint64    { return t.out.Consumed() }
+func (t *Tap) Rate() int           { return t.out.Rate() }
+func (t *Tap) Supports(r int) bool { return t.out.Supports(r) }
+func (t *Tap) Lost() bool          { return t.out.Lost() }
 func (t *Tap) SetVolume(v float32) { t.out.SetVolume(v) }
 func (t *Tap) Close() error        { return t.out.Close() }
 
@@ -104,6 +107,15 @@ func (t *Tap) SetPaused(p bool) {
 	if at := t.pausedAt.Swap(0); at != 0 && at-t.lastRead.Load() <= int64(tapIdle) {
 		t.lastRead.Store(now)
 	}
+}
+
+// Reopen passes the reopen on; what the tap kept is dropped.
+func (t *Tap) Reopen(name string, rate int) error {
+	err := t.out.Reopen(name, rate)
+	t.mu.Lock()
+	t.floor = t.written
+	t.mu.Unlock()
+	return err
 }
 
 // Flush discards what the device buffered and what the tap kept.
