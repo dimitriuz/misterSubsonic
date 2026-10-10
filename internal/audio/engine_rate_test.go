@@ -2,6 +2,7 @@ package audio
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -215,4 +216,77 @@ func TestEngineSwitchOutputFailureKeepsThePreviousDevice(t *testing.T) {
 		t.Fatalf("reopens %+v, want the failed one then %s again", r, testDAC)
 	}
 	playOut(t, out, 3000) // still playing
+}
+
+func TestEngineSwitchOutputAnnouncesTheTrackChangeOfAGaplessSuccessor(t *testing.T) {
+	out := newNativeOutput(2000, 48000)
+	e := newRateEngine(out)
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(700, 0), 48000)})
+	e.QueueNext(Track{ID: 2, Source: newFakeSource(ramp(10000, 700), 48000)})
+	waitFor(t, "the ring full", func() bool { return len(out.written())/2 == 2000 })
+	expectEvent(t, e, EventStarted, 1)
+	out.consume(100) // song 1 is still audible, song 2 is already in the ring
+	if err := e.SwitchOutput("default"); err != nil {
+		t.Fatal(err)
+	}
+	expectEvent(t, e, EventEnded, 1)
+	expectEvent(t, e, EventStarted, 2)
+	if id, _, ok := e.Position(); !ok || id != 2 {
+		t.Fatalf("position of song %d (%v), want song 2", id, ok)
+	}
+	noEvent(t, e, 20*time.Millisecond)
+}
+
+// downOutput is a fakeOutput whose next fails Reopens all fail.
+type downOutput struct {
+	*fakeOutput
+	mu    sync.Mutex
+	fails int
+}
+
+func (d *downOutput) Reopen(name string, rate int) error {
+	d.mu.Lock()
+	failing := d.fails > 0
+	if failing {
+		d.fails--
+	}
+	d.mu.Unlock()
+	if failing {
+		d.fakeOutput.reopenErr = errors.New("gone")
+	}
+	return d.fakeOutput.Reopen(name, rate)
+}
+
+func TestEngineSwitchOutputThatFailsEverywhereResumesWhereItWasHeard(t *testing.T) {
+	out := &downOutput{fakeOutput: newNativeOutput(2000, 48000)}
+	e := NewEngine(EngineOptions{Output: out, OutputName: testDAC, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond})
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(10000, 0), 48000)})
+	expectEvent(t, e, EventStarted, 1)
+	waitFor(t, "the ring full", func() bool { return len(out.written())/2 == 2000 })
+	out.consume(500)
+	out.mu.Lock()
+	out.fails = 2 // the new device and the previous one
+	out.mu.Unlock()
+	if err := e.SwitchOutput("default"); err == nil {
+		t.Fatal("no error though no device opened")
+	}
+	if id, pos, ok := e.Position(); !ok || id != 1 || pos != 500*time.Second/48000 {
+		t.Fatalf("held position %v %v %v, want song 1 at frame 500", id, pos, ok)
+	}
+	cut := len(out.written()) / 2
+	if err := e.SwitchOutput(testDAC); err != nil {
+		t.Fatal(err)
+	}
+	if id, pos, ok := e.Position(); !ok || id != 1 || pos != 500*time.Second/48000 {
+		t.Fatalf("position %v %v %v, want song 1 at frame 500", id, pos, ok)
+	}
+	waitFor(t, "more written after the switch", func() bool { return len(out.written())/2 > cut+10 })
+	if got, want := out.written()[2*cut], ramp(1, 500)[0]; got != want {
+		t.Fatalf("after the switch the song resumed at %v, want frame 500 (%v)", got, want)
+	}
+	noEvent(t, e, 20*time.Millisecond) // the song never ended or started again
 }

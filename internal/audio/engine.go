@@ -144,12 +144,13 @@ type Engine struct {
 	chainOut   uint64
 	chainIn    uint64
 	written    uint64
-	finishedID uint64    // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
-	outName    string    // the device's name, for reopening it
-	held       *voice    // a track to start once the device is back (a reopen failed)
-	lostSent   bool      // EventDeviceLost went out for the current loss (monitor goroutine)
-	pending    []float32 // resampled output not yet taken by the device
-	pendBuf    []float32 // pending's backing array, reused so decoding doesn't allocate
+	finishedID uint64        // the track that ended (or was interrupted) while a Replace was pending, until the next track starts or stops
+	outName    string        // the device's name, for reopening it
+	held       *voice        // a track to start once the device is back (a reopen failed)
+	heldPos    time.Duration // where held resumes: what was heard of it
+	lostSent   bool          // EventDeviceLost went out for the current loss (monitor goroutine)
+	pending    []float32     // resampled output not yet taken by the device
+	pendBuf    []float32     // pending's backing array, reused so decoding doesn't allocate
 	scratch    []float32
 }
 
@@ -787,8 +788,9 @@ func (e *Engine) startVoice(v *voice, gapless bool) {
 
 // changeRate gets the device ready for v, music at rate: it lets everything
 // buffered play out, then reopens the device at the target rate. It reports
-// false, having closed v, when v must not start: a Stop or Play came while
-// it waited, the engine is closing, or the device was lost.
+// false when v does not start: having closed it, when a Stop or Play came
+// while it waited or the engine is closing; having kept it as held, when the
+// device could not be reopened.
 func (e *Engine) changeRate(v *voice, rate int) bool {
 	e.breakChain()
 	stops := e.stops
@@ -805,7 +807,7 @@ func (e *Engine) changeRate(v *voice, rate int) bool {
 	}
 	if err := e.reopen(e.outName, target); err != nil {
 		// Nothing can play: hold v until SwitchOutput brings a device back.
-		e.held = v
+		e.held, e.heldPos = v, v.t.Offset
 		e.queueEvent(Event{Kind: EventDeviceLost, Err: err})
 		e.addSegment(segment{start: e.written, id: 0, rate: e.o.Output.Rate()})
 		return false
@@ -871,9 +873,19 @@ func (e *Engine) doSwitch(name string) error {
 		// Neither opens: what plays waits for the next switch.
 		if e.cur != nil {
 			e.held, e.cur = e.cur, nil
+			e.heldPos = e.held.t.Offset
+			if audible && id == e.held.t.ID {
+				e.heldPos = pos
+			}
 			e.setBusy(nil, 0)
 		}
-		e.resetSegments(segment{start: e.written, id: 0, rate: e.o.Output.Rate()})
+		// The track that was audible stays the head segment, so that
+		// resume announces the change from it, and only that.
+		head := segment{start: e.written, rate: e.o.Output.Rate()}
+		if e.held != nil && audible {
+			head.id, head.base = id, pos
+		}
+		e.resetSegments(head)
 		return err
 	}
 	e.resume(id, pos, audible)
@@ -881,12 +893,15 @@ func (e *Engine) doSwitch(name string) error {
 }
 
 // resume carries on after the device was reopened and flushed: the current
-// track from pos (what was heard), or the held one from its start.
+// track from pos (what was heard), or the held one from where it was heard.
 func (e *Engine) resume(id uint64, pos time.Duration, audible bool) {
 	devRate := e.o.Output.Rate()
 	if v := e.held; v != nil && e.cur == nil {
 		e.held = nil
 		e.startVoice(v, false)
+		if e.cur == v {
+			e.carryOn(v, e.heldPos)
+		}
 		return
 	}
 	v := e.cur
@@ -903,15 +918,49 @@ func (e *Engine) resume(id uint64, pos time.Duration, audible bool) {
 		}
 		e.rs, e.chainOut, e.chainIn = rs, e.written, 0
 	}
-	if audible && id == v.t.ID && e.doSeek(id, pos) == nil {
+	if audible && id == v.t.ID {
+		e.carryOn(v, pos)
 		return
 	}
-	// The decoder carries on from where it was: what the flush dropped is
-	// skipped (at most the ring, half a second).
-	if !audible || id != v.t.ID {
-		pos = v.t.Offset
+	if audible {
+		// A gapless successor was already decoded while the old track was
+		// audible: start it from its beginning, announcing the change.
+		e.carryOn(v, v.t.Offset)
+		return
 	}
-	e.resetSegments(segment{start: e.written, id: v.t.ID, base: pos, rate: devRate})
+	// Nothing was audible. The decoder carries on from where it was: what
+	// the flush dropped is skipped (at most the ring, half a second).
+	e.resetSegments(segment{start: e.written, id: v.t.ID, base: v.t.Offset, rate: devRate})
+}
+
+// carryOn makes v, the current voice, audible from pos by seeking it there.
+// If the seek fails the decoder carries on from where it is, and the position
+// is still pos.
+func (e *Engine) carryOn(v *voice, pos time.Duration) {
+	if e.doSeek(v.t.ID, pos) == nil {
+		return
+	}
+	e.mu.Lock()
+	e.announceChangeLocked(v.t.ID)
+	e.segs = []segment{{start: e.written, id: v.t.ID, base: pos, rate: e.o.Output.Rate()}}
+	e.mu.Unlock()
+}
+
+// announceChangeLocked queues the events for track id becoming audible now,
+// replacing whatever the head segment says is audible, if that differs. The
+// caller holds e.mu and then replaces the segments, which discards the
+// boundary the monitor would have announced.
+func (e *Engine) announceChangeLocked(id uint64) {
+	cur := e.segs[0].id
+	if cur == id {
+		return
+	}
+	if cur != 0 {
+		e.evq = append(e.evq, Event{Kind: EventEnded, TrackID: cur})
+	}
+	if id != 0 {
+		e.evq = append(e.evq, Event{Kind: EventStarted, TrackID: id})
+	}
 }
 
 func (e *Engine) openVoice(t Track) (*voice, error) {
@@ -1107,12 +1156,7 @@ func (e *Engine) doSeek(id uint64, pos time.Duration) error {
 	// The seek makes track id audible now. If the monitor hasn't announced
 	// it yet (its boundary is still pending), announce it here, because the
 	// reset below discards that boundary.
-	if cur := e.segs[0].id; cur != id {
-		if cur != 0 {
-			e.evq = append(e.evq, Event{Kind: EventEnded, TrackID: cur})
-		}
-		e.evq = append(e.evq, Event{Kind: EventStarted, TrackID: id})
-	}
+	e.announceChangeLocked(id)
 	e.segs = []segment{{start: e.written, id: id, base: pos, rate: e.o.Output.Rate()}}
 	e.mu.Unlock()
 	e.o.Output.Flush()
