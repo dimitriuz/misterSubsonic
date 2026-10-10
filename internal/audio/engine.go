@@ -885,7 +885,7 @@ func (e *Engine) doSwitch(name string) error {
 		if e.held != nil && audible {
 			head.id, head.base = id, pos
 		}
-		e.resetSegments(head)
+		e.replaceSegments(head)
 		return err
 	}
 	e.resume(id, pos, audible)
@@ -898,15 +898,19 @@ func (e *Engine) resume(id uint64, pos time.Duration, audible bool) {
 	devRate := e.o.Output.Rate()
 	if v := e.held; v != nil && e.cur == nil {
 		e.held = nil
+		pos := e.heldPos
 		e.startVoice(v, false)
 		if e.cur == v {
-			e.carryOn(v, e.heldPos)
+			e.carryOn(v, pos)
+		} else if e.held == v {
+			e.heldPos = pos // held again: startVoice reset it
 		}
 		return
 	}
 	v := e.cur
 	if v == nil {
-		e.resetSegments(segment{start: e.written, id: 0, rate: devRate})
+		// Nothing to play: a track still audible has ended.
+		e.replaceSegments(segment{start: e.written, id: 0, rate: devRate})
 		return
 	}
 	if rate := v.dec.SampleRate(); rate != devRate {
@@ -930,7 +934,16 @@ func (e *Engine) resume(id uint64, pos time.Duration, audible bool) {
 	}
 	// Nothing was audible. The decoder carries on from where it was: what
 	// the flush dropped is skipped (at most the ring, half a second).
-	e.resetSegments(segment{start: e.written, id: v.t.ID, base: v.t.Offset, rate: devRate})
+	e.replaceSegments(segment{start: e.written, id: v.t.ID, base: v.t.Offset, rate: devRate})
+}
+
+// replaceSegments resets the segments to s, announcing the change of the
+// audible track that the reset would otherwise discard.
+func (e *Engine) replaceSegments(s segment) {
+	e.mu.Lock()
+	e.announceChangeLocked(s.id)
+	e.segs = []segment{s}
+	e.mu.Unlock()
 }
 
 // carryOn makes v, the current voice, audible from pos by seeking it there.

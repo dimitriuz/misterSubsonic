@@ -290,3 +290,43 @@ func TestEngineSwitchOutputThatFailsEverywhereResumesWhereItWasHeard(t *testing.
 	}
 	noEvent(t, e, 20*time.Millisecond) // the song never ended or started again
 }
+
+func TestEngineSwitchOutputEndsASongStillPlayingOut(t *testing.T) {
+	out := newNativeOutput(2000, 48000)
+	e := newRateEngine(out)
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(700, 0), 48000)})
+	expectEvent(t, e, EventStarted, 1)
+	waitFor(t, "the song written", func() bool { return len(out.written())/2 == 700 })
+	out.consume(100)
+	time.Sleep(20 * time.Millisecond) // the decoder reached the end; nothing is current
+	if err := e.SwitchOutput("default"); err != nil {
+		t.Fatal(err)
+	}
+	expectEvent(t, e, EventEnded, 1)
+	if id, _, ok := e.Position(); ok {
+		t.Fatalf("song %d still reported as playing", id)
+	}
+	noEvent(t, e, 20*time.Millisecond)
+}
+
+func TestEngineSwitchOutputFailingEverywhereEndsASongStillPlayingOut(t *testing.T) {
+	out := &downOutput{fakeOutput: newNativeOutput(2000, 48000)}
+	e := NewEngine(EngineOptions{Output: out, OutputName: testDAC, OpenDecoder: fakeOpen, ChunkFrames: 256, Poll: time.Millisecond})
+	defer e.Close()
+
+	e.Play(Track{ID: 1, Source: newFakeSource(ramp(700, 0), 48000)})
+	expectEvent(t, e, EventStarted, 1)
+	waitFor(t, "the song written", func() bool { return len(out.written())/2 == 700 })
+	out.consume(100)
+	time.Sleep(20 * time.Millisecond)
+	out.mu.Lock()
+	out.fails = 2
+	out.mu.Unlock()
+	if err := e.SwitchOutput("default"); err == nil {
+		t.Fatal("no error though no device opened")
+	}
+	expectEvent(t, e, EventEnded, 1)
+	noEvent(t, e, 20*time.Millisecond)
+}
