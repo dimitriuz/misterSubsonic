@@ -232,7 +232,7 @@ The prototype was built and measured on the MiSTer with the E30 before the plan.
   - A native device supports every rate until a reopen at it fails with `ErrRateUnsupported`; it is remembered per device name.
   - A fixed device supports 48 kHz only.
   - The engine reopens at 48 kHz after a refusal.
-- **§3.2, the format:** a native device tries `S32`, `S24`, float and `S16` in that order and keeps the first the device really takes. miniaudio's own fallback would pick 16-bit first. The callback converts from float with `ma_pcm_convert`.
+- **§3.2, the format:** a native device tries `S32`, `S24`, float and `S16` in that order and keeps the first the device really takes. miniaudio's own fallback would pick 16-bit first. The callback converts from float itself (see the conversion bullet below).
 - **§3.2, lost devices:** miniaudio's ALSA backend doesn't stop a device whose card is unplugged (its wait loop spins on POLLERR), so no stop notification comes. `Lost()` also reports a native device whose card is gone from `/proc/asound`, checked at most every 200 ms. It never asks ALSA for the PCM state from another thread: on ARM that broke the stream.
 - **§3.2, a failed reopen** doesn't set `Lost()`; the error goes back to the caller. In a rate change the engine then holds the song (it isn't dropped) and sends `EventDeviceLost`, and `SwitchOutput` starts it on the new device.
 - **§3.2:** miniaudio's context lives across reopens.
