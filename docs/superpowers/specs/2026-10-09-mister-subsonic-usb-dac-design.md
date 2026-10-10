@@ -223,3 +223,29 @@ Before the plan is final, the prototype is measured on the device with the E30. 
 - Bit depth chosen per song. The device runs at its native format, and the samples are converted from float.
 - An exclusive or "bit-perfect" switch: ReplayGain and any software gain still apply when on.
 - Outputs other than ALSA `hw:` cards (Bluetooth, network).
+
+## 10. Changes from the prototype (2026-10-09)
+
+The prototype was built and measured on the MiSTer with the E30 before the plan. These replace the parts of §3 they name.
+
+- **§3.2, supported rates:** miniaudio's device info lists a DAC only under its own `:N,0` id, probed through dmix (48 kHz only). So `Rates() []int` is `Supports(rate int) bool` instead:
+  - A native device supports every rate until a reopen at it fails with `ErrRateUnsupported`; it is remembered per device name.
+  - A fixed device supports 48 kHz only.
+  - The engine reopens at 48 kHz after a refusal.
+- **§3.2, the format:** a native device tries `S32`, `S24`, float and `S16` in that order and keeps the first the device really takes. miniaudio's own fallback would pick 16-bit first. The callback converts from float with `ma_pcm_convert`.
+- **§3.2, lost devices:** miniaudio's ALSA backend doesn't stop a device whose card is unplugged (its wait loop spins on POLLERR), so no stop notification comes. `Lost()` also reports a native device whose card is gone from `/proc/asound`, checked at most every 200 ms. It never asks ALSA for the PCM state from another thread: on ARM that broke the stream.
+- **§3.2, a failed reopen** doesn't set `Lost()`; the error goes back to the caller. In a rate change the engine then holds the song (it isn't dropped) and sends `EventDeviceLost`, and `SwitchOutput` starts it on the new device.
+- **§3.2:** miniaudio's context lives across reopens.
+- **§3.3:** `doSeek` rounds the frame. Truncating it made a position read from the frame count come back one frame early.
+- **§3.4:** the mixer is skipped for a card that isn't in `/proc/asound`, and tried again when it is.
+- **§3.5:** `viz.Analyzer.SetRate(rate)` rebuilds the bands on a change; `Update` is unchanged.
+- **§3.6:**
+  - The Output row is the last row of Settings → Playback.
+  - `ui.Options` gains `AudioNotice` and `AudioOutput`, an interface with `Cards`, `Active` and `Switch`, which `cmd/mistersubsonic` implements on the engine.
+  - The player passes `EventDeviceLost` on as `player.DeviceLost`.
+- **The startup notice** for a card that is present but won't open is "<name> didn't open (<error>): using MiSTer audio".
+- **Measured:**
+  - a rate change costs 0.58 to 0.63 s of silence in the app, 0.3 s in a test binary;
+  - native playback saves the resampler, 13 to 25% of a core.
+- **§3.2, the conversion:** a native device converts from float with its own power-of-two scaling and clamping (S32 ×2^31, packed S24 ×2^23, S16 ×2^15), not miniaudio's `ma_pcm_convert`, which scales by 2^31−1 (and 2^23−1, 2^15−1) and left 16- and 24-bit samples one LSB off.
+- **§3.3, an output switch:** `SwitchOutput` announces the track change like a seek does. A song still audible when the switch flushes it gets its `EventEnded`, and a gapless successor already decoded starts from its beginning with `EventStarted`. A song held because both devices failed resumes at the position that was heard.

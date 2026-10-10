@@ -21,6 +21,7 @@ A music player for the [MiSTer FPGA](https://github.com/MiSTer-devel) that strea
 - Web remote: control playback, edit the queue and browse your library from a phone on the same network
 - HDMI layout with a sidebar and cover grids, drawn at the TV's full resolution (up to 1920x1200), and a list layout for 15 kHz CRTs
 - Media keys on multimedia keyboards work
+- USB DACs: each song plays at its own sample rate, and the volume uses the DAC's own control
 
 ## Installation
 
@@ -63,6 +64,10 @@ With an interlaced mode (480i or 576i), also set `profile = "crt"` under `[displ
 For a TV on the component (YPbPr) input, the `[Menu]` section needs `vga_scaler=1` and a `video_mode`. 
 
 If the TV cuts off the edges, use Settings → Display → Overscan to move the picture.
+
+### USB DAC
+
+Plug the DAC into the MiSTer and pick it in Settings → Playback → Output. If it's unplugged, the music moves to the MiSTer's own audio until you pick the DAC again. If a DAC clicks after being plugged back in while the MiSTer is on, reboot the MiSTer.
 
 ### Web remote
 

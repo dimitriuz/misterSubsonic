@@ -275,3 +275,17 @@ Run it once with no phone connected and once with the remote page open on Now Pl
   - **With `vga_scaler=0`,** the framebuffer is not on the analog output at all: the app runs but nothing shows. The fix is a `[Menu]` section with `vga_scaler=1` and a `video_mode`.
   - **The picture was badly cropped at first,** but the cause was the TV's Wide mode set to 4:3 on that input. With Wide and overscan +1, both 720p (`video_mode=0`) and 480p fit.
   - **What's left** is a small cut on the left edge, which Plan 7c's Overscan settings cover.
+
+## USB DAC (2026-10-09)
+
+The user's Topping E30 on the MiSTer: card 1, ALSA id `E30`, `S32_LE`, 44.1 to 768 kHz, and a hardware volume (`E30 Playback Volume`, −127 to 0 dB in 1 dB steps, with a switch). The kernel has `CONFIG_SND_USB_AUDIO=y`.
+
+- **Before:** `alsa_device = "E30, USB Audio"` already played through the DAC, but at 48 kHz through ALSA's dmix.
+- **Opening `hw:CARD=E30,DEV=0` directly** (test binary, silence only): 44.1, 48, 88.2, 96 and 192 kHz open at exactly that rate, as `S32_LE`, `RW_INTERLEAVED`, with a 60 ms buffer (3 periods of 20 ms). 22.05 kHz is refused, and the app resamples that to 48 kHz.
+- **miniaudio's own device info** only knows the DAC as `:1,0`, which it probes through dmix (48 kHz only), so the app opens the `hw:` name as is, tries 32-bit, 24-bit, float and 16-bit in turn, and learns a refused rate on the first try.
+- **A reopen** takes about 0.3 s in the test binary: 80 ms for the last buffer to play, 25 ms to close, and about 220 ms in `ma_device_init` (the DAC changing its clock). In the app a rate change measured 0.58 to 0.63 s (log "opened in"), and a switch 0.25 to 0.3 s.
+- **CPU** (`BenchmarkDecodeNative`, 24-bit pink noise, one core): 44.1 kHz native 0.7%, resampled to 48 kHz 16.5%; 96 kHz 1.6% against 13.1%; 192 kHz 2.9% against 25.6%. The whole app played a 24/96 album at about 4% of the MiSTer's CPU (13–23% before, with the visualizer on).
+- **The app on the TV:** a 44.1 kHz album then a 24/96 one played at their own rates (the E30's display followed). The app's volume moved the E30's control exactly (app −12 dB, E30 −12.00 dB). Output switched to MiSTer audio and back while playing, with a short pause, and the song carried on. The E30 has no volume knob of its own.
+- **Unplugging:** miniaudio doesn't stop an ALSA device whose card goes away. Its wait loop spins on POLLERR (48% CPU) and sends no stop notification, so the app looks for the card in `/proc/asound` every 200 ms instead. Asking ALSA for the PCM state from another thread instead broke the stream on ARM (clicks; the DAC took 84,350 frames a second at 96 kHz), so the app doesn't. With the card check, the unplug moved the music to the TV with the notice, and picking the E30 again after replugging played cleanly (95,876 frames a second).
+- **A replug while a build without the card check held the dead device** left the E30's USB stream short of one slot in eight (clicks) until a reboot.
+- **Starting with the E30 unplugged:** the app played through MiSTer audio with "E30 isn't connected: using MiSTer audio".

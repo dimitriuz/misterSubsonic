@@ -29,7 +29,7 @@ replaygain = "off"         # off, track or album
 volume_db = 0              # -60 to 0; saved when you change the volume
 scrobble = true            # report plays to the server (and on to Last.fm/ListenBrainz)
 buffer_mb = 32             # memory for the playing stream, 4 to 512
-alsa_device = "default"
+alsa_device = "default"    # MiSTer audio; a USB DAC is "hw:CARD=<id>,DEV=0" (Settings → Playback → Output picks it)
 
 [display]
 profile = "auto"           # auto, hdmi or crt (set crt for a 480i/576i CRT)

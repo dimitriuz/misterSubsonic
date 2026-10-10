@@ -136,7 +136,13 @@ starts at the config's `volume_db` (0 dB by default) on the MiSTer.
     - Settings, the hint bar, a toast, the volume panel, Now Playing with the visualizer in full screen and the screensaver all stay inside the margins, and the border stays black (no flicker at the edges).
     - Restart the app: the margins are kept, and `config.toml` has `overscan_left`, `overscan_right` and `overscan_y` under `[display]`. Run once with `-verify-redraw` and some margins: `log.txt` has no "partial redraw differs" line.
     - F12 saves a PNG of the inner picture (without the border).
-41. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
+41. **USB DAC.** Ask the user before playing anything, and keep the amp and the TV low. With a USB DAC plugged in:
+    - Settings → Playback → Output lists it by name. Picking it moves the music to it within a moment, and `config.toml` has `alsa_device = "hw:CARD=<id>,DEV=0"`.
+    - A 44.1 kHz album then a 96 kHz one: `log.txt` has "audio: hw:CARD=<id>,DEV=0 at 44100 Hz" then "at 96000 Hz", `/proc/asound/card1/pcm0p/sub0/hw_params` shows the song's rate and the DAC's own format, and the DAC's display follows. Songs at one rate stay gapless.
+    - The app's volume moves the DAC's control: `amixer -c 1` shows the same dB. Mute turns its switch off.
+    - Unplug the DAC while playing: within a second the music goes on through MiSTer audio, with "<name> was disconnected: using MiSTer audio". Plug it back in and pick it again: it plays cleanly (`hw_ptr` in `/proc/asound/card1/pcm0p/sub0/status` advances at the song's rate).
+    - Start the app with the DAC unplugged: "<id> isn't connected: using MiSTer audio", and the Output row reads "MiSTer audio (<id> missing)". The next start with it plugged in uses it.
+42. **Log.** `/media/fat/mistersubsonic/log.txt` has a "starting" and an
     "exiting" line for each run, and `crash.txt` beside it is empty.
 
 ## Benchmarks

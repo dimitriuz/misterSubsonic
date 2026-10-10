@@ -534,3 +534,11 @@ Still open:
 - **README:**
   - the CRT wording "a whole number of lines" could say "an integer scale factor";
   - the note that a margin change refetches covers overstates it for CRT, where the cover size often stays the same.
+
+## USB DAC minors (deferred)
+
+- **The rate-change silence** is 0.58 to 0.63 s in the app against 0.3 s in a test binary. Where the other 0.3 s goes isn't measured.
+- **The device opens at 48 kHz** at start, then reopens at the first song's rate: about 0.6 s more before the first song. It could open at the resumed song's rate.
+- **SetGain for the song waiting in a rate-change drain** isn't applied to it (it is neither current nor queued then); its old gain plays.
+- **The web remote** shows no output setting.
+- **A replug while the app holds a dead device** (only possible with a build before the card check) left the E30's USB stream short until a reboot. The README tells users to reboot if a replugged DAC clicks.
