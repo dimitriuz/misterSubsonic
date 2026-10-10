@@ -87,11 +87,15 @@ type device struct {
 	refused map[string]map[int]bool // per device name, the rates it didn't take
 	checked time.Time               // when Lost last looked for the card
 	gone    bool                    // the card wasn't there then
+
+	linear float32   // the volume asked for
+	hw     *hwVolume // the native device's hardware volume, if it has one
+	hwCard string    // the card hw drives
 }
 
 // OpenDevice opens the single global playback device.
 func OpenDevice(o DeviceOptions) (Output, error) {
-	d := &device{null: o.Null, ring: o.RingFrames, refused: map[string]map[int]bool{}}
+	d := &device{null: o.Null, ring: o.RingFrames, refused: map[string]map[int]bool{}, linear: 1}
 	rate := deviceRate(o.Name, o.Rate)
 	if err := d.open(o.Name, rate, false); err != nil {
 		return nil, err
@@ -113,8 +117,60 @@ func (d *device) ringFrames(rate int) int {
 	return rate / 2
 }
 
+// openMixer is the hardware volume for a card (a variable for tests).
+var openMixer = openALSAMixer
+
+// useMixer points the volume at name's card: its hardware volume for a
+// native device that has one, software otherwise. The level is set before
+// the device starts, so a DAC never plays a moment at its old level.
+func (d *device) useMixer(name string) {
+	card := ""
+	if Native(name) && !d.null {
+		card = mixerCard(name)
+	}
+	if card != d.hwCard {
+		if d.hw != nil {
+			closeALSAMixer()
+		}
+		d.hw, d.hwCard = nil, card
+		switch {
+		case card == "":
+		case !cardPresent(name):
+			d.hwCard = "" // not plugged in: the open fails anyway; try again next time
+		default:
+			ctl, err := openMixer(card)
+			if err != nil {
+				log.Printf("%v: the volume stays in software", err)
+			} else {
+				// muted: the switch may have been left off; the first level
+				// set turns it on.
+				d.hw = &hwVolume{ctl: ctl, muted: ctl.HasSwitch()}
+			}
+		}
+	}
+	d.applyVolume()
+}
+
+// applyVolume sets d.linear on the hardware control, if any, and the rest
+// in software.
+func (d *device) applyVolume() {
+	soft := d.linear
+	if d.hw != nil {
+		s, err := d.hw.apply(d.linear)
+		if err != nil {
+			log.Printf("%v: the volume goes back to software", err)
+			closeALSAMixer()
+			d.hw = nil
+		} else {
+			soft = s
+		}
+	}
+	C.mss_device_set_volume(C.float(soft))
+}
+
 // open opens name at rate; reopen: close the open device first.
 func (d *device) open(name string, rate int, reopen bool) error {
+	d.useMixer(name)
 	var cname *C.char
 	if name != "" {
 		cname = C.CString(name)
@@ -224,12 +280,21 @@ func (d *device) SetPaused(p bool) {
 	C.mss_device_set_paused(C.int(v))
 }
 
-func (d *device) SetVolume(v float32) { C.mss_device_set_volume(C.float(v)) }
-func (d *device) Flush()              { C.mss_device_flush() }
+func (d *device) SetVolume(v float32) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.linear = v
+	d.applyVolume()
+}
+func (d *device) Flush() { C.mss_device_flush() }
 func (d *device) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	C.mss_device_close()
+	if d.hw != nil {
+		closeALSAMixer()
+		d.hw, d.hwCard = nil, ""
+	}
 	return nil
 }
 

@@ -58,4 +58,17 @@ void mss_device_set_volume(float volume);
 void mss_device_flush(void);
 void mss_device_stop_for_test(void);
 
+/* Hardware volume: the first playback volume in dB on a card's simple
+   mixer (card is an ALSA name such as "hw:E30"), through libasound loaded
+   at run time. Values are in hundredths of a dB. Negative results are
+   errors. */
+int mss_mixer_open(const char* card);
+void mss_mixer_close(void);
+int mss_mixer_range(long* min_cdb, long* max_cdb);
+/* Sets the nearest step at or above cdb and reads back the one set. */
+int mss_mixer_set(long cdb, long* got_cdb);
+int mss_mixer_get(long* cdb);
+int mss_mixer_has_switch(void);
+int mss_mixer_set_switch(int on);
+
 #endif

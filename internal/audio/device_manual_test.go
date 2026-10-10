@@ -149,3 +149,36 @@ func TestNativeProbeManual(t *testing.T) {
 	}
 	t.Logf("lost=%v", out.Lost())
 }
+
+// TestMixerProbeManual reads a card's hardware volume, moves it, mutes and
+// unmutes it, and puts it back. Nothing plays. Skipped unless
+// MSS_MIXER_PROBE names the card, for example: MSS_MIXER_PROBE=hw:E30
+func TestMixerProbeManual(t *testing.T) {
+	card := os.Getenv("MSS_MIXER_PROBE")
+	if card == "" {
+		t.Skip("set MSS_MIXER_PROBE=hw:<card> to probe a card's hardware volume (silent)")
+	}
+	ctl, err := openALSAMixer(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeALSAMixer()
+	m := ctl.(alsaMixer)
+	was, err := m.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lo, hi := ctl.Range()
+	t.Logf("range %v..%v dB, switch %v, now %v dB", lo, hi, ctl.HasSwitch(), was)
+	defer func() {
+		got, err := ctl.Set(was)
+		t.Logf("restored to %v dB (%v)", got, err)
+	}()
+	for _, db := range []float64{-10, -10.4, -20, -59.5} {
+		got, err := ctl.Set(db)
+		t.Logf("set %v dB: got %v (%v)", db, got, err)
+	}
+	if ctl.HasSwitch() {
+		t.Logf("switch off: %v, on: %v", ctl.SetSwitch(false), ctl.SetSwitch(true))
+	}
+}
