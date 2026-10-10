@@ -28,8 +28,8 @@ What the MiSTer reports for the E30:
   - `"default"` is MiSTer audio, as today.
   - A DAC is saved as `"hw:CARD=<id>,DEV=0"`, for example `"hw:CARD=E30,DEV=0"`. It names the card by its ALSA id, not its number, so it survives replugging and reboots.
   - Any other value keeps today's meaning: a device by name or ALSA id, at 48 kHz, with software volume. The Output row shows it as written until the user picks another.
-- **A missing DAC at start:** the app plays through MiSTer audio and shows "Topping E30 isn't connected: using MiSTer audio". When the card is gone, its name comes from the config ("E30"). The config isn't changed. The Output row shows "MiSTer audio (E30 missing)".
-- **A DAC unplugged while playing:** the app switches to MiSTer audio, continues the song from where it was heard, and shows "Topping E30 was disconnected: using MiSTer audio". It does not switch back by itself when the DAC returns; picking it in Settings does.
+- **A missing DAC at start:** the app plays through MiSTer audio and shows "Topping E30 isn't connected: using MiSTer audio". When the card is gone, its name comes from the config ("E30"). The config isn't changed. The Output row shows "MiSTer audio (E30 missing)", or "MiSTer audio (E30 not in use)" when the card is plugged in but not in use.
+- **A DAC unplugged while playing:** the app switches to MiSTer audio, continues the song from where it was heard, and shows "Topping E30 was disconnected: using MiSTer audio" (if the card is still listed, because a reopen at a new sample rate failed, "Topping E30 stopped working: using MiSTer audio"). It does not switch back by itself when the DAC returns; picking it in Settings does.
 - **A failed switch** (the DAC won't open): the previous output stays, the setting isn't saved, and a notice says why.
 
 ## 3. Architecture
@@ -91,7 +91,7 @@ The C device stays one global device, with one ring. These are the changes.
 - **Switching outputs:** `Engine.SwitchOutput(name string) error` runs on the run goroutine and returns its result to the caller.
   1. It notes the audible `(id, pos)` from `Position`.
   2. It flushes and calls `Reopen(name, target for the current voice)`. The rate is 48000 when nothing plays.
-  3. If a voice is current, it seeks it to `pos`, without events. If the seek fails, decoding carries on from where it was: at most the buffered 0.5 s is skipped.
+  3. If a voice is current, it seeks it to `pos`, without events. If the seek fails, decoding carries on from where it was: at most the buffered 0.5 s is skipped. A voice whose seeks are costly (`Track.CostlySeek`: transcoded streams and sized MP3s, the player's `seeksByReopening`) isn't sought at all: it carries on from its decoder's song time, which becomes the new segment's base, so at most the ring is skipped and the position stays truthful.
 
   If the reopen fails, it reopens the previous name and returns the error.
 - `OutputRate` stays as the fixed device's rate. Its comment says so.

@@ -949,3 +949,26 @@ func TestDeviceLostIsPassedOn(t *testing.T) {
 		t.Fatal("a lost device stopped the player; the song must carry on after a switch")
 	}
 }
+
+func TestTrackMarksSourcesWithCostlySeeks(t *testing.T) {
+	h := newHarness(t, nil)
+	q := songs(3, 300)
+	q[1].Suffix = "m4a" // transcoded
+	q[2].Suffix = "mp3"
+	q[2].Size = 5 << 20
+	h.p.PlayNow(q, 0)
+	h.playAndStart(1)
+	if h.eng.lastPlayed().CostlySeek {
+		t.Error("a FLAC track is marked costly to seek")
+	}
+	h.p.Next()
+	h.playAndStart(2)
+	if !h.eng.lastPlayed().CostlySeek {
+		t.Error("a transcoded track is not marked costly to seek")
+	}
+	h.p.Next()
+	h.playAndStart(3)
+	if !h.eng.lastPlayed().CostlySeek {
+		t.Error("an MP3 with a size and duration is not marked costly to seek")
+	}
+}

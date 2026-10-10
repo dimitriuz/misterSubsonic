@@ -140,6 +140,26 @@ func TestOutputShowsAMissingDAC(t *testing.T) {
 	}
 }
 
+func TestOutputShowsAPresentDACThatIsNotInUse(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.cfg.Playback.ALSADevice = e30
+	ta.o.AudioOutput = withE30() // plugged in, but MiSTer audio is active
+	if got := outputRow(t, ta).value(ta.App); got != "MiSTer audio (E30 not in use)" {
+		t.Fatalf("Output reads %q", got)
+	}
+}
+
+func TestOutputNamesTheDACFromTheConfig(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.cfg.Playback.ALSADevice = e30
+	out := withE30()
+	out.active = e30
+	ta.o.AudioOutput = out
+	if got := outputRow(t, ta).value(ta.App); got != "Topping E30" {
+		t.Fatalf("Output reads %q", got)
+	}
+}
+
 func TestOutputKeepsAHandWrittenDevice(t *testing.T) {
 	ta, _ := connectedApp(t)
 	out := withE30()
@@ -165,6 +185,7 @@ func TestOutputLostDACFallsBackToMiSTerAudio(t *testing.T) {
 	row.change(ta.App, 1) // learns the E30's name and switches to it
 	waitSwitch(t, ta)
 
+	out.cards = nil // unplugged
 	ta.onPlayer(player.Event{Kind: player.DeviceLost})
 	waitSwitch(t, ta)
 	if got := out.calls(); !slices.Equal(got, []string{e30, ""}) {
@@ -178,6 +199,33 @@ func TestOutputLostDACFallsBackToMiSTerAudio(t *testing.T) {
 	}
 	if got := row.value(ta.App); got != "MiSTer audio (E30 missing)" {
 		t.Fatalf("Output reads %q", got)
+	}
+}
+
+func TestOutputLostWhenTheAppStartedOnTheDACStillNamesIt(t *testing.T) {
+	ta, _ := connectedApp(t)
+	ta.cfg.Playback.ALSADevice = e30
+	out := withE30()
+	out.active = e30 // the DAC came from the config; the row was never stepped
+	ta.o.AudioOutput = out
+	ta.start()
+	out.cards = nil // unplugged
+	ta.onPlayer(player.Event{Kind: player.DeviceLost})
+	waitSwitch(t, ta)
+	if got := toastTexts(ta); !slices.Contains(got, "Topping E30 was disconnected: using MiSTer audio") {
+		t.Fatalf("toasts %q", got)
+	}
+}
+
+func TestOutputLostWithTheCardStillThereSaysItStopped(t *testing.T) {
+	ta, _ := connectedApp(t)
+	out := withE30()
+	out.active = e30
+	ta.o.AudioOutput = out
+	ta.onPlayer(player.Event{Kind: player.DeviceLost}) // a failed rate change: the card is listed
+	waitSwitch(t, ta)
+	if got := toastTexts(ta); !slices.Contains(got, "Topping E30 stopped working: using MiSTer audio") {
+		t.Fatalf("toasts %q", got)
 	}
 }
 

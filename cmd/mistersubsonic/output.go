@@ -22,8 +22,9 @@ func openOutput(dev string, null bool) (out audio.Output, name, notice string, e
 		return nil, "", "", err
 	}
 	id := audio.CardID(dev)
-	if i := slices.IndexFunc(audio.Cards(), func(c audio.Card) bool { return c.ID == id }); i >= 0 {
-		notice = fmt.Sprintf("%s didn't open (%v): using MiSTer audio", audio.Cards()[i].Name, err)
+	cards := audio.Cards()
+	if i := slices.IndexFunc(cards, func(c audio.Card) bool { return c.ID == id }); i >= 0 {
+		notice = fmt.Sprintf("%s didn't open (%v): using MiSTer audio", cards[i].Name, err)
 	} else {
 		notice = fmt.Sprintf("%s isn't connected: using MiSTer audio", id)
 	}

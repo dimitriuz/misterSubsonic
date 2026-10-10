@@ -143,6 +143,7 @@ type fakeSource struct {
 	eofWithData     bool          // the last Read returns its frames together with io.EOF
 	openHold        chan struct{} // fakeOpen waits for it even after the source is closed
 	decClosed       atomic.Int32  // decoders of this source closed
+	seeks           atomic.Int32  // SeekFrame calls on decoders of this source
 	once            sync.Once
 	closed          chan struct{}
 }
@@ -195,6 +196,7 @@ func (d *fakeDecoder) SampleRate() int      { return d.src.rate }
 func (d *fakeDecoder) LengthFrames() uint64 { return uint64(len(d.src.pcm) / 2) }
 func (d *fakeDecoder) Close() error         { d.src.decClosed.Add(1); return nil }
 func (d *fakeDecoder) SeekFrame(f uint64) error {
+	d.src.seeks.Add(1)
 	if d.src.seekBlock != nil {
 		select {
 		case <-d.src.seekBlock:

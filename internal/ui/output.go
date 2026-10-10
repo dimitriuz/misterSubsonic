@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"slices"
+
 	"mistersubsonic/internal/audio"
 	"mistersubsonic/internal/config"
 )
@@ -37,7 +39,35 @@ func (a *App) outputLabel(device string) string {
 	if name, ok := a.outNames[device]; ok {
 		return name
 	}
+	a.learnOutputNames()
+	if name, ok := a.outNames[device]; ok {
+		return name
+	}
 	return audio.CardID(device)
+}
+
+// learnOutputNames remembers the names of the cards present now, so that a
+// card is still named after it was unplugged.
+func (a *App) learnOutputNames() {
+	if a.o.AudioOutput == nil {
+		return
+	}
+	for _, c := range a.o.AudioOutput.Cards() {
+		if a.outNames == nil {
+			a.outNames = map[string]string{}
+		}
+		a.outNames[c.Device()] = c.Name
+	}
+}
+
+// cardPresent is whether the card behind a native device is listed now.
+func (a *App) cardPresent(device string) bool {
+	out := a.o.AudioOutput
+	if out == nil {
+		return false
+	}
+	id := audio.CardID(device)
+	return slices.ContainsFunc(out.Cards(), func(c audio.Card) bool { return c.ID == id })
 }
 
 // outputValue is what the Output row shows: what plays now, and the card
@@ -53,7 +83,11 @@ func (a *App) outputValue() string {
 	act := out.Active()
 	label := a.outputLabel(act)
 	if want := a.wantedOutput(); audio.Native(want) && want != act {
-		label += " (" + audio.CardID(want) + " missing)"
+		state := " not in use)"
+		if !a.cardPresent(want) {
+			state = " missing)"
+		}
+		label += " (" + audio.CardID(want) + state
 	}
 	return label
 }
@@ -75,12 +109,9 @@ func (a *App) changeOutput(dir int) {
 	}
 	act := out.Active()
 	choices := []string{""}
-	if a.outNames == nil {
-		a.outNames = map[string]string{}
-	}
+	a.learnOutputNames()
 	for _, c := range out.Cards() {
 		choices = append(choices, c.Device())
-		a.outNames[c.Device()] = c.Name
 	}
 	if !contains(choices, act) {
 		choices = append(choices, act) // a name from the config, written by hand
@@ -131,12 +162,18 @@ func (a *App) outputLost() {
 		return // a switch is under way; it reports for itself
 	}
 	name := a.outputLabel(act)
+	// A card still listed didn't unplug: its device stopped (a failed
+	// reopen at a new sample rate, say).
+	what := "was disconnected"
+	if a.cardPresent(act) {
+		what = "stopped working"
+	}
 	a.switchOutput("", func(err error) {
 		if err != nil {
-			a.Toast("%s was disconnected, and MiSTer audio didn't open: %v", name, err)
+			a.Toast("%s %s, and MiSTer audio didn't open: %v", name, what, err)
 			return
 		}
-		a.Toast("%s was disconnected: using MiSTer audio", name)
+		a.Toast("%s %s: using MiSTer audio", name, what)
 	})
 }
 

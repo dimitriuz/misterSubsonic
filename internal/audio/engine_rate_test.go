@@ -2,6 +2,7 @@ package audio
 
 import (
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +89,14 @@ func TestEngineStopDuringARateChangeDrainCancelsIt(t *testing.T) {
 	e.QueueNext(Track{ID: 2, Source: src2})
 	waitFor(t, "the first song written", func() bool { return len(out.written())/2 == 700 })
 	time.Sleep(10 * time.Millisecond) // the engine now waits for the old song to play out
+	// Provably mid-drain: part of the old song is still unplayed, no reopen yet.
+	out.consume(300)
+	if c := out.Consumed(); c >= 700 {
+		t.Fatalf("consumed %d of 700 frames: the drain is already over", c)
+	}
+	if r := out.reopenCalls(); len(r) != 1 {
+		t.Fatalf("reopens %+v before Stop, want the one at 44100", r)
+	}
 	e.Stop()
 	waitFor(t, "the queued song closed", src2.isClosed)
 	time.Sleep(10 * time.Millisecond)
@@ -329,4 +338,33 @@ func TestEngineSwitchOutputFailingEverywhereEndsASongStillPlayingOut(t *testing.
 	}
 	expectEvent(t, e, EventEnded, 1)
 	noEvent(t, e, 20*time.Millisecond)
+}
+
+func TestEngineSwitchOutputDoesNotSeekACostlySourceBack(t *testing.T) {
+	out := newNativeOutput(2000, 48000)
+	e := newRateEngine(out)
+	defer e.Close()
+
+	src := newFakeSource(ramp(10000, 0), 48000)
+	e.Play(Track{ID: 1, Source: src, CostlySeek: true})
+	expectEvent(t, e, EventStarted, 1)
+	waitFor(t, "the ring full", func() bool { return len(out.written())/2 == 2000 })
+	out.consume(500)
+	if err := e.SwitchOutput("default"); err != nil {
+		t.Fatal(err)
+	}
+	if n := src.seeks.Load(); n != 0 {
+		t.Fatalf("%d SeekFrame calls, want none for a costly source", n)
+	}
+	id, pos, ok := e.Position()
+	frame := int(math.Round(pos.Seconds() * 48000))
+	if !ok || id != 1 || frame < 2000 {
+		t.Fatalf("position %v %v %v, want song 1 from the decoder's time (frame 2000 or more), not the heard 500", id, pos, ok)
+	}
+	cut := int(out.reopenCalls()[0].written)
+	waitFor(t, "more written after the switch", func() bool { return len(out.written())/2 > cut+10 })
+	if got, want := out.written()[2*cut], ramp(1, float32(frame))[0]; got != want {
+		t.Fatalf("after the switch the song resumed at %v, want frame %d (%v): the position must match the sound", got, frame, want)
+	}
+	noEvent(t, e, 20*time.Millisecond) // no spurious track change
 }

@@ -987,7 +987,7 @@ func (p *Player) onOpened(r openResult) {
 }
 
 func (p *Player) track(id uint64, s subsonic.Song, o Opened) audio.Track {
-	return audio.Track{ID: id, Source: o.Source, Format: o.Format, Gain: ReplayGainFactor(s, p.o.ReplayGain), Offset: o.Offset}
+	return audio.Track{ID: id, Source: o.Source, Format: o.Format, Gain: ReplayGainFactor(s, p.o.ReplayGain), Offset: o.Offset, CostlySeek: seeksByReopening(o, s)}
 }
 
 // trackFailed reports err and moves on, stopping after too many in a row.

@@ -38,6 +38,7 @@ func (a *App) Conn() (ConnInfo, bool) { return a.conn, a.conn.Server.Name != "" 
 
 // start picks the first screen: a problem to explain, or connecting.
 func (a *App) start() {
+	a.learnOutputNames() // a card keeps its name once it is unplugged
 	if a.o.AudioNotice != "" {
 		a.Toast("%s", a.o.AudioNotice)
 	}
