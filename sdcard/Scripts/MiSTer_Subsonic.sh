@@ -4,8 +4,9 @@
 # This launcher runs the app full screen and comes back here when you exit
 # it (Settings → Exit, or hold B on the home screen). While the app runs,
 # background music (BGM) is stopped and Super Attract Mode (SAM) is
-# disabled; both come back afterwards. The app keeps its settings and log
-# in /media/fat/mistersubsonic.
+# disabled; both come back afterwards. Companion displays (tty2oled and
+# the like) see MiSTer_Subsonic in /tmp/CORENAME, then MENU again. The app
+# keeps its settings and log in /media/fat/mistersubsonic.
 #
 # The MSS_* variables are for testing.
 
@@ -15,6 +16,7 @@ LOCK=${MSS_LOCK:-/tmp/mistersubsonic.lock}
 LOCK_WAIT=${MSS_LOCK_WAIT:-5}
 BGM_SOCK=${MSS_BGM_SOCK:-/tmp/bgm.sock}
 SAM=${MSS_SAM:-/media/fat/Scripts/MiSTer_SAM_on.sh}
+CORENAME=${MSS_CORENAME:-/tmp/CORENAME}
 
 if [ ! -x "$APP" ]; then
 	echo "MiSTer Subsonic isn't installed: $APP is missing."
@@ -53,12 +55,14 @@ done
 # the restore must not cut it short, so it ignores them.
 bgm_stopped=
 sam_disabled=
+corename_set=
 restore() {
 	trap '' INT TERM
 	"$APP" -restore-console >/dev/null 2>&1 9>&- # text mode again, even after a crash
 	printf '\033[?25h\033[2J\033[H'          # the cursor back, the screen cleared
 	[ -n "$bgm_stopped" ] && bgm play
 	[ -n "$sam_disabled" ] && "$SAM" enable >/dev/null 2>&1 9>&-
+	[ -n "$corename_set" ] && corename MENU
 	return 0
 }
 # INT and TERM go on to the app, which closes cleanly; the launcher then
@@ -88,6 +92,11 @@ if [ -x "$SAM" ] && { pidof MiSTer_SAM_MCP >/dev/null || ps | grep -q '[M]iSTer_
 	"$SAM" disable >/dev/null 2>&1 9>&-
 	sam_disabled=1
 fi
+
+# The name companion displays show, without a newline as MiSTer writes it.
+corename() { printf '%s' "$1" >"$CORENAME" 2>/dev/null; }
+corename MiSTer_Subsonic
+corename_set=1
 
 printf '\033[?25l' # hide the cursor
 # In the background so a signal reaches the trap at once (<&0 keeps its
