@@ -33,10 +33,23 @@ int mss_resampler_process(mss_resampler* r, const float* in, uint32_t* in_frames
 uint32_t mss_resampler_input_latency(mss_resampler* r);
 void mss_resampler_free(mss_resampler* r);
 
-/* Output device: one global 48 kHz stereo float32 device fed from a
-   single-producer ring. The device callback never blocks. */
-int mss_device_open(const char* device_name, int null_backend, uint32_t ring_frames);
+/* Output device: one global stereo device fed from a single-producer ring
+   of float32. The device callback never blocks. A native device (an ALSA
+   name used as is) runs at the rate asked for, in its most precise format;
+   other devices run at the rate asked for through miniaudio's conversion. */
+#define MSS_RATE_UNSUPPORTED (-1000)
+
+int mss_device_open(const char* device_name, int null_backend, uint32_t rate, uint32_t ring_frames, int native);
+/* Closes the open device (letting ALSA's buffer play out when tail) and
+   opens another; the consumed count, pause and volume carry over. */
+int mss_device_reopen(const char* device_name, int null_backend, uint32_t rate, uint32_t ring_frames, int native, int tail);
 void mss_device_close(void);
+uint32_t mss_device_rate(void);
+int mss_device_format_bits(void);
+/* Float samples to bits (16, 24 packed, 32) of integer, or bits 0: float. */
+void mss_convert_samples(void* dst, int bits, const float* src, uint32_t count);
+/* 1 once the device stopped without being asked (unplugged, say). */
+int mss_device_lost(void);
 uint32_t mss_device_write(const float* frames, uint32_t frame_count);
 uint32_t mss_device_space(void);
 uint64_t mss_device_consumed(void);
@@ -44,5 +57,18 @@ void mss_device_set_paused(int paused);
 void mss_device_set_volume(float volume);
 void mss_device_flush(void);
 void mss_device_stop_for_test(void);
+
+/* Hardware volume: the first playback volume in dB on a card's simple
+   mixer (card is an ALSA name such as "hw:E30"), through libasound loaded
+   at run time. Values are in hundredths of a dB. Negative results are
+   errors. */
+int mss_mixer_open(const char* card);
+void mss_mixer_close(void);
+int mss_mixer_range(long* min_cdb, long* max_cdb);
+/* Sets the nearest step at or above cdb and reads back the one set. */
+int mss_mixer_set(long cdb, long* got_cdb);
+int mss_mixer_get(long* cdb);
+int mss_mixer_has_switch(void);
+int mss_mixer_set_switch(int on);
 
 #endif

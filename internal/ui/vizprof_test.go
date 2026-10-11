@@ -94,11 +94,11 @@ func newCycleVisual(n int) *cycleVisual {
 	return c
 }
 
-func (c *cycleVisual) Window(dst []float32) int {
+func (c *cycleVisual) Window(dst []float32) (int, int) {
 	w := c.wins[c.i%len(c.wins)]
 	c.i++
 	copy(dst, w)
-	return min(len(dst), len(w)) / 2
+	return min(len(dst), len(w)) / 2, 48000
 }
 
 // BenchmarkVizRealFrame is one visualizer frame as the app runs it: advance

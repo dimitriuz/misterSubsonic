@@ -302,3 +302,37 @@ func TestUIOptionsGetTheAudioTap(t *testing.T) {
 		t.Fatalf("Options.Visual = %T, want *audio.Tap", got)
 	}
 }
+
+func TestOpenOutputFallsBackFromAMissingDAC(t *testing.T) {
+	old := openDevice
+	var asked []string
+	openDevice = func(o audio.DeviceOptions) (audio.Output, error) {
+		asked = append(asked, o.Name)
+		if audio.Native(o.Name) {
+			return nil, errors.New("no such device")
+		}
+		return audio.OpenDevice(audio.DeviceOptions{Null: true})
+	}
+	defer func() { openDevice = old }()
+
+	out, name, notice, err := openOutput("hw:CARD=NoSuchDAC,DEV=0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if name != "" || notice != "NoSuchDAC isn't connected: using MiSTer audio" {
+		t.Fatalf("name %q, notice %q", name, notice)
+	}
+	if len(asked) != 2 || asked[1] != "" {
+		t.Fatalf("opened %q, want the DAC then MiSTer audio", asked)
+	}
+}
+
+func TestOpenOutputDoesNotFallBackFromDefault(t *testing.T) {
+	old := openDevice
+	openDevice = func(audio.DeviceOptions) (audio.Output, error) { return nil, errors.New("boom") }
+	defer func() { openDevice = old }()
+	if _, _, _, err := openOutput("", false); err == nil {
+		t.Fatal("no error when MiSTer audio itself fails")
+	}
+}

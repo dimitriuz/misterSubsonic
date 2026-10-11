@@ -98,6 +98,9 @@ const (
 	StatusChanged
 	QueueChanged
 	Error
+	// DeviceLost: the sound device stopped (unplugged, say). Nothing is
+	// heard until the app switches the output; the song carries on then.
+	DeviceLost
 )
 
 type Event struct {
@@ -984,7 +987,7 @@ func (p *Player) onOpened(r openResult) {
 }
 
 func (p *Player) track(id uint64, s subsonic.Song, o Opened) audio.Track {
-	return audio.Track{ID: id, Source: o.Source, Format: o.Format, Gain: ReplayGainFactor(s, p.o.ReplayGain), Offset: o.Offset}
+	return audio.Track{ID: id, Source: o.Source, Format: o.Format, Gain: ReplayGainFactor(s, p.o.ReplayGain), Offset: o.Offset, CostlySeek: seeksByReopening(o, s)}
 }
 
 // trackFailed reports err and moves on, stopping after too many in a row.
@@ -1049,6 +1052,8 @@ func (p *Player) onEngine(ev audio.Event) {
 		}
 		p.seekRetry = true
 		p.reopenAt(p.seekTarget) // I2: reopen preserves listen state and pause
+	case audio.EventDeviceLost:
+		p.emit(Event{Kind: DeviceLost, Err: ev.Err})
 	case audio.EventError:
 		switch ev.TrackID {
 		case p.nextID:

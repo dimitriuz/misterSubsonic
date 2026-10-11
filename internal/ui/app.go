@@ -118,8 +118,13 @@ type Options struct {
 	ConfigPath string
 	Config     *config.Config
 	ConfigErr  error
-	AudioErr   error  // the sound device couldn't be opened
-	Version    string // shown in Settings → About
+	AudioErr   error // the sound device couldn't be opened
+	// AudioNotice is shown once at the start: the DAC in the config isn't
+	// there, so MiSTer audio plays instead.
+	AudioNotice string
+	// AudioOutput switches the sound device (nil: no device).
+	AudioOutput AudioOutput
+	Version     string // shown in Settings → About
 	// ScreenshotDir is where the screenshot button saves PNGs ("": off).
 	ScreenshotDir string
 	// PadAtStart: a gamepad is connected, so the hint bar starts with
@@ -144,9 +149,10 @@ type Options struct {
 
 // Visual gives the visualizer the audio that is playing: Window fills dst
 // (interleaved stereo float32) with the latest frames ending at the playback
-// position and returns how many frames it filled. *audio.Tap implements it.
+// position and returns how many frames it filled and their sample rate.
+// *audio.Tap implements it.
 type Visual interface {
-	Window(dst []float32) int
+	Window(dst []float32) (n, rate int)
 }
 
 // Visual returns Options.Visual.
@@ -279,6 +285,9 @@ type App struct {
 	songStars  atomic.Pointer[map[subsonic.ID]bool]
 	seen       *songMemory
 	remoteURLs []string // the server's addresses, read when Settings → Remote opens
+
+	outBusy  bool              // an output switch is under way
+	outNames map[string]string // card names by device, as last listed
 }
 
 func New(o Options) (*App, error) {
@@ -720,6 +729,9 @@ func (a *App) onPlayer(ev player.Event) {
 		a.notifyRemote(remote.QueueChanged)
 	}
 	a.notifyRemote(remote.StateChanged) // the queue's index and the status change with it
+	if ev.Kind == player.DeviceLost {
+		a.outputLost()
+	}
 	if ev.Kind == player.Error {
 		title := ev.Song.Title
 		if title == "" {

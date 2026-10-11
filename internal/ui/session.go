@@ -38,6 +38,10 @@ func (a *App) Conn() (ConnInfo, bool) { return a.conn, a.conn.Server.Name != "" 
 
 // start picks the first screen: a problem to explain, or connecting.
 func (a *App) start() {
+	a.learnOutputNames() // a card keeps its name once it is unplugged
+	if a.o.AudioNotice != "" {
+		a.Toast("%s", a.o.AudioNotice)
+	}
 	switch {
 	case a.o.AudioErr != nil:
 		a.Replace(NewMessageScreen("No audio device", fmt.Sprintf("Couldn't open the audio device (%v).\nCheck alsa_device in %s, or that nothing else is using the sound card.", a.o.AudioErr, a.o.ConfigPath), nil))

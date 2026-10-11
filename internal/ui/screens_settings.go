@@ -288,7 +288,7 @@ func playbackSettings(a *App) []setting {
 				},
 				help: "Quality of those conversions to MP3: higher sounds better and uses more network.", toggle: false})
 	}
-	return rows
+	return append(rows, outputSetting())
 }
 
 var screensaverChoices = []int{0, 1, 2, 5, 10, 15, 30}

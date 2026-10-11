@@ -534,3 +534,25 @@ Still open:
 - **README:**
   - the CRT wording "a whole number of lines" could say "an integer scale factor";
   - the note that a margin change refetches covers overstates it for CRT, where the cover size often stays the same.
+
+## USB DAC minors (deferred)
+
+- **The rate-change silence** is 0.58 to 0.63 s in the app against 0.3 s in a test binary. Where the other 0.3 s goes isn't measured.
+- **The device opens at 48 kHz** at start, then reopens at the first song's rate: about 0.6 s more before the first song. It could open at the resumed song's rate.
+- **SetGain for the song waiting in a rate-change drain** isn't applied to it (it is neither current nor queued then); its old gain plays.
+- **The web remote** shows no output setting.
+- **A replug while the app holds a dead device** (only possible with a build before the card check) left the E30's USB stream short until a reboot. The README tells users to reboot if a replugged DAC clicks.
+- **`TestEngineSetGainReachesTheSuccessor` is flaky** (3 in 60 runs with `-race`, on main too): with 100 frames, the successor can be decoded and written before `SetGain` arrives.
+- **From the reviews (deferred):**
+  - A volume press during a rate change or an output switch can freeze the UI for up to ~0.6 s: `SetVolume` waits on the device mutex the reopen holds. Do the mixer work under its own lock, or record the level and let the open apply it.
+  - A USB re-enumeration between two 200 ms card checks can hide a loss (the card id is back, the PCM is dead). Remember the card's number at open and treat a change as lost.
+  - A DAC without 48 kHz never opens: 48 kHz is the first open and the fallback after a refusal. Try 44.1 kHz too.
+  - `SwitchOutput` queues behind a decode stalled on the network (up to the stream's retry budget); the Output row shows "Switching…" meanwhile.
+  - After a mixer error the DAC keeps its last level, and the card isn't retried until another card is picked. A failed `OpenDevice` leaves the mixer open until the next one. `alsaMixer.Range` ignores the C return code.
+  - A NaN sample reaches an undefined float→int cast in the native conversion (decoders don't produce NaN).
+  - `Rate()` and the device name keep their old values after a failed open; `Lost()` on a closed native device still checks /proc/asound; the Output row reads /proc/asound on some renders.
+  - EventDeviceLost can come twice for one loss, and a second one after the fallback toasts "Audio device stopped" over the first notice.
+  - A `-null` run with a `hw:` `alsa_device` gives the engine a native name over a null device.
+  - SetRate resets the visualizer's peak caps on a rate change; an Output reporting rate 0 would give the tap a zero-size ring.
+  - Tests to add: decimation with wraparound and partial windows; Play, QueueNext and SwitchOutput during a rate-change drain; a switch while busy; a gapless successor with a costly seek; the switch tests' 20 ms sleeps.
+  - The example config shows only the `hw:CARD=<id>,DEV=0` form, and the README doesn't say the DAC choice is kept for the next start.

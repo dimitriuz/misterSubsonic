@@ -19,7 +19,7 @@ import (
 // that moves from call to call so the waterfall has something to sweep.
 type fakeVisual struct{ pos, calls int }
 
-func (f *fakeVisual) Window(dst []float32) int {
+func (f *fakeVisual) Window(dst []float32) (int, int) {
 	n := len(dst) / 2
 	moving := 300 + 400*float64(f.calls%24)
 	for i := 0; i < n; i++ {
@@ -30,16 +30,16 @@ func (f *fakeVisual) Window(dst []float32) int {
 	}
 	f.pos += n
 	f.calls++
-	return n
+	return n, 48000
 }
 
 // cachedVisual hands out the same window every time (the benchmark's signal:
 // making sines would be most of what it measures).
 type cachedVisual struct{ buf []float32 }
 
-func (c *cachedVisual) Window(dst []float32) int {
+func (c *cachedVisual) Window(dst []float32) (int, int) {
 	copy(dst, c.buf)
-	return min(len(dst), len(c.buf)) / 2
+	return min(len(dst), len(c.buf)) / 2, 48000
 }
 
 // vizApp is Now Playing with the visualizer in style, playing, over a fake signal.
