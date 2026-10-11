@@ -21,6 +21,7 @@ A music player for the [MiSTer FPGA](https://github.com/MiSTer-devel) that strea
 - Web remote: control playback, edit the queue and browse your library from a phone on the same network
 - HDMI layout with a sidebar and cover grids, drawn at the TV's full resolution (up to 1920x1200), and a list layout for 15 kHz CRTs
 - Media keys on multimedia keyboards work
+- Companion displays (tty2oled and the like) show MiSTer Subsonic while it runs
 - USB DACs: each song plays at its own sample rate, and the volume uses the DAC's own control
 
 ## Installation

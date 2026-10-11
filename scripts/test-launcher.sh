@@ -19,11 +19,13 @@ sandbox() {
 	c=$tmp/$1
 	mkdir -p "$c/bin" "$c/app"
 	export MSS_DIR=$c/app MSS_LOCK=$c/lock MSS_BGM_SOCK=$c/bgm.sock MSS_SAM=$c/sam.sh MSS_LOCK_WAIT=1
+	export MSS_CORENAME=$c/CORENAME
 	export LOG=$c/log PIDS=$c/pids APP_EXIT=0 BGM_STATUS="" PS_OUT=""
 	: >"$LOG"
 	cat >"$MSS_DIR/mistersubsonic" <<'S'
 #!/bin/bash
 echo "app $*" >>"$LOG"
+[ "$1" = -restore-console ] || cat "$MSS_CORENAME" >"$(dirname "$LOG")/corename-while-running" 2>/dev/null
 exit "$APP_EXIT"
 S
 	cat >"$c/bin/socat" <<'S'
@@ -63,6 +65,18 @@ ORIG_PATH=$PATH
 
 socket() { python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$MSS_BGM_SOCK"; }
 
+# check_corename NAME: companion displays saw MiSTer_Subsonic while the app
+# ran and MENU after it (both without a newline, as MiSTer writes them).
+check_corename() {
+	local during after
+	during=$(cat "$c/corename-while-running" 2>/dev/null; printf x)
+	after=$(cat "$MSS_CORENAME" 2>/dev/null; printf x)
+	if [ "$during" != "MiSTer_Subsonicx" ] || [ "$after" != "MENUx" ]; then
+		echo "FAIL $1: CORENAME was '${during%x}' while running and is '${after%x}' after (want MiSTer_Subsonic, then MENU)"
+		failures=$((failures + 1))
+	fi
+}
+
 # expect NAME CODE LINES...: the launcher's exit code and the log, in order.
 run_case() {
 	name=$1 want_code=$2
@@ -85,6 +99,7 @@ run_case() {
 sandbox plain
 run_case "runs the app, then restores the console" 0 "app -volume -20" "app -restore-console"
 grep -q "MiSTer Subsonic closed." "$c/out" || { echo "FAIL plain: no closing message"; failures=$((failures + 1)); }
+check_corename plain
 
 sandbox bgm
 socket
@@ -135,6 +150,7 @@ APP_EXIT=2
 run_case "restores everything after a crash" 2 "bgm status" "bgm stop" "app -volume -20" "app -restore-console" "bgm play"
 grep -q "log.txt" "$c/out" || { echo "FAIL crash: no pointer to the log"; failures=$((failures + 1)); }
 grep -q "crash.txt" "$c/out" || { echo "FAIL crash: no pointer to crash.txt"; failures=$((failures + 1)); }
+check_corename crash
 
 # spawn starts the launcher in the background with INT and TERM at their
 # defaults: a background job of a script inherits INT ignored, which a
@@ -157,6 +173,7 @@ signal_case() {
 #!/bin/bash
 echo "app $*" >>"$LOG"
 [ "$1" = -restore-console ] && exit 0
+cat "$MSS_CORENAME" >"$(dirname "$LOG")/corename-while-running" 2>/dev/null
 # A clean close on TERM, like the app.
 sleep 30 9>&- &
 trap 'echo "app got TERM" >>"$LOG"; kill $!; exit 0' TERM
@@ -175,6 +192,7 @@ S
 		echo "ok   $sig goes to the app, then everything is restored"
 	fi
 	flock -n "$MSS_LOCK" true || { echo "FAIL $name: the lock is still held"; failures=$((failures + 1)); }
+	check_corename "$name"
 }
 signal_case term TERM
 signal_case int INT
@@ -206,6 +224,7 @@ flock "$MSS_LOCK" sleep 30 &
 bg+=("$!")
 sleep 0.2
 run_case "won't start while another launcher holds the lock" 1
+[ -e "$MSS_CORENAME" ] && { echo "FAIL locked: CORENAME written by a launcher that didn't start the app"; failures=$((failures + 1)); }
 
 # BusyBox's flock has no -w.
 if grep -q 'flock -w' "$launcher"; then echo "FAIL: the launcher uses flock -w"; failures=$((failures + 1)); fi
