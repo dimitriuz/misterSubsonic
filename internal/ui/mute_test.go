@@ -56,6 +56,20 @@ func TestTypingMDoesNotMute(t *testing.T) {
 	}
 }
 
+func TestTypingXDoesNotSkip(t *testing.T) {
+	for name, s := range map[string]Screen{"Search": NewSearchScreen(), "the wizard": NewWizardScreen(false, false)} {
+		ta, _ := connectedApp(t)
+		playingState(ta)
+		ta.pl.calls = nil
+		ta.Push(s)
+		ta.onInput(input.Event{Button: input.BtnNextTrack, Kind: input.Press, Rune: 'x'})
+		ta.onInput(input.Event{Button: input.BtnNextTrack, Kind: input.Release, Rune: 'x'})
+		if len(ta.pl.calls) != 0 {
+			t.Fatalf("typing x in %s: player calls %v", name, ta.pl.calls)
+		}
+	}
+}
+
 // Holding Select on Now Playing mutes; a short press changes the visualizer.
 func TestSelectHoldMutesAndShortPressChangesTheVisualizer(t *testing.T) {
 	ta, _ := connectedApp(t)
