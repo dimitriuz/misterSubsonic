@@ -62,3 +62,21 @@ func BenchmarkBlitRotated400(b *testing.B) {
 		c.BlitRotated(d, R(0, 0, 400, 400), float64(i)*0.1)
 	}
 }
+
+func BenchmarkBlitRotatedFast400(b *testing.B) {
+	d := testDisc(400)
+	c := NewCanvas(400, 400)
+	for i := 0; i < b.N; i++ {
+		c.BlitRotatedFast(d, R(0, 0, 400, 400), float64(i)*0.1)
+	}
+}
+
+func TestBlitRotatedFastKeepsADiscRound(t *testing.T) {
+	d := testDisc(64)
+	c := NewCanvas(64, 64)
+	bg := c.Pix[0]
+	c.BlitRotatedFast(d, R(0, 0, 64, 64), 0.7)
+	if c.Pix[0] != bg || c.Pix[32*64+32] == bg {
+		t.Fatalf("corner %08x centre %08x", c.Pix[0], c.Pix[32*64+32])
+	}
+}

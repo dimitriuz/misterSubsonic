@@ -343,7 +343,7 @@ func sampleLibrary() *fakeLibrary {
 		{ID: "pl-2", Name: "Empty", Owner: "alice", CoverArt: "pl-2"},
 	}
 	l.tracks["al-1"] = []subsonic.Song{
-		{ID: "s1", Title: "Капитан Африка", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", ArtistID: "ar-1", CoverArt: "al-1", Track: 1, Duration: 240, Suffix: "flac", BitDepth: 24, SamplingRate: 96000},
+		{ID: "s1", Title: "Капитан Африка", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", ArtistID: "ar-1", CoverArt: "al-1", Track: 1, Year: 1983, Duration: 240, Suffix: "flac", BitDepth: 24, SamplingRate: 96000},
 		{ID: "s2", Title: "Время Луны", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 2, Duration: 160, Suffix: "flac", BitDepth: 16, SamplingRate: 44100},
 		{ID: "s3", Title: "Рок-н-ролл мёртв", Artist: "Аквариум", Album: "Радио Африка", AlbumID: "al-1", CoverArt: "al-1", Track: 3, Duration: 215, Suffix: "flac", BitDepth: 16, SamplingRate: 44100},
 	}

@@ -1,3 +1,5 @@
+#include <pthread.h>
+#include <sched.h>
 #include <string.h>
 #include <time.h>
 
@@ -106,9 +108,25 @@ void mss_convert_samples(void* dst, int bits, const float* src, uint32_t count) 
     }
 }
 
+/* The audio thread asks for real-time priority once, so the picture and the
+   network can't make it late: a USB DAC's buffer is short. A failure (not
+   root, no permission) leaves it as it was. */
+static void raise_priority(void) {
+    static __thread int done;
+    if (done) {
+        return;
+    }
+    done = 1;
+    struct sched_param sp;
+    memset(&sp, 0, sizeof sp);
+    sp.sched_priority = 20;
+    pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+}
+
 static void data_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames) {
     (void)dev;
     (void)in;
+    raise_priority();
     if (g_format == ma_format_f32) {
         fill((float*)out, frames);
         return;
@@ -165,6 +183,12 @@ static int open_device(const char* name, int null_backend, uint32_t rate, uint32
     cfg.playback.channels = 2;
     cfg.sampleRate = rate;
     cfg.periodSizeInMilliseconds = 20;
+    if (native) {
+        /* A USB DAC runs from a short buffer that a late callback empties:
+           200 ms (4 x 50) rides out what the UI and the network take. */
+        cfg.periodSizeInMilliseconds = 50;
+        cfg.periods = 4;
+    }
     cfg.dataCallback = data_cb;
     cfg.notificationCallback = notify_cb;
     cfg.noPreSilencedOutputBuffer = MA_TRUE;

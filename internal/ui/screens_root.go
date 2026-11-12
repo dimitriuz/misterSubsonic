@@ -416,7 +416,7 @@ func (s *FeedScreen) drawStrip(a *App, c *gfx.Canvas, r *feedRow, strip gfx.Rect
 	for i := r.first; i < len(r.albums) && i < r.first+r.visible; i++ {
 		al := r.albums[i]
 		cell := gfx.R(strip.X+(i-r.first)*cellW, strip.Y, cellW, strip.H)
-		a.drawCoverCell(c, cell, al.CoverArt, al.Name, al.Artist, focused && i == r.focus, a.isStarred(albumStar(al)))
+		a.drawCoverCell(c, cell, al.CoverArt, al.Name, albumCardSub(al), focused && i == r.focus, a.isStarred(albumStar(al)))
 	}
 }
 

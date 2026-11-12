@@ -260,9 +260,10 @@ type App struct {
 	remoteShot  time.Time // when the remote last took one
 	pad         bool      // the last press came from a gamepad (the hint bar follows it)
 
-	damage       []gfx.Rect                 // changed areas for the next frame (dirty means the whole frame)
-	exact        bool                       // the key being handled damaged exactly what it changed
-	ticks        []gfx.Rect                 // drawn from the playback position
+	damage       []gfx.Rect // changed areas for the next frame (dirty means the whole frame)
+	exact        bool       // the key being handled damaged exactly what it changed
+	ticks        []gfx.Rect // drawn from the playback position
+	spinSt       spinState
 	spin         gfx.Rect                   // a disc turning with the playback position, as last drawn
 	frameNow     time.Time                  // the clock while a frame is drawn
 	frameState   *player.State              // the player's state while a frame is drawn
@@ -646,7 +647,7 @@ func (a *App) untilWake() time.Duration {
 	if a.o.Player != nil && a.o.Player.State().Status == player.Playing && !a.saver {
 		consider(now.Add(progressTick))
 		if !a.spin.Empty() {
-			consider(now.Add(spinFrame))
+			consider(a.spinSt.due)
 		}
 	}
 	if d := next.Sub(now); d > 0 {
@@ -724,8 +725,9 @@ func (a *App) onWake() {
 		for _, r := range a.ticks { // progress; none drawn means nothing follows the clock
 			a.Damage(r)
 		}
-		if !a.spin.Empty() {
+		if !a.spin.Empty() && !now.Before(a.spinSt.due) {
 			a.Damage(a.spin)
+			a.spinSt.due = now.Add(a.spinInterval())
 		}
 	}
 }
@@ -1043,8 +1045,20 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 		line += " — " + song.Artist
 	}
 	f := a.F.Body
-	base := r.Y + r.H/2 + f.Ascent()/3
-	iconText(c, f, statusIcon(st.Status), x, base, f.Truncate(line, w-f.Ascent()), colText, c.Bounds())
+	album := albumYear(song)
+	if fs := a.F.Small; album != "" && r.H >= f.Height()+fs.Height()+2 {
+		// Room for a second line: the album and its year under the title.
+		top := r.Y + (r.H-f.Height()-fs.Height())/2 - max(p.Margin/6, 2)
+		iconText(c, f, statusIcon(st.Status), x, top+f.Ascent(), f.Truncate(line, w-f.Ascent()), colText, c.Bounds())
+		ix := f.Ascent()*2/3 + f.Ascent()*2/3/2
+		fs.Draw(c, x+ix, top+f.Height()+fs.Ascent(), fs.Truncate(album, w-ix), colDim, c.Bounds())
+	} else {
+		if album != "" {
+			line += " — " + album
+		}
+		base := r.Y + r.H/2 + f.Ascent()/3
+		iconText(c, f, statusIcon(st.Status), x, base, f.Truncate(line, w-f.Ascent()), colText, c.Bounds())
+	}
 	if d := time.Duration(song.Duration) * time.Second; d > 0 {
 		bw := progressW(w, st.Position, d)
 		a.markTick(gfx.R(x, r.Bottom()-max(p.Margin/6, 2)-2, w, 2))
