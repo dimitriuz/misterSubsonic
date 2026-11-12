@@ -29,11 +29,51 @@ func (a *App) setDiscArt(on bool) {
 	a.dirty = true
 }
 
+// discID is the ID of the disc image of a song's album (Navidrome's),
+// or "" for a song whose art isn't Navidrome's.
+func discID(so subsonic.Song) subsonic.ID {
+	if so.AlbumID == "" || !(strings.HasPrefix(string(so.CoverArt), "mf-") || strings.HasPrefix(string(so.CoverArt), "al-")) {
+		return ""
+	}
+	return subsonic.ID("dc-" + string(so.AlbumID) + ":" + strconv.Itoa(max(so.DiscNumber, 1)))
+}
+
+// probePx is the size of the small copy of a disc image fetched to learn
+// whether the album has one: the server answers with the cover when not.
+const probePx = 32
+
+// hasDisc reports whether the song's album has a disc image. Until the small
+// copy has loaded it is false, and loading it redraws what was marked with
+// markArt for it (drawDiscBadge marks the badge).
+func (a *App) hasDisc(so subsonic.Song) bool {
+	id := discID(so)
+	if id == "" {
+		return false
+	}
+	img, ok := a.Art(id, probePx)
+	return ok && isDisc(img)
+}
+
+// drawDiscBadge marks the cover in art with a small disc when the album has
+// a disc image to switch to (and it isn't what is shown).
+func (a *App) drawDiscBadge(c *gfx.Canvas, so subsonic.Song, art gfx.Rect) {
+	s := max(art.W/6, 12)
+	pad := max(art.W/30, 2)
+	badge := gfx.R(art.Right()-s-pad, art.Y+pad, s, s)
+	if id := discID(so); id != "" {
+		a.markArt(id, badge)
+	}
+	if a.hasDisc(so) && !a.discArt() {
+		c.Fill(badge, colOverlay)
+		drawIcon(c, iconDisc, badge.Inset(max(s/6, 1)), colText)
+	}
+}
+
 // nowArt is the art of the song playing, for Now Playing and the mini player:
 // its cover, or its disc's image. Lists and cards always show covers.
 func (a *App) nowArt(so subsonic.Song) subsonic.ID {
-	if a.discArt() && so.AlbumID != "" && (strings.HasPrefix(string(so.CoverArt), "mf-") || strings.HasPrefix(string(so.CoverArt), "al-")) {
-		return subsonic.ID("dc-" + string(so.AlbumID) + ":" + strconv.Itoa(max(so.DiscNumber, 1)))
+	if id := discID(so); id != "" && a.discArt() {
+		return id
 	}
 	return so.CoverArt
 }

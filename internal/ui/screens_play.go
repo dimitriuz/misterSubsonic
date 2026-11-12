@@ -80,7 +80,9 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 				entries = append(entries, e)
 			}
 			entries = append(entries, modeEntries(a)...)
-			entries = append(entries, menuEntry{discEntry(a), func(a *App) { a.setDiscArt(!a.discArt()) }})
+			if song, ok := a.state().Current(); ok && a.hasDisc(song) { // with one art to show there is nothing to switch
+				entries = append(entries, menuEntry{discEntry(a), func(a *App) { a.setDiscArt(!a.discArt()) }})
+			}
 			a.Push(NewMenuScreen(parent, "Now Playing", entries))
 		}
 		return
@@ -296,7 +298,9 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		art = min(art, area.W*2/5)
 	}
 	pos := s.position(a, st, a.clock())
-	a.drawSpinning(c, a.nowArt(song), gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art), spinAngle(pos))
+	artR := gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art)
+	a.drawSpinning(c, a.nowArt(song), artR, spinAngle(pos))
+	a.drawDiscBadge(c, song, artR)
 	x := area.X + gap + art + p.Margin
 	text := gfx.R(x, area.Y+(area.H-max(art, textH))/2, area.Right()-gap-x, max(art, textH))
 	y := text.Y

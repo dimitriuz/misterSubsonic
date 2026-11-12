@@ -141,3 +141,53 @@ func TestMiniBarDiscSpins(t *testing.T) {
 		t.Fatalf("the mini player's disc isn't spinning: %v", ta.spin)
 	}
 }
+
+// With one art to show there is no menu entry to switch it.
+func TestNowPlayingMenuHidesArtSwitchWithoutADisc(t *testing.T) {
+	ta := npApp(t)
+	q := append([]subsonic.Song(nil), ta.pl.st.Queue...)
+	q[0].CoverArt = "12345" // another server's: no disc image to ask for
+	ta.pl.st.Queue = q
+	ta.Redraw()
+	ta.settle(t)
+	ta.press(input.BtnX)
+	for _, l := range menuLabels(ta.Top().(*MenuScreen)) {
+		if strings.HasPrefix(l, "Art:") {
+			t.Fatalf("the menu offers %q", l)
+		}
+	}
+}
+
+// A cover whose album has a disc image gets a small disc on it, until the
+// disc is what is shown.
+func TestDiscBadgeShowsWhileTheCoverIsShown(t *testing.T) {
+	badge := func(on bool) []uint32 {
+		ta := newTestApp(t, ProfileHDMI)
+		playingState(ta)
+		if on {
+			ta.setDiscArt(true)
+		}
+		ta.Push(NewNowPlayingScreen())
+		f := ta.settle(t)
+		return append([]uint32(nil), f.Pix...)
+	}
+	off := badge(false)
+	// The badge is dark over the cover: compare with a cover that has none.
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	q := append([]subsonic.Song(nil), ta.pl.st.Queue...)
+	q[0].CoverArt = "al-1"
+	q[0].AlbumID = "" // no album: nothing to probe, so no badge
+	ta.pl.st.Queue = q
+	ta.Push(NewNowPlayingScreen())
+	none := ta.settle(t).Pix
+	diff := 0
+	for i := range off {
+		if off[i] != none[i] {
+			diff++
+		}
+	}
+	if diff == 0 {
+		t.Fatal("no badge on a cover whose album has a disc image")
+	}
+}

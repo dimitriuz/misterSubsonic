@@ -16,6 +16,7 @@ const (
 	iconStop
 	iconBusy
 	iconStar
+	iconDisc
 )
 
 // drawIcon draws a simple vector icon filling the square r. Icons are drawn
@@ -45,6 +46,31 @@ func drawIcon(c *gfx.Canvas, ic icon, r gfx.Rect, col gfx.Color) {
 		}
 	case iconStar:
 		fillPolygon(c, starPoints(r), col)
+	case iconDisc: // a ring with a hole, like a CD seen from above
+		ro := float64(min(r.W, r.H)) / 2
+		ri := ro * 0.28
+		cx, cy := float64(r.X)+float64(r.W)/2, float64(r.Y)+float64(r.H)/2
+		span := func(y int, rad float64) (int, int) { // the pixels whose centres are within rad of the centre
+			dy := float64(y) + 0.5 - cy
+			if h := rad*rad - dy*dy; h > 0 {
+				w := math.Sqrt(h)
+				return int(math.Ceil(cx - w - 0.5)), int(math.Floor(cx+w-0.5)) + 1
+			}
+			return 0, 0
+		}
+		for y := r.Y; y < r.Bottom(); y++ {
+			x0, x1 := span(y, ro)
+			if x1 <= x0 {
+				continue
+			}
+			h0, h1 := span(y, ri)
+			if h1 <= h0 {
+				c.Fill(gfx.R(x0, y, x1-x0, 1), col)
+				continue
+			}
+			c.Fill(gfx.R(x0, y, h0-x0, 1), col)
+			c.Fill(gfx.R(h1, y, x1-h1, 1), col)
+		}
 	}
 }
 

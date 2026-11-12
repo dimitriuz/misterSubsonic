@@ -1035,7 +1035,9 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 	x := p.Margin
 	art := r.H - 2*max(p.Margin/3, 2)
 	ay := r.Y + (r.H-art)/2
-	a.drawSpinning(c, a.nowArt(song), gfx.R(x, ay, art, art), spinAngle(st.Position))
+	artR := gfx.R(x, ay, art, art)
+	a.drawSpinning(c, a.nowArt(song), artR, spinAngle(st.Position))
+	a.drawDiscBadge(c, song, artR)
 	x += art + p.Margin/2
 	w := r.Right() - p.Margin - x
 	line := song.Title
