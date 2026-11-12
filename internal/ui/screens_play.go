@@ -296,7 +296,7 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		art = min(art, area.W*2/5)
 	}
 	pos := s.position(a, st, a.clock())
-	a.drawSpinning(c, a.songArt(song), gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art), spinAngle(pos))
+	a.drawSpinning(c, a.nowArt(song), gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art), spinAngle(pos))
 	x := area.X + gap + art + p.Margin
 	text := gfx.R(x, area.Y+(area.H-max(art, textH))/2, area.Right()-gap-x, max(art, textH))
 	y := text.Y
@@ -434,7 +434,7 @@ func (s *QueueScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		if i == st.Index {
 			col = colAccent
 		}
-		a.drawTextRow(c, r, a.songArt(so), true, so.Title, so.Artist+" · "+clock(secs(so.Duration)), col)
+		a.drawTextRow(c, r, so.CoverArt, true, so.Title, so.Artist+" · "+clock(secs(so.Duration)), col)
 	})
 }
 

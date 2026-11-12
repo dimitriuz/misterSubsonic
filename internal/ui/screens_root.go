@@ -390,7 +390,7 @@ func (s *FeedScreen) drawResume(a *App, c *gfx.Canvas, r gfx.Rect, focused bool)
 	if s.resume.Position > 0 {
 		sub = fmt.Sprintf("%s · from %s", song.Artist, clock(s.resume.Position))
 	}
-	a.drawRow(c, card, row{cover: a.songArt(song), thumb: true, main: song.Title, sub: sub, col: colAccent, focused: focused})
+	a.drawRow(c, card, row{cover: song.CoverArt, thumb: true, main: song.Title, sub: sub, col: colAccent, focused: focused})
 }
 
 // drawStrip draws one row of covers, scrolled so its focus is visible.
@@ -416,7 +416,7 @@ func (s *FeedScreen) drawStrip(a *App, c *gfx.Canvas, r *feedRow, strip gfx.Rect
 	for i := r.first; i < len(r.albums) && i < r.first+r.visible; i++ {
 		al := r.albums[i]
 		cell := gfx.R(strip.X+(i-r.first)*cellW, strip.Y, cellW, strip.H)
-		a.drawCoverCell(c, cell, a.albumArt(al.CoverArt), al.Name, al.Artist, focused && i == r.focus, a.isStarred(albumStar(al)))
+		a.drawCoverCell(c, cell, al.CoverArt, al.Name, al.Artist, focused && i == r.focus, a.isStarred(albumStar(al)))
 	}
 }
 

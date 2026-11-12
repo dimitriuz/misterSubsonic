@@ -97,10 +97,10 @@ func (v *albumsView) Handle(a *App, e input.Event) bool {
 func (v *albumsView) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	v.cur.draw(a, c, area, len(v.albums), func(i int, r gfx.Rect, focused bool) {
 		al := v.albums[i]
-		a.drawCoverCell(c, r, a.albumArt(al.CoverArt), al.Name, albumCardSub(al), focused, a.isStarred(albumStar(al)))
+		a.drawCoverCell(c, r, al.CoverArt, al.Name, albumCardSub(al), focused, a.isStarred(albumStar(al)))
 	}, func(i int, r gfx.Rect, focused bool) {
 		al := v.albums[i]
-		a.drawRow(c, r, row{cover: a.albumArt(al.CoverArt), thumb: true, main: al.Name, sub: albumSub(al), focused: focused, starred: a.isStarred(albumStar(al))})
+		a.drawRow(c, r, row{cover: al.CoverArt, thumb: true, main: al.Name, sub: albumSub(al), focused: focused, starred: a.isStarred(albumStar(al))})
 	})
 }
 
@@ -193,7 +193,7 @@ func (v *songsView) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		if so.Album != "" {
 			sub += " · " + so.Album
 		}
-		a.drawRow(c, r, row{cover: a.songArt(so), thumb: true, main: so.Title, sub: sub, focused: focused,
+		a.drawRow(c, r, row{cover: so.CoverArt, thumb: true, main: so.Title, sub: sub, focused: focused,
 			starred: a.isStarred(songStar(so)), right: clock(secs(so.Duration))})
 	})
 }

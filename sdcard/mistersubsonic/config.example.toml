@@ -37,7 +37,7 @@ screensaver_minutes = 5    # minutes idle on Now Playing; 0 turns it off
 full_resolution = true     # HDMI above 1080p (e.g. 1920x1200): draw at the output's size, not half
 hints = true               # the bar of buttons (or keys) along the bottom of every screen
 visualizer = "off"         # moving picture on Now Playing: off, bars, scope, vu or waterfall (Select there changes it)
-disc_art = false           # Navidrome: show each album's disc image (disc*.png in its folder) instead of the cover; it spins on Now Playing
+disc_art = false           # Navidrome: show the playing album's disc image (disc*.png in its folder) instead of its cover, spinning, on Now Playing and the bottom bar
 # For a TV that cuts off the edges: first try its "Wide" or "Just Scan" setting. If it still
 # cuts, keep the picture away from the edges, in whole percents of the screen (Settings -> Display).
 overscan_left = 0          # 0 to 10: percent of the width, from the left edge

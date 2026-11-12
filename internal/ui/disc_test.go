@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"mistersubsonic/internal/art"
@@ -11,41 +12,37 @@ import (
 	"mistersubsonic/internal/subsonic"
 )
 
-func TestAlbumArtID(t *testing.T) {
-	for _, c := range []struct {
-		cover subsonic.ID
-		disc  int
-		want  subsonic.ID
-	}{
-		{"al-2KX1uU86rfajemrrH0bY6g_0c0ae10aa920d2db", 0, "dc-2KX1uU86rfajemrrH0bY6g:1"},
-		{"al-abc", 2, "dc-abc:2"},
-		{"mf-abc", 1, ""}, // not an album cover
-		{"12345", 1, ""},  // another server's ID
-	} {
-		if got := albumArtID(c.cover, c.disc); got != c.want {
-			t.Errorf("albumArtID(%q, %d) = %q, want %q", c.cover, c.disc, got, c.want)
-		}
+func TestDiscArtSwitchesTheNowPlayingArt(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	so := subsonic.Song{ID: "s", AlbumID: "AL", CoverArt: "mf-xyz", DiscNumber: 2}
+	if got := ta.nowArt(so); got != "mf-xyz" {
+		t.Fatalf("off: art %q", got)
+	}
+	ta.setDiscArt(true)
+	if got := ta.nowArt(so); got != "dc-AL:2" {
+		t.Fatalf("on: art %q", got)
+	}
+	if got := ta.nowArt(subsonic.Song{CoverArt: "mf-xyz"}); got != "mf-xyz" { // no album to ask for
+		t.Fatalf("on: song without album %q", got)
+	}
+	if got := ta.nowArt(subsonic.Song{AlbumID: "AL", CoverArt: "12345"}); got != "12345" { // another server's ID
+		t.Fatalf("on: foreign art %q", got)
 	}
 }
 
-func TestDiscArtSwitchesTheArtAskedFor(t *testing.T) {
+// Lists and cards keep covers whatever the setting says.
+func TestListsKeepCoversWithDiscArtOn(t *testing.T) {
 	ta := newTestApp(t, ProfileHDMI)
-	so := subsonic.Song{ID: "s", AlbumID: "AL", CoverArt: "mf-xyz", DiscNumber: 2}
-	if got := ta.songArt(so); got != "mf-xyz" {
-		t.Fatalf("off: song art %q", got)
-	}
 	ta.setDiscArt(true)
-	if got := ta.songArt(so); got != "dc-AL:2" {
-		t.Fatalf("on: song art %q", got)
+	ta.Push(NewAlbumsScreen())
+	ta.settle(t)
+	for id := range ta.arts {
+		if strings.HasPrefix(string(id), "dc-") {
+			t.Fatalf("a list asked for the disc image %q", id)
+		}
 	}
-	if got := ta.albumArt("al-AL_1f"); got != "dc-AL:1" {
-		t.Fatalf("on: album art %q", got)
-	}
-	if got := ta.albumArt("12345"); got != "12345" { // not Navidrome: unchanged
-		t.Fatalf("on: foreign album art %q", got)
-	}
-	if got := ta.songArt(subsonic.Song{CoverArt: "mf-xyz"}); got != "mf-xyz" { // no album to ask for
-		t.Fatalf("on: song without album %q", got)
+	if len(ta.arts) == 0 {
+		t.Fatal("no covers were drawn")
 	}
 }
 
@@ -131,5 +128,16 @@ func TestGoldenNowPlayingDisc(t *testing.T) {
 		ta.setDiscArt(true)
 		ta.Push(NewNowPlayingScreen())
 		golden(t, "nowplaying-disc-"+p.Name, ta.settle(t))
+	}
+}
+
+func TestMiniBarDiscSpins(t *testing.T) {
+	ta := newTestApp(t, ProfileHDMI)
+	playingState(ta)
+	ta.setDiscArt(true)
+	ta.Push(NewHomeScreen())
+	ta.settle(t)
+	if ta.spin.Empty() || ta.spin.Y < ta.P.H/2 {
+		t.Fatalf("the mini player's disc isn't spinning: %v", ta.spin)
 	}
 }

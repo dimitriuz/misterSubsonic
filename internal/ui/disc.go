@@ -13,7 +13,8 @@ import (
 
 // Disc art (Navidrome): getCoverArt takes "dc-<albumId>:<disc>" for the
 // disc image in an album's folder, and answers with the album's cover when
-// there is none. With the setting on, albums and songs ask for that ID.
+// there is none. With the setting on, Now Playing and the mini player ask
+// for that ID, and the disc turns there.
 
 const (
 	spinPeriod = 6 * time.Second        // one turn of a disc on Now Playing
@@ -28,29 +29,9 @@ func (a *App) setDiscArt(on bool) {
 	a.dirty = true
 }
 
-// albumArtID is the disc image's ID for a Navidrome album cover ID
-// ("al-<id>_<hash>"); anything else (other servers) has none.
-func albumArtID(cover subsonic.ID, disc int) subsonic.ID {
-	id, ok := strings.CutPrefix(string(cover), "al-")
-	if !ok {
-		return ""
-	}
-	id, _, _ = strings.Cut(id, "_")
-	return subsonic.ID("dc-" + id + ":" + strconv.Itoa(max(disc, 1)))
-}
-
-// albumArt is the art to show for an album: its cover, or its disc.
-func (a *App) albumArt(cover subsonic.ID) subsonic.ID {
-	if a.discArt() {
-		if id := albumArtID(cover, 1); id != "" {
-			return id
-		}
-	}
-	return cover
-}
-
-// songArt is the art to show for a song: its cover, or its disc's image.
-func (a *App) songArt(so subsonic.Song) subsonic.ID {
+// nowArt is the art of the song playing, for Now Playing and the mini player:
+// its cover, or its disc's image. Lists and cards always show covers.
+func (a *App) nowArt(so subsonic.Song) subsonic.ID {
 	if a.discArt() && so.AlbumID != "" && (strings.HasPrefix(string(so.CoverArt), "mf-") || strings.HasPrefix(string(so.CoverArt), "al-")) {
 		return subsonic.ID("dc-" + string(so.AlbumID) + ":" + strconv.Itoa(max(so.DiscNumber, 1)))
 	}
