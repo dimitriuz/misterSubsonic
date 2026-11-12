@@ -25,6 +25,7 @@ const (
 	keyQ          = 16
 	keyEnter      = 28
 	keyLShift     = 42
+	keyX          = 45
 	keyV          = 47
 	keyN          = 49
 	keyM          = 50
@@ -71,11 +72,12 @@ const (
 
 // DefaultKeys is the built-in key-code map: keyboard (spec §8.3) plus Linux
 // gamepad defaults. SNES layout: A is the east face button, B the south one.
+// X is next song: it is what the SuperStation One remote's Cancel sends.
 var DefaultKeys = map[uint16]Button{
 	keyUp: BtnUp, keyDown: BtnDown, keyLeft: BtnLeft, keyRight: BtnRight,
 	keyEnter: BtnA, keyKPEnter: BtnA, keyEsc: BtnB, keyBackspace: BtnB,
 	keyTab: BtnX, keySpace: BtnStart, keyPageUp: BtnL, keyPageDown: BtnR,
-	keyN: BtnY, keyQ: BtnQueue, keyM: BtnMute, keyV: BtnSelect,
+	keyN: BtnY, keyQ: BtnQueue, keyM: BtnMute, keyV: BtnSelect, keyX: BtnNextTrack,
 	keyMute: BtnMute, keyVolumeUp: BtnVolUp, keyVolumeDown: BtnVolDown,
 	keyPlayPause: BtnPlayPause, keyPlay: BtnPlayPause, keyPlayCD: BtnPlayPause, keyPauseCD: BtnPlayPause,
 	keyNextSong: BtnNextTrack, keyPreviousSong: BtnPrevTrack, keyFastForward: BtnSeekFwd, keyRewind: BtnSeekBack,
