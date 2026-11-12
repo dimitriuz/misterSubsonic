@@ -87,6 +87,5 @@ func (a *App) drawSpinning(c *gfx.Canvas, id subsonic.ID, r gfx.Rect, angle floa
 	}
 	a.markArt(id, r)
 	a.spin = r
-	c.Fill(r, colArtBg)
 	c.BlitRotated(img, r, angle)
 }

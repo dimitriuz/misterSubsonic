@@ -1094,8 +1094,11 @@ func (a *App) drawConfirm(c *gfx.Canvas) {
 // drawArt draws a cover (or a placeholder while it loads) into r.
 func (a *App) drawArt(c *gfx.Canvas, id subsonic.ID, r gfx.Rect) {
 	a.markArt(id, r)
-	c.Fill(r, colArtBg)
-	if img, ok := a.Art(id, r.W); ok {
+	img, ok := a.Art(id, r.W)
+	if !ok || !isDisc(img) { // a disc has no backing square: what is behind it shows
+		c.Fill(r, colArtBg)
+	}
+	if ok {
 		// Centre non-square art inside the square.
 		w, h := r.W, r.H
 		if img.W > img.H {
