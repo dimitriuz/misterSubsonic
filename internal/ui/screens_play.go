@@ -79,7 +79,11 @@ func (s *NowPlayingScreen) Release(a *App, b input.Button) {
 			if e, ok := s.starEntry(a); ok {
 				entries = append(entries, e)
 			}
-			a.Push(NewMenuScreen(parent, "Now Playing", append(entries, modeEntries(a)...)))
+			entries = append(entries, modeEntries(a)...)
+			if song, ok := a.state().Current(); ok && a.hasDisc(song) { // with one art to show there is nothing to switch
+				entries = append(entries, menuEntry{discEntry(a), func(a *App) { a.setDiscArt(!a.discArt()) }})
+			}
+			a.Push(NewMenuScreen(parent, "Now Playing", entries))
 		}
 		return
 	}
@@ -139,6 +143,14 @@ func modeEntries(a *App) []menuEntry {
 			a.dirty = true
 		}},
 	}
+}
+
+// discEntry labels the menu entry that switches covers and disc images.
+func discEntry(a *App) string {
+	if a.discArt() {
+		return "Art: Disc"
+	}
+	return "Art: Cover"
 }
 
 func (s *NowPlayingScreen) curID(st player.State) subsonic.ID {
@@ -285,7 +297,8 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		gap = p.Margin
 		art = min(art, area.W*2/5)
 	}
-	a.drawArt(c, song.CoverArt, gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art))
+	pos := s.position(a, st, a.clock())
+	a.drawSpinning(c, a.nowArt(song), gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art), spinAngle(pos))
 	x := area.X + gap + art + p.Margin
 	text := gfx.R(x, area.Y+(area.H-max(art, textH))/2, area.Right()-gap-x, max(art, textH))
 	y := text.Y
@@ -305,12 +318,13 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	line(fb, song.Artist, colDim)
 	line(fb, song.Album, colDim)
 	y += p.Margin / 2
-	line(fs, quality(song, st.Transcoded), colAccent)
+	used := a.discMark(c, song, gfx.R(text.X, y, text.W, fs.Height()), fs, colAccent)
+	fs.Draw(c, text.X, y+fs.Ascent(), fs.Truncate(quality(song, st.Transcoded), text.W-used), colAccent, c.Bounds())
+	y += fs.Height()
 
 	// Progress.
 	y += p.Margin / 2
 	d := secs(song.Duration)
-	pos := s.position(a, st, a.clock())
 	a.markTick(gfx.R(text.X, y, text.W, barH))
 	c.Fill(gfx.R(text.X, y, text.W, barH), colArtBg)
 	if d > 0 {

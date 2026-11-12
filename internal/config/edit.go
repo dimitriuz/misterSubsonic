@@ -82,6 +82,7 @@ func scalars(c *Config) []scalar {
 		{"display", "full_resolution", c.Display.FullResolution},
 		{"display", "hints", c.Display.Hints},
 		{"display", "visualizer", c.Display.Visualizer},
+		{"display", "disc_art", c.Display.DiscArt},
 		{"display", "overscan_left", c.Display.OverscanLeft},
 		{"display", "overscan_right", c.Display.OverscanRight},
 		{"display", "overscan_y", c.Display.OverscanY},

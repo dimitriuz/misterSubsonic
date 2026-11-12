@@ -263,6 +263,7 @@ type App struct {
 	damage       []gfx.Rect                 // changed areas for the next frame (dirty means the whole frame)
 	exact        bool                       // the key being handled damaged exactly what it changed
 	ticks        []gfx.Rect                 // drawn from the playback position
+	spin         gfx.Rect                   // a disc turning with the playback position, as last drawn
 	frameNow     time.Time                  // the clock while a frame is drawn
 	frameState   *player.State              // the player's state while a frame is drawn
 	mqRect       gfx.Rect                   // the scrolling title
@@ -644,6 +645,9 @@ func (a *App) untilWake() time.Duration {
 	}
 	if a.o.Player != nil && a.o.Player.State().Status == player.Playing && !a.saver {
 		consider(now.Add(progressTick))
+		if !a.spin.Empty() {
+			consider(now.Add(spinFrame))
+		}
 	}
 	if d := next.Sub(now); d > 0 {
 		return d
@@ -719,6 +723,9 @@ func (a *App) onWake() {
 	if a.o.Player != nil && a.o.Player.State().Status == player.Playing {
 		for _, r := range a.ticks { // progress; none drawn means nothing follows the clock
 			a.Damage(r)
+		}
+		if !a.spin.Empty() {
+			a.Damage(a.spin)
 		}
 	}
 }
@@ -1028,7 +1035,7 @@ func (a *App) drawMiniBar(c *gfx.Canvas, r gfx.Rect) {
 	x := p.Margin
 	art := r.H - 2*max(p.Margin/3, 2)
 	ay := r.Y + (r.H-art)/2
-	a.drawArt(c, song.CoverArt, gfx.R(x, ay, art, art))
+	a.drawSpinning(c, a.nowArt(song), gfx.R(x, ay, art, art), spinAngle(st.Position))
 	x += art + p.Margin/2
 	w := r.Right() - p.Margin - x
 	line := song.Title
@@ -1087,8 +1094,11 @@ func (a *App) drawConfirm(c *gfx.Canvas) {
 // drawArt draws a cover (or a placeholder while it loads) into r.
 func (a *App) drawArt(c *gfx.Canvas, id subsonic.ID, r gfx.Rect) {
 	a.markArt(id, r)
-	c.Fill(r, colArtBg)
-	if img, ok := a.Art(id, r.W); ok {
+	img, ok := a.Art(id, r.W)
+	if !ok || !isDisc(img) { // a disc has no backing square: what is behind it shows
+		c.Fill(r, colArtBg)
+	}
+	if ok {
 		// Centre non-square art inside the square.
 		w, h := r.W, r.H
 		if img.W > img.H {
