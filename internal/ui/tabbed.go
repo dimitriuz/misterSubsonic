@@ -81,9 +81,14 @@ func (s *TabbedScreen) Handle(a *App, e input.Event) bool {
 }
 
 func (s *TabbedScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
-	h := a.P.RowH
+	h := s.tabs.Height(a)
 	s.tabs.Draw(a, c, gfx.R(area.X, area.Y, area.W, h), s.onTabs)
+	// A cover grid pads its own top; under the tabs that is wasted height.
+	y := area.Y + h
+	if a.P.Cover > 0 {
+		y -= a.P.Margin / 3
+	}
 	a.drawDimmed(s.onTabs, func() { // only the focused thing scrolls a long title
-		s.children[s.tabs.Sel].Draw(a, c, gfx.R(area.X, area.Y+h, area.W, area.H-h))
+		s.children[s.tabs.Sel].Draw(a, c, gfx.R(area.X, y, area.W, area.Bottom()-y))
 	})
 }

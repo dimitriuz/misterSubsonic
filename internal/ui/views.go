@@ -97,11 +97,20 @@ func (v *albumsView) Handle(a *App, e input.Event) bool {
 func (v *albumsView) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	v.cur.draw(a, c, area, len(v.albums), func(i int, r gfx.Rect, focused bool) {
 		al := v.albums[i]
-		a.drawCoverCell(c, r, al.CoverArt, al.Name, al.Artist, focused, a.isStarred(albumStar(al)))
+		a.drawCoverCell(c, r, al.CoverArt, al.Name, albumCardSub(al), focused, a.isStarred(albumStar(al)))
 	}, func(i int, r gfx.Rect, focused bool) {
 		al := v.albums[i]
 		a.drawRow(c, r, row{cover: al.CoverArt, thumb: true, main: al.Name, sub: albumSub(al), focused: focused, starred: a.isStarred(albumStar(al))})
 	})
+}
+
+// albumCardSub is "1997 · Artist" for a cover card: the year first, so the
+// narrow card's truncation cuts the artist, not the year.
+func albumCardSub(al subsonic.Album) string {
+	if al.Year > 0 {
+		return fmt.Sprintf("%d · %s", al.Year, al.Artist)
+	}
+	return al.Artist
 }
 
 // albumSub is "Artist · 1997".

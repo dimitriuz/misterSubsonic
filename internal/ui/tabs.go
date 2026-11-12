@@ -28,6 +28,12 @@ func (t *Tabs) Handle(e input.Event) bool {
 	return true
 }
 
+// Height is the row's height: the label and its underline, no taller, so a
+// cover grid below keeps as many rows as it has without the tabs.
+func (t *Tabs) Height(a *App) int {
+	return min(a.F.Body.Height()+max(a.P.Margin/16, 2), a.P.RowH)
+}
+
 // Draw draws the labels left to right in r; the selected one is underlined,
 // and highlighted when the row has the focus.
 func (t *Tabs) Draw(a *App, c *gfx.Canvas, r gfx.Rect, focused bool) {
