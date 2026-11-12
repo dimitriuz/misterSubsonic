@@ -319,3 +319,16 @@ func TestSavePlayQueueGoesBackToPostWhenTheStickyGetFails(t *testing.T) {
 		t.Fatalf("requests = %q", got)
 	}
 }
+
+func TestGetAlbumGivesSongsTheirAlbumsYear(t *testing.T) {
+	_, c := connected(t)
+	al, err := c.GetAlbum(ctx, "al-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, so := range al.Songs {
+		if so.Year != 1983 {
+			t.Fatalf("song %s has year %d", so.ID, so.Year)
+		}
+	}
+}

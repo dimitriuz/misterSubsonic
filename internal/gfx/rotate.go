@@ -63,3 +63,41 @@ func (c *Canvas) BlitRotated(src *Image, dst Rect, angle float64) {
 		}
 	}
 }
+
+// BlitRotatedFast is BlitRotated with the nearest source pixel instead of a
+// bilinear blend: about three times cheaper, for a picture that turns often.
+func (c *Canvas) BlitRotatedFast(src *Image, dst Rect, angle float64) {
+	clip := dst.Intersect(c.Clip())
+	if clip.Empty() || src == nil || src.W == 0 || src.H == 0 || dst.W == 0 || dst.H == 0 {
+		return
+	}
+	sin, cos := math.Sincos(angle)
+	const one = 1 << 16
+	kx := float64(src.W) / float64(dst.W) * one
+	ky := float64(src.H) / float64(dst.H) * one
+	dux, dvx := int(cos*kx), int(-sin*ky)
+	duy, dvy := int(sin*kx), int(cos*ky)
+	cx, cy := float64(dst.W)/2, float64(dst.H)/2
+	sw, sh := src.W<<16, src.H<<16
+	x0, y0 := float64(clip.X-dst.X)+0.5-cx, float64(clip.Y-dst.Y)+0.5-cy
+	u0 := int((x0*cos+y0*sin)*kx) + sw/2
+	v0 := int((-x0*sin+y0*cos)*ky) + sh/2
+	for y := clip.Y; y < clip.Bottom(); y++ {
+		n := y - clip.Y
+		u, v := u0+n*duy, v0+n*dvy
+		drow := c.Pix[y*c.W+clip.X : y*c.W+clip.Right()]
+		for i := range drow {
+			if u >= 0 && v >= 0 && u < sw && v < sh {
+				p := src.Pix[(v>>16)*src.W+u>>16]
+				switch a := p >> 24; {
+				case a == 255:
+					drow[i] = p
+				case a > 0:
+					drow[i] = blend(drow[i], p&0xFFFFFF, a)
+				}
+			}
+			u += dux
+			v += dvx
+		}
+	}
+}

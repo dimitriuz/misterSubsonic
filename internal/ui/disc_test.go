@@ -85,7 +85,7 @@ func TestNowPlayingDiscSpins(t *testing.T) {
 		r := ta.spin
 		before := append([]uint32(nil), first.Pix...)
 		ta.pl.st.Position += spinPeriod / 4
-		ta.now = ta.now.Add(spinFrame)
+		ta.now = ta.now.Add(spinFrames[0])
 		ta.onWake() // the spin frame is due: the disc's region is damaged
 		after := ta.settle(t)
 		changed := 0
@@ -102,7 +102,7 @@ func TestNowPlayingDiscSpins(t *testing.T) {
 		ta.pl.st.Status = player.Paused // a stopped disc needs no frames
 		ta.Redraw()
 		ta.settle(t)
-		if d := ta.untilWake(); d <= spinFrame {
+		if d := ta.untilWake(); d <= spinFrames[0] {
 			t.Fatalf("%s: wakes in %v while paused", p.Name, d)
 		}
 	}

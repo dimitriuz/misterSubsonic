@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -17,9 +18,59 @@ import (
 // for that ID, and the disc turns there.
 
 const (
-	spinPeriod = 6 * time.Second        // one turn of a disc on Now Playing
-	spinFrame  = 100 * time.Millisecond // how often a spinning disc is redrawn
+	spinPeriod = 6 * time.Second // one turn of a disc on Now Playing
+
+	spinMeasure = 2 * time.Second // the span a disc frame's average cost is taken over
+	spinSlow    = 0.15            // step down above this share of the frame interval
 )
+
+// spinFrames are how often a spinning disc is redrawn, fastest first. The
+// valve steps down them when the draw costs too much of the interval: the
+// music must never wait for the picture.
+var spinFrames = []time.Duration{200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond}
+
+// spinState is what the spinning disc keeps between frames.
+type spinState struct {
+	level  int           // index into spinFrames
+	size   int           // the disc's size when last drawn: a new size starts the valve again
+	sum    time.Duration // draw costs since since
+	n      int
+	since  time.Time
+	due    time.Time // when the disc is next redrawn (zero: now)
+	logged bool
+}
+
+func (a *App) spinInterval() time.Duration { return spinFrames[a.spinSt.level] }
+
+// spinCost takes in what drawing the disc cost and slows the disc down when
+// the last spinMeasure averaged over spinSlow of the frame interval.
+func (a *App) spinCost(cost time.Duration, size int) {
+	s := &a.spinSt
+	now := a.o.Now()
+	if size != s.size {
+		*s = spinState{size: size, due: s.due}
+	}
+	if s.since.IsZero() {
+		s.since = now
+	}
+	s.sum += cost
+	s.n++
+	if now.Sub(s.since) < spinMeasure {
+		return
+	}
+	avg := s.sum / time.Duration(s.n)
+	s.sum, s.n, s.since = 0, 0, now
+	if float64(avg) <= spinSlow*float64(spinFrames[s.level]) {
+		return
+	}
+	if s.level < len(spinFrames)-1 {
+		s.level++
+		log.Printf("disc: a frame costs %v, turning every %v now", avg, spinFrames[s.level])
+	} else if !s.logged {
+		s.logged = true
+		log.Printf("disc: a frame costs %v even at the slowest rate", avg)
+	}
+}
 
 func (a *App) discArt() bool { return a.cfg != nil && a.cfg.Display.DiscArt }
 
@@ -110,5 +161,7 @@ func (a *App) drawSpinning(c *gfx.Canvas, id subsonic.ID, r gfx.Rect, angle floa
 	}
 	a.markArt(id, r)
 	a.spin = r
-	c.BlitRotated(img, r, angle)
+	t := time.Now()
+	c.BlitRotatedFast(img, r, angle)
+	a.spinCost(time.Since(t), r.W)
 }

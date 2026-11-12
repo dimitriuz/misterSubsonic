@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"time"
 
 	"mistersubsonic/internal/gfx"
@@ -316,7 +317,7 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		line(ft, title, colText)
 	}
 	line(fb, song.Artist, colDim)
-	line(fb, song.Album, colDim)
+	line(fb, albumYear(song), colDim)
 	y += p.Margin / 2
 	used := a.discMark(c, song, gfx.R(text.X, y, text.W, fs.Height()), fs, colAccent)
 	fs.Draw(c, text.X, y+fs.Ascent(), fs.Truncate(quality(song, st.Transcoded), text.W-used), colAccent, c.Bounds())
@@ -512,4 +513,12 @@ func wrap(f *gfx.Font, text string, w int) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// albumYear is "Album · 1997", or the album alone without a year.
+func albumYear(so subsonic.Song) string {
+	if so.Year > 0 {
+		return so.Album + " · " + strconv.Itoa(so.Year)
+	}
+	return so.Album
 }

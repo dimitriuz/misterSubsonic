@@ -36,6 +36,12 @@ func (c *Client) GetAlbum(ctx context.Context, id ID) (*AlbumWithSongs, error) {
 	if r.Album == nil {
 		return nil, &APIError{Code: CodeNotFound, Message: "album not found"}
 	}
+	// A song without a year of its own has its album's.
+	for i := range r.Album.Songs {
+		if r.Album.Songs[i].Year == 0 {
+			r.Album.Songs[i].Year = r.Album.Year
+		}
+	}
 	return r.Album, nil
 }
 
