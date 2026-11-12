@@ -124,7 +124,7 @@ func (s *AlbumScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	p := a.P
 	art := p.ArtAlbum
 	header := gfx.R(area.X, area.Y, area.W, art+p.Margin)
-	a.drawArt(c, s.stub.CoverArt, gfx.R(area.X+p.Margin, area.Y+p.Margin/2, art, art))
+	a.drawArt(c, a.albumArt(s.stub.CoverArt), gfx.R(area.X+p.Margin, area.Y+p.Margin/2, art, art))
 	x := area.X + p.Margin + art + p.Margin
 	w := area.Right() - p.Margin - x
 	y := area.Y + p.Margin/2

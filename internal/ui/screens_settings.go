@@ -325,6 +325,9 @@ func displaySettings(a *App) []setting {
 				a.UpdateConfig(func(c *config.Config) { c.Display.Hints = on }, false)
 			},
 			help: "The bar of buttons along the bottom of every screen.", toggle: true},
+		{label: "Disc art", value: func(a *App) string { return onOff(d().DiscArt) },
+			change: func(a *App, dir int) { a.setDiscArt(!d().DiscArt) },
+			help:   "Navidrome: an album's disc image (disc*.png in its folder) instead of its cover. It spins on Now Playing.", toggle: true},
 		{label: "Visualizer", value: func(a *App) string { return a.VizStyle().Label() },
 			change: func(a *App, dir int) {
 				a.SetVizStyle(VizStyle((int(a.VizStyle()) + dir + len(vizNames)) % len(vizNames)))

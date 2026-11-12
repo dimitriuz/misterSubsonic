@@ -104,6 +104,9 @@ func (a *App) renderDamage() (bool, error) {
 	// what a full frame would show (the verify pass sees the same clock).
 	if a.o.Player != nil && a.state().Status == player.Playing {
 		a.damage = append(a.damage, a.ticks...)
+		if !a.spin.Empty() {
+			a.damage = append(a.damage, a.spin)
+		}
 	}
 	if a.animate && !a.mqRect.Empty() {
 		a.damage = append(a.damage, a.mqRect)
@@ -282,7 +285,7 @@ func (a *App) markArt(id subsonic.ID, r gfx.Rect) {
 }
 
 func (a *App) resetMarks() {
-	a.ticks, a.mqRect, a.viz.rect = a.ticks[:0], gfx.Rect{}, gfx.Rect{}
+	a.ticks, a.mqRect, a.viz.rect, a.spin = a.ticks[:0], gfx.Rect{}, gfx.Rect{}, gfx.Rect{}
 	for id := range a.arts {
 		delete(a.arts, id)
 	}

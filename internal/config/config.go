@@ -56,6 +56,7 @@ type Display struct {
 	FullResolution     bool   `toml:"full_resolution"`
 	Hints              bool   `toml:"hints"`
 	Visualizer         string `toml:"visualizer"` // off, bars, scope, vu or waterfall
+	DiscArt            bool   `toml:"disc_art"`   // Navidrome: show each album's disc image instead of its cover
 	// Overscan margins, whole percents 0..MaxOverscan: the picture is drawn
 	// inside them, for TVs that cut the edges. Left and right are of the
 	// width; Y is of the height, for the top and the bottom each.

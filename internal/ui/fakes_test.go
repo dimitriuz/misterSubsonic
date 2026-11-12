@@ -314,6 +314,12 @@ func makeFakeArt(k art.Key) *gfx.Image {
 				c = 0xFF000000 | ^v&0xFFFFFF
 			}
 			img.Pix[y*k.Size+x] = c
+			if strings.HasPrefix(string(k.ID), "dc-") { // a disc: round, corners transparent
+				dx, dy := 2*x+1-k.Size, 2*y+1-k.Size
+				if dx*dx+dy*dy > k.Size*k.Size {
+					img.Pix[y*k.Size+x] = 0
+				}
+			}
 		}
 	}
 	return img

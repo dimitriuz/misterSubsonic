@@ -206,7 +206,7 @@ func (s *PlaylistScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 			a.drawTextRow(c, r, "", false, "Shuffle", "", colAccent)
 		default:
 			so := songs[i-playlistActionRows]
-			w := row{cover: so.CoverArt, thumb: true, main: so.Title, sub: so.Artist, focused: focused,
+			w := row{cover: a.songArt(so), thumb: true, main: so.Title, sub: so.Artist, focused: focused,
 				starred: a.isStarred(songStar(so)), right: clock(secs(so.Duration))}
 			if oneLine {
 				w.thumb, w.sub = false, ""

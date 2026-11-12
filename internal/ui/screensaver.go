@@ -93,7 +93,7 @@ func (a *App) drawSaver(c *gfx.Canvas) {
 	x := bounce(steps*saverDrift, p.W-art)
 	y := bounce(steps*saverDrift*2/3, p.H-art-a.F.Small.Height())
 	r := gfx.R(x, y, art, art)
-	a.drawArt(c, song.CoverArt, r)
+	a.drawArt(c, a.songArt(song), r)
 	c.Fill(r, gfx.RGBA(0, 0, 0, 0x90)) // dimmed
 	fs := a.F.Small
 	fs.Draw(c, x, r.Bottom()+fs.Ascent(), fs.Truncate(song.Title, art), colDim.WithAlpha(0x80), c.Bounds())

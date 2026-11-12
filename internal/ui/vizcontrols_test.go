@@ -87,7 +87,7 @@ func TestShortXOpensTheNowPlayingMenu(t *testing.T) {
 	if !ok || m.title != "Now Playing" {
 		t.Fatalf("X opened %T", ta.Top())
 	}
-	if got := menuLabels(m); !slices.Equal(got, []string{"Star", "Shuffle: Off", "Repeat: Off"}) {
+	if got := menuLabels(m); !slices.Equal(got, []string{"Star", "Shuffle: Off", "Repeat: Off", "Art: Cover"}) {
 		t.Fatalf("entries %q", got)
 	}
 	if len(ta.lib.stars) != 0 {
