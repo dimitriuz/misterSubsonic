@@ -54,19 +54,21 @@ func (a *App) hasDisc(so subsonic.Song) bool {
 	return ok && isDisc(img)
 }
 
-// drawDiscBadge marks the cover in art with a small disc when the album has
-// a disc image to switch to (and it isn't what is shown).
-func (a *App) drawDiscBadge(c *gfx.Canvas, so subsonic.Song, art gfx.Rect) {
-	s := max(art.W/6, 12)
-	pad := max(art.W/30, 2)
-	badge := gfx.R(art.Right()-s-pad, art.Y+pad, s, s)
+// discMark draws a small disc icon at the right end of row, as tall as f's
+// letters, when the album has a disc image to switch to and the cover is
+// shown. It returns the width it takes (0 when it draws nothing), so the
+// text on that row can be shortened to leave it room. The row is redrawn
+// when the answer arrives, since the text changes with it.
+func (a *App) discMark(c *gfx.Canvas, so subsonic.Song, row gfx.Rect, f *gfx.Font, col gfx.Color) int {
 	if id := discID(so); id != "" {
-		a.markArt(id, badge)
+		a.markArt(id, row)
 	}
-	if a.hasDisc(so) && !a.discArt() {
-		c.Fill(badge, colOverlay)
-		drawIcon(c, iconDisc, badge.Inset(max(s/6, 1)), colText)
+	if !a.hasDisc(so) || a.discArt() {
+		return 0
 	}
+	s := f.Ascent()
+	drawIcon(c, iconDisc, gfx.R(row.Right()-s, row.Y+(row.H-s)/2, s, s), col)
+	return s + a.P.Margin/2
 }
 
 // nowArt is the art of the song playing, for Now Playing and the mini player:

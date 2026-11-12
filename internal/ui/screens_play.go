@@ -298,9 +298,7 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 		art = min(art, area.W*2/5)
 	}
 	pos := s.position(a, st, a.clock())
-	artR := gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art)
-	a.drawSpinning(c, a.nowArt(song), artR, spinAngle(pos))
-	a.drawDiscBadge(c, song, artR)
+	a.drawSpinning(c, a.nowArt(song), gfx.R(area.X+gap, area.Y+(area.H-art)/2, art, art), spinAngle(pos))
 	x := area.X + gap + art + p.Margin
 	text := gfx.R(x, area.Y+(area.H-max(art, textH))/2, area.Right()-gap-x, max(art, textH))
 	y := text.Y
@@ -320,7 +318,9 @@ func (s *NowPlayingScreen) Draw(a *App, c *gfx.Canvas, area gfx.Rect) {
 	line(fb, song.Artist, colDim)
 	line(fb, song.Album, colDim)
 	y += p.Margin / 2
-	line(fs, quality(song, st.Transcoded), colAccent)
+	used := a.discMark(c, song, gfx.R(text.X, y, text.W, fs.Height()), fs, colAccent)
+	fs.Draw(c, text.X, y+fs.Ascent(), fs.Truncate(quality(song, st.Transcoded), text.W-used), colAccent, c.Bounds())
+	y += fs.Height()
 
 	// Progress.
 	y += p.Margin / 2
